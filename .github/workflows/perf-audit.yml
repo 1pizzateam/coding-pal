@@ -1,0 +1,15 @@
+name: Performance & Zero-GC Audit
+
+on:
+  workflow_call:
+    inputs:
+      scope: { type: string, default: 'src/' }
+
+jobs:
+  audit:
+    uses: 1pizzateam/coding-pal/.github/workflows/copilot-audit.yml@main
+    with:
+      agent: perf-audit
+      scope: ${{ inputs.scope }}
+      pr_title: "perf: eliminate hot-loop allocations in ${{ inputs.scope }}"
+    secrets: inherit

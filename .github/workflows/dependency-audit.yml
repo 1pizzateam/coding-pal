@@ -1,0 +1,17 @@
+name: Dependency Audit
+
+on:
+  workflow_call:
+    inputs:
+      scope: { type: string, default: 'src/' }
+      dependency: { type: string, default: 'all' }
+
+jobs:
+  audit:
+    uses: 1pizzateam/coding-pal/.github/workflows/copilot-audit.yml@main
+    with:
+      agent: dependency-leverage
+      scope: ${{ inputs.scope }}
+      prompt: "Dependency filter: ${{ inputs.dependency }}."
+      pr_title: "refactor: leverage dependencies (${{ inputs.dependency }}) in ${{ inputs.scope }}"
+    secrets: inherit

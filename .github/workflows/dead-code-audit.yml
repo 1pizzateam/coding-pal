@@ -1,0 +1,15 @@
+name: Dead Code Audit
+
+on:
+  workflow_call:
+    inputs:
+      scope: { type: string, default: 'src/' }
+
+jobs:
+  audit:
+    uses: 1pizzateam/coding-pal/.github/workflows/copilot-audit.yml@main
+    with:
+      agent: dead-code
+      scope: ${{ inputs.scope }}
+      pr_title: "chore: remove dead code in ${{ inputs.scope }}"
+    secrets: inherit

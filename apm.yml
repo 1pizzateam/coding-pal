@@ -1,0 +1,12 @@
+name: coding-pal
+version: 1.0.0
+description: Shared AI instructions, agents, prompts, skills, and reusable GitHub Actions workflows for 1PizzaTeam projects.
+author: LCluber
+license: MIT
+targets:
+  - copilot
+  - cursor
+  - claude
+dependencies:
+  apm: []
+  mcp: {}

@@ -1,0 +1,15 @@
+name: Test Coverage Gap Audit
+
+on:
+  workflow_call:
+    inputs:
+      scope: { type: string, default: 'src/' }
+
+jobs:
+  audit:
+    uses: 1pizzateam/coding-pal/.github/workflows/copilot-audit.yml@main
+    with:
+      agent: test-gap
+      scope: ${{ inputs.scope }}
+      pr_title: "test: cover missing edge cases for ${{ inputs.scope }}"
+    secrets: inherit

@@ -1,0 +1,15 @@
+name: Vector-First Audit
+
+on:
+  workflow_call:
+    inputs:
+      scope: { type: string, default: 'src/' }
+
+jobs:
+  audit:
+    uses: 1pizzateam/coding-pal/.github/workflows/copilot-audit.yml@main
+    with:
+      agent: vector-first
+      scope: ${{ inputs.scope }}
+      pr_title: "refactor: enforce vector-first architecture in ${{ inputs.scope }}"
+    secrets: inherit
