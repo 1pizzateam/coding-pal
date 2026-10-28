@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       agent:
-        description: 'Copilot agent name (e.g. dependency-leverage, vector-first, perf-audit, dead-code, api-consistency, Unit Tester)'
+        description: 'Copilot agent name (e.g. dependency-leverage, vector-first, perf-audit, dead-code, doc-sync, Unit Tester)'
         required: true
         type: string
       scope:

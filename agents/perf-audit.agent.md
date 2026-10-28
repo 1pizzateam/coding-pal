@@ -1,7 +1,7 @@
 ---
 name: perf-audit
-description: "Refactor per-frame update and render paths to satisfy the hot-loop-performance instruction."
+description: "Refactor hot loops and library runtime methods to satisfy the hot-loop-performance instruction."
 ---
 
-1. Trace the per-frame update, simulation, physics, AI, audio, and render call graph in the requested scope.
-2. Refactor all violations of the `hot-loop-performance` instruction in-place.
+1. Audit per-frame update/render loops and library runtime methods in the requested scope against the `hot-loop-performance` instruction.
+2. Refactor all violations in-place.

@@ -1,4 +1,4 @@
-name: API Consistency & Docs Audit
+name: Documentation Sync Audit
 
 on:
   workflow_call:
@@ -9,7 +9,7 @@ jobs:
   audit:
     uses: 1pizzateam/coding-pal/.github/workflows/copilot-audit.yml@main
     with:
-      agent: api-consistency
+      agent: docs-sync
       scope: ${{ inputs.scope }}
-      pr_title: "refactor: align public API consistency and docs in ${{ inputs.scope }}"
+      pr_title: "docs: sync documentation with ${{ inputs.scope }}"
     secrets: inherit
