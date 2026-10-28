@@ -20,13 +20,23 @@ Centralized CI audit instructions, specialist agents, and reusable GitHub Action
 | | `agents/dead-code.agent.md` | Removes unused internal exports, orphaned helpers, and dead state fields |
 | | `agents/test-gap.agent.md` | Adds unit tests in `tests/` for untested branches and edge cases |
 | | `agents/docs-sync.agent.md` | Syncs documentation (`website/docs/`, `docs/`, `README.md`) with `src/` signatures and exports |
-| **Workflows** (6 + 1 runner) | `.github/workflows/copilot-audit.yml` | Shared runner engine (injects primitives, runs `@github/copilot`, verifies tests/build, opens PR if code changed) |
+| **Audit Workflows** (6 + 1 runner) | `.github/workflows/copilot-audit.yml` | Shared runner engine (injects primitives, runs `@github/copilot`, verifies tests/build, opens PR if code changed, and escalates missing upstream `@1pizzateam/*` capabilities via `upstream-requests.json`) |
 | | `.github/workflows/dependency-audit.yml` | Reusable Dependency Audit workflow |
 | | `.github/workflows/vector-first-audit.yml` | Reusable Vector-First Audit workflow |
 | | `.github/workflows/perf-audit.yml` | Reusable Performance & Zero-GC Audit workflow |
 | | `.github/workflows/dead-code-audit.yml` | Reusable Dead Code Audit workflow |
 | | `.github/workflows/test-gap-audit.yml` | Reusable Test Coverage Gap Audit workflow |
 | | `.github/workflows/docs-sync-audit.yml` | Reusable Documentation Sync Audit workflow |
+| **Delivery Pipeline** (4 reusable phases) | `.github/workflows/pipeline-think.yml` | FIFO-queued Think phase (validates `think.md`, supports `upstream-request.json` escalation to `@1pizzateam/*` libraries) |
+| | `.github/workflows/pipeline-plan.yml` | Plan phase (validates `plan.md` against `think.md`) |
+| | `.github/workflows/pipeline-code.yml` | Code phase (step-by-step `code-loop`, deterministic exit gates, opens PR) |
+| | `.github/workflows/pipeline-prove.yml` | Prove phase (13 deterministic controls + `gate-fix` loop, auto-merge, auto-release for `@1pizzateam/*` packages, FIFO queue advancement) |
+
+## Cross-Repository Upstream Escalation Loop
+
+1. **Detect & Escalate**: During an audit (`upstream-requests.json`) or the `Think` phase (`specs/issue-<N>/upstream-request.json`), if an agent determines that a general-purpose capability belongs in an upstream `@1pizzateam/*` library (`@1pizzateam/roostr`, `@1pizzateam/bumpr`, `@1pizzateam/loopr`, `@1pizzateam/spock`, `@1pizzateam/groovr`), the workflow pauses the consumer issue (`blocked:upstream`, `upstream-escalated:1`), opens a `ready` issue in the target library repo (`1pizzateam/<Lib>.js`), and advances the consumer FIFO queue.
+2. **Library Implementation & Release**: The `ready` label in `1pizzateam/<Lib>.js` triggers `Think -> Plan -> Code -> Prove`, auto-merges the PR, bumps `package.json`, creates a `vX.Y.Z` GitHub Release, and runs `publish-npm.yml`.
+3. **Downstream Resume**: After `npm publish`, `publish-npm.yml` sends a `repository_dispatch` (`upstream-library-released`) to downstream consumers (`1pizzateam/DoomR.js`), which waits for npm registry propagation, unblocks the `blocked:upstream` issue, re-adds `ready`, and resumes the consumer's FIFO pipeline.
 
 ## Adding the Audit UI to a Project
 

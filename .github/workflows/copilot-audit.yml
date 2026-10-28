@@ -28,6 +28,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  issues: write
 
 jobs:
   audit:
@@ -67,7 +68,88 @@ jobs:
           EXTRA_PROMPT: ${{ inputs.prompt }}
         run: |
           copilot --agent="$AGENT" --allow-all-tools \
-            --prompt "Scope: ${SCOPE}. ${EXTRA_PROMPT} Write a brief Markdown summary of changes to audit-report.md."
+            --prompt "Scope: ${SCOPE}. ${EXTRA_PROMPT} Write a brief Markdown summary of changes to audit-report.md. If an upstream @1pizzateam/* library (`@1pizzateam/roostr` -> `1pizzateam/RoostR.js`, `@1pizzateam/bumpr` -> `1pizzateam/BumpR.js`, `@1pizzateam/loopr` -> `1pizzateam/LoopR.js`, `@1pizzateam/spock` -> `1pizzateam/Spock.js`, `@1pizzateam/groovr` -> `1pizzateam/GroovR.js`) should be updated instead of (or prior to) changing this repository, write the structured request array to upstream-requests.json."
+
+      - name: Escalate upstream @1pizzateam/* library requests
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          CURRENT_REPO: ${{ github.repository }}
+        run: |
+          if [ ! -s upstream-requests.json ]; then
+            rm -f upstream-requests.json
+            exit 0
+          fi
+
+          COUNT=$(jq 'if type == "array" then length else 0 end' upstream-requests.json 2>/dev/null || echo "0")
+          if [ "$COUNT" -eq 0 ]; then
+            rm -f upstream-requests.json
+            exit 0
+          fi
+
+          gh label create "blocked:upstream" --repo "$CURRENT_REPO" --force --description "Waiting on an upstream @1pizzateam library release" || true
+          gh label create "upstream-escalated:1" --repo "$CURRENT_REPO" --force --description "Escalated once to an upstream @1pizzateam library" || true
+
+          MAX=$((COUNT > 3 ? 3 : COUNT))
+          for ((i = 0; i < MAX; i++)); do
+            PKG=$(jq -r ".[$i].package // empty" upstream-requests.json)
+            TARGET_REPO=$(jq -r ".[$i].repo // empty" upstream-requests.json)
+            LIB_TITLE=$(jq -r ".[$i].library_issue_title // empty" upstream-requests.json)
+            LIB_BODY=$(jq -r ".[$i].library_issue_body // empty" upstream-requests.json)
+            CONSUMER_TITLE=$(jq -r ".[$i].consumer_issue_title // empty" upstream-requests.json)
+            CONSUMER_BODY=$(jq -r ".[$i].consumer_issue_body // empty" upstream-requests.json)
+
+            if [ -z "$PKG" ] || [ -z "$TARGET_REPO" ] || [ -z "$LIB_TITLE" ] || [ -z "$CONSUMER_TITLE" ]; then
+              continue
+            fi
+            if [ "$TARGET_REPO" = "$CURRENT_REPO" ]; then
+              continue
+            fi
+
+            # 1. Create the blocked tracking issue in the consumer repo (e.g. DoomR.js)
+            CONSUMER_ISSUE_URL=$(gh issue create --repo "$CURRENT_REPO" \
+              --title "$CONSUMER_TITLE" \
+              --label "blocked:upstream" \
+              --label "upstream-escalated:1" \
+              --body "${CONSUMER_BODY}
+
+          ---
+          ### Upstream Dependency Gate
+          - **Waiting-Package:** \`${PKG}\`
+          - **Waiting-Repo:** \`${TARGET_REPO}\`")
+            CONSUMER_ISSUE_NUMBER="${CONSUMER_ISSUE_URL##*/}"
+
+            # 2. Create the issue in the upstream library repo and label it 'ready' to trigger its FIFO pipeline
+            gh label create "ready" --repo "$TARGET_REPO" --force --description "Ready for autonomous Think -> Plan -> Code -> Prove pipeline" || true
+            gh label create "upstream-escalated:1" --repo "$TARGET_REPO" --force --description "Triggered by downstream consumer audit" || true
+
+            LIB_ISSUE_URL=$(gh issue create --repo "$TARGET_REPO" \
+              --title "$LIB_TITLE" \
+              --label "ready" \
+              --label "upstream-escalated:1" \
+              --body "${LIB_BODY}
+
+          ---
+          ### Downstream Consumer Callback
+          - **Downstream-Repo:** \`${CURRENT_REPO}\`
+          - **Downstream-Issue:** #${CONSUMER_ISSUE_NUMBER}
+          - **Upstream-Escalated:** 1")
+            LIB_ISSUE_NUMBER="${LIB_ISSUE_URL##*/}"
+
+            # 3. Record the exact upstream issue reference on the consumer issue
+            gh issue comment "$CONSUMER_ISSUE_NUMBER" --repo "$CURRENT_REPO" \
+              --body "Blocked waiting on upstream library issue ${TARGET_REPO}#${LIB_ISSUE_NUMBER} (${LIB_ISSUE_URL}) for package \`${PKG}\`. Once \`${TARGET_REPO}\` merges and publishes the new release to npm, this issue will automatically be labeled \`ready\` and resume implementation."
+
+            {
+              echo ""
+              echo "### Escalated Upstream Library Issue"
+              echo "- **Library:** \`${PKG}\` (\`${TARGET_REPO}\`)"
+              echo "- **Upstream Issue:** ${LIB_ISSUE_URL} (labeled \`ready\`)"
+              echo "- **Downstream Tracking Issue:** ${CONSUMER_ISSUE_URL} (labeled \`blocked:upstream\`)"
+            } >> audit-report.md
+          done
+
+          rm -f upstream-requests.json
 
       - name: Restore repo primitives, publish summary & verify gate
         if: always()
