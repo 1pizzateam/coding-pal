@@ -28,31 +28,36 @@ Centralized CI audit instructions, specialist agents, and reusable GitHub Action
 | | `.github/workflows/test-gap-audit.yml` | Reusable Test Coverage Gap Audit workflow |
 | | `.github/workflows/docs-sync-audit.yml` | Reusable Documentation Sync Audit workflow |
 
-## Adding the Audit UI & Schedules to a Project
+## Adding the Audit UI to a Project
 
-Add a single `.github/workflows/audits.yml` file to the project. In GitHub's **Actions → Copilot Audits → Run workflow** menu, it renders checkboxes so you can pick which audit(s) to launch on demand, while also supporting independent cron schedules per audit:
+Add a single `.github/workflows/audits.yml` file to the project. In GitHub's **Actions → Copilot Audits → Run workflow** menu, it renders a dropdown (`type: choice`) to pick which audit to run on demand:
 
 ```yaml
 name: Copilot Audits
 
 on:
-  schedule:
-    - cron: '0 6 * * 1'   # Dependency Audit
-    - cron: '0 7 * * 1'   # Vector-First Audit
-    - cron: '0 8 * * 1'   # Performance Audit
-    - cron: '0 9 * * 1'   # Dead Code Audit
-    - cron: '0 10 * * 1'  # Test Coverage Gap Audit
-    - cron: '0 11 * * 1'  # Documentation Sync Audit
   workflow_dispatch:
     inputs:
-      dependency_audit: { description: 'Run Dependency Audit', type: boolean, default: false }
-      vector_first_audit: { description: 'Run Vector-First Audit', type: boolean, default: false }
-      perf_audit: { description: 'Run Performance & Zero-GC Audit', type: boolean, default: false }
-      dead_code_audit: { description: 'Run Dead Code Audit', type: boolean, default: false }
-      test_gap_audit: { description: 'Run Test Coverage Gap Audit', type: boolean, default: false }
-      docs_sync_audit: { description: 'Run Documentation Sync Audit', type: boolean, default: false }
-      scope: { description: 'Path to audit (e.g. src/)', type: string, default: 'src/' }
-      dependency: { description: 'Dependency filter for Dependency Audit (or "all")', type: string, default: 'all' }
+      audit:
+        description: 'Audit to run'
+        type: choice
+        required: true
+        default: dependency-audit
+        options:
+          - dependency-audit
+          - vector-first-audit
+          - perf-audit
+          - dead-code-audit
+          - test-gap-audit
+          - docs-sync-audit
+      scope:
+        description: 'Path to audit (e.g. src/)'
+        type: string
+        default: 'src/'
+      dependency:
+        description: 'Dependency filter for Dependency Audit (or "all")'
+        type: string
+        default: 'all'
 
 permissions:
   contents: write
@@ -60,45 +65,45 @@ permissions:
 
 jobs:
   dependency-audit:
-    if: github.event.schedule == '0 6 * * 1' || inputs.dependency_audit
+    if: inputs.audit == 'dependency-audit'
     uses: 1pizzateam/coding-pal/.github/workflows/dependency-audit.yml@main
     with:
-      scope: ${{ inputs.scope || 'src/' }}
-      dependency: ${{ inputs.dependency || 'all' }}
+      scope: ${{ inputs.scope }}
+      dependency: ${{ inputs.dependency }}
     secrets: inherit
 
   vector-first-audit:
-    if: github.event.schedule == '0 7 * * 1' || inputs.vector_first_audit
+    if: inputs.audit == 'vector-first-audit'
     uses: 1pizzateam/coding-pal/.github/workflows/vector-first-audit.yml@main
     with:
-      scope: ${{ inputs.scope || 'src/' }}
+      scope: ${{ inputs.scope }}
     secrets: inherit
 
   perf-audit:
-    if: github.event.schedule == '0 8 * * 1' || inputs.perf_audit
+    if: inputs.audit == 'perf-audit'
     uses: 1pizzateam/coding-pal/.github/workflows/perf-audit.yml@main
     with:
-      scope: ${{ inputs.scope || 'src/' }}
+      scope: ${{ inputs.scope }}
     secrets: inherit
 
   dead-code-audit:
-    if: github.event.schedule == '0 9 * * 1' || inputs.dead_code_audit
+    if: inputs.audit == 'dead-code-audit'
     uses: 1pizzateam/coding-pal/.github/workflows/dead-code-audit.yml@main
     with:
-      scope: ${{ inputs.scope || 'src/' }}
+      scope: ${{ inputs.scope }}
     secrets: inherit
 
   test-gap-audit:
-    if: github.event.schedule == '0 10 * * 1' || inputs.test_gap_audit
+    if: inputs.audit == 'test-gap-audit'
     uses: 1pizzateam/coding-pal/.github/workflows/test-gap-audit.yml@main
     with:
-      scope: ${{ inputs.scope || 'src/' }}
+      scope: ${{ inputs.scope }}
     secrets: inherit
 
   docs-sync-audit:
-    if: github.event.schedule == '0 11 * * 1' || inputs.docs_sync_audit
+    if: inputs.audit == 'docs-sync-audit'
     uses: 1pizzateam/coding-pal/.github/workflows/docs-sync-audit.yml@main
     with:
-      scope: ${{ inputs.scope || 'src/' }}
+      scope: ${{ inputs.scope }}
     secrets: inherit
 ```
