@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       agent:
-        description: 'Copilot agent name (e.g. dependency-leverage, vector-first, perf-audit, dead-code, doc-sync, Unit Tester)'
+        description: 'Copilot agent name (e.g. dependency-leverage, vector-first, perf-audit, dead-code, test-gap, docs-sync)'
         required: true
         type: string
       scope:
@@ -45,9 +45,10 @@ jobs:
           GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
         run: |
           git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/1pizzateam/coding-pal.git /tmp/coding-pal
+          rm -rf .github/instructions .github/agents .github/prompts .github/skills .github/copilot-instructions.md .agents .claude .cursor .gemini CLAUDE.md GEMINI.md AGENTS.md .cursorrules .windsurfrules
           mkdir -p .github/instructions .github/agents
-          cp -n /tmp/coding-pal/instructions/*.md .github/instructions/ || true
-          cp -n /tmp/coding-pal/agents/*.md .github/agents/ || true
+          cp /tmp/coding-pal/instructions/*.md .github/instructions/
+          cp /tmp/coding-pal/agents/*.md .github/agents/
           rm -rf /tmp/coding-pal
 
       - uses: actions/setup-node@v4
@@ -68,11 +69,11 @@ jobs:
           copilot --agent="$AGENT" --allow-all-tools \
             --prompt "Scope: ${SCOPE}. ${EXTRA_PROMPT} Write a brief Markdown summary of changes to audit-report.md."
 
-      - name: Clean injected primitives, publish summary & verify gate
+      - name: Restore repo primitives, publish summary & verify gate
         if: always()
         run: |
-          git checkout -- .github/instructions .github/agents 2>/dev/null || true
-          git clean -fd .github/instructions .github/agents
+          git clean -fd .github/instructions .github/agents .github/prompts .github/skills .agents .claude .cursor .gemini
+          git checkout -- .github/instructions .github/agents .github/prompts .github/skills .github/copilot-instructions.md .agents .claude .cursor .gemini CLAUDE.md GEMINI.md AGENTS.md .cursorrules .windsurfrules 2>/dev/null || true
           if [ -f audit-report.md ]; then
             cat audit-report.md >> "$GITHUB_STEP_SUMMARY"
             mv audit-report.md /tmp/report.md
