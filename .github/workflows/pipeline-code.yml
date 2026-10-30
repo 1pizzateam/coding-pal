@@ -109,15 +109,20 @@ jobs:
           mkdir -p specs
           cp -R /tmp/specs/. specs/
 
-      - name: Sync issue to In progress on Project board
+      - name: Sync issue to Code on Project board
         if: steps.resolve.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
           PROJECT_TITLE: ${{ inputs.project_title }}
-          TARGET_STATUS: In progress
+          TARGET_STATUS: Code
         run: |
+          if [ -z "$PROJECT_TITLE" ]; then
+            echo "::notice::No project_title configured; skipping Project status update."
+            exit 0
+          fi
+
           DATA=$(gh api graphql -f query='
             query($owner: String!, $repo: String!, $number: Int!, $projectTitle: String!) {
               repository(owner: $owner, name: $repo) {
@@ -139,15 +144,17 @@ jobs:
                   }
                 }
               }
-            }' -f owner="$OWNER" -f repo="$REPO" -F number="$ISSUE_NUMBER" -f projectTitle="$PROJECT_TITLE" 2>/dev/null || true)
+            }' -f owner="$OWNER" -f repo="$REPO" -F number="$ISSUE_NUMBER" -f projectTitle="$PROJECT_TITLE")
 
-          if [ -z "$DATA" ]; then exit 0; fi
           ISSUE_ID=$(echo "$DATA" | jq -r '.data.repository.issue.id // empty')
           PROJECT=$(echo "$DATA" | jq -c --arg title "$PROJECT_TITLE" '.data.repository.owner.projectsV2.nodes[]? | select((.title | ascii_downcase) == ($title | ascii_downcase))' | head -n 1)
           PROJECT_ID=$(echo "$PROJECT" | jq -r '.id // empty')
           FIELD_ID=$(echo "$PROJECT" | jq -r '.field.id // empty')
           OPTION_ID=$(echo "$PROJECT" | jq -r --arg status "$TARGET_STATUS" '.field.options[] | select((.name | ascii_downcase) == ($status | ascii_downcase)) | .id' | head -n 1)
-          if [ -z "$ISSUE_ID" ] || [ -z "$PROJECT_ID" ] || [ -z "$FIELD_ID" ] || [ -z "$OPTION_ID" ]; then exit 0; fi
+          if [ -z "$ISSUE_ID" ] || [ -z "$PROJECT_ID" ] || [ -z "$FIELD_ID" ] || [ -z "$OPTION_ID" ]; then
+            echo "::error::Could not find issue, project, Status field, or '$TARGET_STATUS' option for ${OWNER}/${REPO} in Project '$PROJECT_TITLE'."
+            exit 1
+          fi
 
           ITEM_ID=$(gh api graphql -f query='
             mutation($projectId: ID!, $contentId: ID!) {
@@ -388,6 +395,22 @@ jobs:
           PROJECT_TITLE: ${{ inputs.project_title }}
           TARGET_STATUS: In review
         run: |
+          ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --json body,labels)
+          PAUSE_CODE=$(echo "$ISSUE_JSON" | jq -r '
+            (([.labels[].name] | any(. == "code" or . == "pause:code")))
+            or ((.body // "") | test("(\\[pause:code\\]|- \\[[xX]\\] [Pp]ause after [Cc]ode)"))
+          ')
+
+          if [ "$PAUSE_CODE" != "true" ]; then
+            echo "Code is continuing automatically; leaving the Project status at Code."
+            exit 0
+          fi
+
+          if [ -z "$PROJECT_TITLE" ]; then
+            echo "::notice::No project_title configured; skipping Project status update."
+            exit 0
+          fi
+
           DATA=$(gh api graphql -f query='
             query($owner: String!, $repo: String!, $number: Int!, $projectTitle: String!) {
               repository(owner: $owner, name: $repo) {
@@ -409,15 +432,17 @@ jobs:
                   }
                 }
               }
-            }' -f owner="$OWNER" -f repo="$REPO" -F number="$ISSUE_NUMBER" -f projectTitle="$PROJECT_TITLE" 2>/dev/null || true)
+            }' -f owner="$OWNER" -f repo="$REPO" -F number="$ISSUE_NUMBER" -f projectTitle="$PROJECT_TITLE")
 
-          if [ -z "$DATA" ]; then exit 0; fi
           ISSUE_ID=$(echo "$DATA" | jq -r '.data.repository.issue.id // empty')
           PROJECT=$(echo "$DATA" | jq -c --arg title "$PROJECT_TITLE" '.data.repository.owner.projectsV2.nodes[]? | select((.title | ascii_downcase) == ($title | ascii_downcase))' | head -n 1)
           PROJECT_ID=$(echo "$PROJECT" | jq -r '.id // empty')
           FIELD_ID=$(echo "$PROJECT" | jq -r '.field.id // empty')
           OPTION_ID=$(echo "$PROJECT" | jq -r --arg status "$TARGET_STATUS" '.field.options[] | select((.name | ascii_downcase) == ($status | ascii_downcase)) | .id' | head -n 1)
-          if [ -z "$ISSUE_ID" ] || [ -z "$PROJECT_ID" ] || [ -z "$FIELD_ID" ] || [ -z "$OPTION_ID" ]; then exit 0; fi
+          if [ -z "$ISSUE_ID" ] || [ -z "$PROJECT_ID" ] || [ -z "$FIELD_ID" ] || [ -z "$OPTION_ID" ]; then
+            echo "::error::Could not find issue, project, Status field, or '$TARGET_STATUS' option for ${OWNER}/${REPO} in Project '$PROJECT_TITLE'."
+            exit 1
+          fi
 
           ITEM_ID=$(gh api graphql -f query='
             mutation($projectId: ID!, $contentId: ID!) {
@@ -442,7 +467,7 @@ jobs:
         run: |
           ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --json body,labels)
           PAUSE_CODE=$(echo "$ISSUE_JSON" | jq -r '
-            (([.labels[].name] | any(. == "ready:code" or . == "pause:code")))
+            (([.labels[].name] | any(. == "code" or . == "pause:code")))
             or ((.body // "") | test("(\\[pause:code\\]|- \\[[xX]\\] [Pp]ause after [Cc]ode)"))
           ')
 
@@ -453,13 +478,13 @@ jobs:
 
           echo "paused=true" >> "$GITHUB_OUTPUT"
           gh label create "review:code" --color "FBCA04" --force --description "Paused after Code; PR open and waiting for manual validation or merge" || true
-          gh issue edit "$ISSUE_NUMBER" --add-label "review:code" --remove-label "ready,ready:code,pause:code" || true
+          gh issue edit "$ISSUE_NUMBER" --add-label "review:code" --remove-label "think,plan,code,release,pause:code" || true
           gh pr edit "$PR_NUMBER" --add-label "review:code" || true
           gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused after Code for Manual PR Validation**
 
           Pull Request #${PR_NUMBER} (${PR_URL}) is open and ready for your review.
           - **Manual merge:** Review and merge PR #${PR_NUMBER} directly on GitHub.
-          - **Run Prove & auto-merge:** Add the **\`ready\`** label to this issue (or run \`Prove and Validate PR\` for PR #${PR_NUMBER}) to run the 13 Prove controls and merge automatically."
+          - **Run Prove & auto-merge:** Add the **\`release\`** label to this issue (or run \`Prove and Validate PR\` for PR #${PR_NUMBER}) to run the 13 Prove controls and merge automatically."
 
           QUEUE_DATA=$(gh api graphql -f query='
             query($owner: String!, $repo: String!) {
@@ -486,11 +511,11 @@ jobs:
             [
               .data.repository.issues.nodes[]?
               | select(.number != $current)
-              | select([.labels.nodes[].name] | any(. == "ready" or . == "ready:think" or . == "ready:plan" or . == "ready:code"))
+              | select([.labels.nodes[].name] | any(. == "think" or . == "plan" or . == "code" or . == "release"))
               | select(([.labels.nodes[].name] | index("needs:developer")) == null)
               | {
                   number: .number,
-                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "ready" or .label.name == "ready:think" or .label.name == "ready:plan" or .label.name == "ready:code") | .createdAt] | last) // .createdAt)
+                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "think" or .label.name == "plan" or .label.name == "code" or .label.name == "release") | .createdAt] | last) // .createdAt)
                 }
             ]
             | sort_by(.readyAt, .number)
@@ -498,7 +523,7 @@ jobs:
           ')
 
           if [ -n "$NEXT_ISSUE" ]; then
-            echo "Advancing FIFO queue to next Ready issue #${NEXT_ISSUE} while PR #${PR_NUMBER} (#${ISSUE_NUMBER}) awaits manual review..."
+            echo "Advancing FIFO queue to next labeled issue #${NEXT_ISSUE} while PR #${PR_NUMBER} (#${ISSUE_NUMBER}) awaits manual review..."
             gh workflow run think.yml -f issue_number="$NEXT_ISSUE"
           fi
 
@@ -524,7 +549,7 @@ jobs:
         run: |
           if [ -n "${ISSUE_NUMBER:-}" ]; then
             gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
-            gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "ready,ready:think,ready:plan,ready:code" || true
+            gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "think,plan,code,release" || true
           fi
 
           QUEUE_DATA=$(gh api graphql -f query='
@@ -552,11 +577,11 @@ jobs:
             [
               .data.repository.issues.nodes[]?
               | select(.number != $current)
-              | select([.labels.nodes[].name] | any(. == "ready" or . == "ready:think" or . == "ready:plan" or . == "ready:code"))
+              | select([.labels.nodes[].name] | any(. == "think" or . == "plan" or . == "code" or . == "release"))
               | select(([.labels.nodes[].name] | index("needs:developer")) == null)
               | {
                   number: .number,
-                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "ready" or .label.name == "ready:think" or .label.name == "ready:plan" or .label.name == "ready:code") | .createdAt] | last) // .createdAt)
+                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "think" or .label.name == "plan" or .label.name == "code" or .label.name == "release") | .createdAt] | last) // .createdAt)
                 }
             ]
             | sort_by(.readyAt, .number)
@@ -564,6 +589,6 @@ jobs:
           ')
 
           if [ -n "$NEXT_ISSUE" ]; then
-            echo "Advancing FIFO queue to next Ready issue #${NEXT_ISSUE}..."
+            echo "Advancing FIFO queue to next labeled issue #${NEXT_ISSUE}..."
             gh workflow run think.yml -f issue_number="$NEXT_ISSUE"
           fi

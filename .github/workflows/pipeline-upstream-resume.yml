@@ -86,12 +86,12 @@ jobs:
           2. Include \`package.json\` and \`package-lock.json\` in \`## In Scope\` of \`plan.md\`.
           3. Delegate directly to the newly released \`${PACKAGE}@${VERSION}\` API."
 
-            gh issue edit "$ISSUE_NUMBER" --remove-label "blocked:upstream" --add-label "ready"
+            gh issue edit "$ISSUE_NUMBER" --remove-label "blocked:upstream" --add-label "release"
           done
 
           # Check if the pipeline is currently idle; if so, dispatch Think for the head of the FIFO queue
           ACTIVE_RUNS=0
-          for wf in "Think from Ready Issue" "Plan from Think Spec" "Code and Open PR" "Prove and Validate PR"; do
+          for wf in "Think from Issue Label" "Plan from Think Spec" "Code and Open PR" "Prove and Validate PR"; do
             COUNT=$(gh run list --workflow "$wf" --limit 5 --json status \
               --jq '[.[] | select(.status == "in_progress" or .status == "queued" or .status == "waiting" or .status == "requested")] | length' 2>/dev/null || echo "0")
             ACTIVE_RUNS=$((ACTIVE_RUNS + COUNT))
@@ -103,7 +103,7 @@ jobs:
           if [ "$ACTIVE_RUNS" -eq 0 ] && [ "$OPEN_AGENT_PRS" -eq 0 ]; then
             FIRST_ISSUE=$(echo "$BLOCKED_ISSUES" | head -n 1)
             if [ -n "$FIRST_ISSUE" ]; then
-              echo "Pipeline is idle; dispatching Think from Ready Issue for #${FIRST_ISSUE}..."
+              echo "Pipeline is idle; dispatching Think from Issue Label for #${FIRST_ISSUE}..."
               gh workflow run think.yml -f issue_number="$FIRST_ISSUE"
             fi
           fi
