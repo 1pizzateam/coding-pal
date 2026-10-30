@@ -375,6 +375,8 @@ jobs:
 
           echo "$PR_NUMBER" > specs/pr_number.txt
           echo "$ISSUE_NUMBER" > specs/issue_number.txt
+          echo "PR_NUMBER=${PR_NUMBER}" >> "$GITHUB_ENV"
+          echo "PR_URL=${PR_URL}" >> "$GITHUB_ENV"
           gh issue comment "$ISSUE_NUMBER" --body "Pull request opened for #${ISSUE_NUMBER}: ${PR_URL}"
 
       - name: Sync issue to In review on Project board
@@ -430,35 +432,39 @@ jobs:
               }) { projectV2Item { id } }
             }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$FIELD_ID" -f optionId="$OPTION_ID" >/dev/null
 
-      - name: Upload code-spec artifact for Prove workflow
+      - name: Check for manual validation checkpoint after Code
+        id: checkpoint
         if: steps.resolve.outputs.skip != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: code-spec
-          path: |
-            specs/issue_number.txt
-            specs/pr_number.txt
-            specs/issue-${{ env.ISSUE_NUMBER }}/think.md
-            specs/issue-${{ env.ISSUE_NUMBER }}/plan.md
-            specs/issue-${{ env.ISSUE_NUMBER }}/editor-requests.json
-          retention-days: 7
-
-      - name: Advance FIFO queue if Code fails
-        if: failure() && steps.resolve.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
         run: |
-          if [ -n "${ISSUE_NUMBER:-}" ]; then
-            gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
-            gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "ready" || true
+          ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --json body,labels)
+          PAUSE_CODE=$(echo "$ISSUE_JSON" | jq -r '
+            (([.labels[].name] | any(. == "ready:code" or . == "pause:code")))
+            or ((.body // "") | test("(\\[pause:code\\]|- \\[[xX]\\] [Pp]ause after [Cc]ode)"))
+          ')
+
+          if [ "$PAUSE_CODE" != "true" ]; then
+            echo "paused=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          echo "paused=true" >> "$GITHUB_OUTPUT"
+          gh label create "review:code" --color "FBCA04" --force --description "Paused after Code; PR open and waiting for manual validation or merge" || true
+          gh issue edit "$ISSUE_NUMBER" --add-label "review:code" --remove-label "ready,ready:code,pause:code" || true
+          gh pr edit "$PR_NUMBER" --add-label "review:code" || true
+          gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused after Code for Manual PR Validation**
+
+          Pull Request #${PR_NUMBER} (${PR_URL}) is open and ready for your review.
+          - **Manual merge:** Review and merge PR #${PR_NUMBER} directly on GitHub.
+          - **Run Prove & auto-merge:** Add the **\`ready\`** label to this issue (or run \`Prove and Validate PR\` for PR #${PR_NUMBER}) to run the 13 Prove controls and merge automatically."
 
           QUEUE_DATA=$(gh api graphql -f query='
             query($owner: String!, $repo: String!) {
               repository(owner: $owner, name: $repo) {
-                issues(states: [OPEN], labels: ["ready"], first: 100) {
+                issues(states: [OPEN], first: 100) {
                   nodes {
                     number
                     createdAt
@@ -480,10 +486,77 @@ jobs:
             [
               .data.repository.issues.nodes[]?
               | select(.number != $current)
+              | select([.labels.nodes[].name] | any(. == "ready" or . == "ready:think" or . == "ready:plan" or . == "ready:code"))
               | select(([.labels.nodes[].name] | index("needs:developer")) == null)
               | {
                   number: .number,
-                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "ready") | .createdAt] | last) // .createdAt)
+                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "ready" or .label.name == "ready:think" or .label.name == "ready:plan" or .label.name == "ready:code") | .createdAt] | last) // .createdAt)
+                }
+            ]
+            | sort_by(.readyAt, .number)
+            | .[0].number // empty
+          ')
+
+          if [ -n "$NEXT_ISSUE" ]; then
+            echo "Advancing FIFO queue to next Ready issue #${NEXT_ISSUE} while PR #${PR_NUMBER} (#${ISSUE_NUMBER}) awaits manual review..."
+            gh workflow run think.yml -f issue_number="$NEXT_ISSUE"
+          fi
+
+      - name: Upload code-spec artifact for Prove workflow
+        if: steps.resolve.outputs.skip != 'true' && steps.checkpoint.outputs.paused != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-spec
+          path: |
+            specs/issue_number.txt
+            specs/pr_number.txt
+            specs/issue-${{ env.ISSUE_NUMBER }}/think.md
+            specs/issue-${{ env.ISSUE_NUMBER }}/plan.md
+            specs/issue-${{ env.ISSUE_NUMBER }}/editor-requests.json
+          retention-days: 7
+
+      - name: Advance FIFO queue if Code fails
+        if: failure() && steps.resolve.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          if [ -n "${ISSUE_NUMBER:-}" ]; then
+            gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
+            gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "ready,ready:think,ready:plan,ready:code" || true
+          fi
+
+          QUEUE_DATA=$(gh api graphql -f query='
+            query($owner: String!, $repo: String!) {
+              repository(owner: $owner, name: $repo) {
+                issues(states: [OPEN], first: 100) {
+                  nodes {
+                    number
+                    createdAt
+                    labels(first: 20) { nodes { name } }
+                    timelineItems(itemTypes: [LABELED_EVENT], last: 20) {
+                      nodes {
+                        ... on LabeledEvent {
+                          createdAt
+                          label { name }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }' -f owner="$OWNER" -f repo="$REPO" 2>/dev/null || true)
+
+          NEXT_ISSUE=$(echo "$QUEUE_DATA" | jq -r --argjson current "${ISSUE_NUMBER:-0}" '
+            [
+              .data.repository.issues.nodes[]?
+              | select(.number != $current)
+              | select([.labels.nodes[].name] | any(. == "ready" or . == "ready:think" or . == "ready:plan" or . == "ready:code"))
+              | select(([.labels.nodes[].name] | index("needs:developer")) == null)
+              | {
+                  number: .number,
+                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "ready" or .label.name == "ready:think" or .label.name == "ready:plan" or .label.name == "ready:code") | .createdAt] | last) // .createdAt)
                 }
             ]
             | sort_by(.readyAt, .number)

@@ -28,14 +28,42 @@ Centralized CI audit instructions, specialist agents, and reusable GitHub Action
 | | `.github/workflows/dead-code-audit.yml` | Reusable Dead Code Audit workflow |
 | | `.github/workflows/test-gap-audit.yml` | Reusable Test Coverage Gap Audit workflow |
 | | `.github/workflows/docs-sync-audit.yml` | Reusable Documentation Sync Audit workflow |
-| **Delivery Pipeline** (7 reusable workflows) | `.github/workflows/pipeline-think.yml` | FIFO-queued Think phase (validates `think.md`, supports `upstream-request.json` escalation to `@1pizzateam/*` libraries and `editor-requests.json` synchronization to companion game editors) |
-| | `.github/workflows/pipeline-plan.yml` | Plan phase (validates `plan.md` against `think.md`, enforces library documentation scope when public exports change, clones sibling `../DoomR.js` for companion game editors) |
-| | `.github/workflows/pipeline-code.yml` | Code phase (step-by-step `code-loop`, deterministic exit gates including `verify-release-readiness.mjs --mode pr`, opens PR) |
+| **Delivery Pipeline** (7 reusable workflows) | `.github/workflows/pipeline-think.yml` | FIFO-queued Think phase with Smart Resume and manual validation checkpoints (`ready:think` / `pause:think`), `upstream-request.json` escalation to `@1pizzateam/*` libraries, and `editor-requests.json` synchronization to companion game editors |
+| | `.github/workflows/pipeline-plan.yml` | Plan phase with manual validation checkpoints (`ready:plan` / `pause:plan`), validates `plan.md` against `think.md`, enforces library documentation scope when public exports change, and clones sibling `../DoomR.js` for companion game editors |
+| | `.github/workflows/pipeline-code.yml` | Code phase (step-by-step `code-loop`, deterministic exit gates including `verify-release-readiness.mjs --mode pr`, opens PR; supports `workflow_dispatch` resume from an approved `# Plan:` issue comment) |
 | | `.github/workflows/pipeline-prove.yml` | Prove phase (13 deterministic controls + `gate-fix` loop, auto-merge, pre-release readiness verification + auto-release for `@1pizzateam/*` packages, companion game editor issue dispatch, FIFO queue advancement) |
 | | `.github/workflows/pipeline-publish-npm.yml` | Reusable npm publish & dry-run workflow for `@1pizzateam/*` libraries (verifies `release-readiness`, publishes with OIDC provenance, and dispatches `upstream-library-released` to consumers with open `blocked:upstream` issues) |
 | | `.github/workflows/pipeline-deploy-docs.yml` | Reusable VitePress documentation build and GitHub Pages deployment workflow for `@1pizzateam/*` libraries |
 | | `.github/workflows/pipeline-upstream-resume.yml` | Reusable consumer workflow that waits for npm registry propagation, unblocks `blocked:upstream` issues, and resumes the FIFO pipeline |
 | **Skills** (1) | `skills/release-readiness/SKILL.md` & `skills/release-readiness/scripts/verify-release-readiness.mjs` | Deterministic pre-release gate for `@1pizzateam/*` libraries verifying `package.json` & lockfile sync, `CHANGELOG.md` top version entry & format, public `src/` export documentation coverage (`website/docs/**` & `README.md`), VitePress sidebar links, docs build, and `npm pack --dry-run --json` tarball contents |
+
+## Manual Validation Checkpoints & Smart Resume (`Think` & `Plan`)
+
+You can control whether an issue runs the entire `Think -> Plan -> Code -> Prove` pipeline automatically or pauses after `Think` or `Plan` for human review and editing.
+
+### 1. Triggering via Labels
+- **`ready`**: Runs `Think -> Plan -> Code -> Prove` end-to-end automatically.
+- **`ready:think`** (or `ready` + `pause:think`): Runs `Think`, posts the `# Think: ...` spec as an issue comment, swaps the label for `review:think`, and advances the FIFO queue to the next issue without starting `Plan`.
+- **`ready:plan`** (or `ready` + `pause:plan`): Runs `Think -> Plan` (or skips `Think` if a `# Think:` comment already exists), posts the `# Plan: ...` spec as an issue comment, swaps the label for `review:plan`, and advances the FIFO queue without starting `Code`.
+
+### 2. Triggering via Issue Body Checkboxes / Directives
+When writing an issue, you can also include checkboxes or directives anywhere in the issue body and simply label the issue `ready`:
+```markdown
+- [x] Pause after Think
+- [ ] Pause after Plan
+```
+*(or inline `[pause:think]` / `[pause:plan]`)*
+
+### 3. Reviewing, Editing & Smart Resume
+When a workflow pauses at `review:think` or `review:plan`:
+1. **Review / Edit**: You can edit the `# Think: ...` or `# Plan: ...` comment directly on the GitHub issue to refine scope, invariants, or implementation steps (remember to uncheck `- [x] Pause after ...` in the issue body if you used a checkbox).
+2. **Resume**:
+   - From `review:think`:
+     - Add label **`ready:plan`** to run `Plan` (reusing your `# Think:` comment) and pause again after `Plan` for review (`review:plan`).
+     - Or add label **`ready`** to run `Plan -> Code -> Prove` automatically using your `# Think:` comment.
+   - From `review:plan`:
+     - Add label **`ready`** to jump straight to `Code -> Prove` using your `# Plan:` and `# Think:` comments (skipping both `Think` and `Plan`).
+   - Need to regenerate a phase from scratch? Delete the `# Think:` or `# Plan:` comment (or re-label with `ready:think` / `ready:plan`).
 
 ## Cross-Repository Upstream Escalation & Companion Editor Synchronization
 

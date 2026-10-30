@@ -412,7 +412,7 @@ jobs:
           gh pr review "$PR_NUMBER" --approve --body-file "$PROVE_FILE" || gh pr comment "$PR_NUMBER" --body-file "$PROVE_FILE"
 
           gh pr merge "$PR_NUMBER" --squash --delete-branch
-          gh issue edit "$ISSUE_NUMBER" --remove-label "ready" || true
+          gh issue edit "$ISSUE_NUMBER" --remove-label "ready,ready:think,ready:plan,ready:code,review:code" || true
 
       - name: Dispatch companion game editor updates after PR merge
         if: steps.resolve.outputs.skip != 'true'
@@ -654,7 +654,7 @@ jobs:
         run: |
           if [ -n "${ISSUE_NUMBER:-}" ]; then
             gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
-            gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "ready" || true
+            gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "ready,ready:think,ready:plan,ready:code" || true
           fi
 
       - name: Trigger next Ready issue in FIFO queue
@@ -667,7 +667,7 @@ jobs:
           QUEUE_DATA=$(gh api graphql -f query='
             query($owner: String!, $repo: String!) {
               repository(owner: $owner, name: $repo) {
-                issues(states: [OPEN], labels: ["ready"], first: 100) {
+                issues(states: [OPEN], first: 100) {
                   nodes {
                     number
                     createdAt
@@ -689,10 +689,11 @@ jobs:
             [
               .data.repository.issues.nodes[]?
               | select(.number != $current)
+              | select([.labels.nodes[].name] | any(. == "ready" or . == "ready:think" or . == "ready:plan" or . == "ready:code"))
               | select(([.labels.nodes[].name] | index("needs:developer")) == null)
               | {
                   number: .number,
-                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "ready") | .createdAt] | last) // .createdAt)
+                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "ready" or .label.name == "ready:think" or .label.name == "ready:plan" or .label.name == "ready:code") | .createdAt] | last) // .createdAt)
                 }
             ]
             | sort_by(.readyAt, .number)

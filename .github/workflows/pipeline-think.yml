@@ -34,7 +34,7 @@ jobs:
       group: copilot-think-${{ github.repository }}-issue-${{ inputs.issue_number }}
       cancel-in-progress: false
     steps:
-      - name: Check FIFO queue for Ready issues
+      - name: Check FIFO queue and inspect existing specs for Smart Resume
         id: fifo
         env:
           GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
@@ -44,70 +44,107 @@ jobs:
           ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
           echo "ISSUE_NUMBER=${ISSUE_NUMBER}" >> "$GITHUB_ENV"
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            echo "Dispatched directly (FIFO handoff or manual run) for issue #${ISSUE_NUMBER}; proceeding."
-            echo "queued=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+          if [ "$EVENT_NAME" != "workflow_dispatch" ]; then
+            ACTIVE_PIPELINE_RUNS=0
+            for wf in "Plan from Think Spec" "Code Plan and Open PR" "Prove and Validate PR"; do
+              COUNT=$(gh run list --workflow "$wf" --limit 5 --json status \
+                --jq '[.[] | select(.status == "in_progress" or .status == "queued" or .status == "waiting" or .status == "requested")] | length' 2>/dev/null || echo "0")
+              ACTIVE_PIPELINE_RUNS=$((ACTIVE_PIPELINE_RUNS + COUNT))
+            done
 
-          ACTIVE_PIPELINE_RUNS=0
-          for wf in "Plan from Think Spec" "Code Plan and Open PR" "Prove and Validate PR"; do
-            COUNT=$(gh run list --workflow "$wf" --limit 5 --json status \
-              --jq '[.[] | select(.status == "in_progress" or .status == "queued" or .status == "waiting" or .status == "requested")] | length' 2>/dev/null || echo "0")
-            ACTIVE_PIPELINE_RUNS=$((ACTIVE_PIPELINE_RUNS + COUNT))
-          done
+            OPEN_AGENT_PRS=$(gh pr list --state open --json number,headRefName,labels \
+              --jq "[.[] | select(.headRefName | test(\"^(feature|fix|chore)/issue-[0-9]+-\")) | select((.headRefName | test(\"^(feature|fix|chore)/issue-${ISSUE_NUMBER}-\")) | not) | select(([.labels[].name] | any(. == \"needs:developer\" or . == \"review:code\")) | not)] | length" 2>/dev/null || echo "0")
 
-          OPEN_AGENT_PRS=$(gh pr list --state open --json number,headRefName,labels \
-            --jq "[.[] | select(.headRefName | test(\"^(feature|fix|chore)/issue-[0-9]+-\")) | select((.headRefName | test(\"^(feature|fix|chore)/issue-${ISSUE_NUMBER}-\")) | not) | select([.labels[].name] | index(\"needs:developer\") == null)] | length" 2>/dev/null || echo "0")
-
-          QUEUE_DATA=$(gh api graphql -f query='
-            query($owner: String!, $repo: String!) {
-              repository(owner: $owner, name: $repo) {
-                issues(states: [OPEN], labels: ["ready"], first: 100) {
-                  nodes {
-                    number
-                    createdAt
-                    labels(first: 20) { nodes { name } }
-                    timelineItems(itemTypes: [LABELED_EVENT], last: 20) {
-                      nodes {
-                        ... on LabeledEvent {
-                          createdAt
-                          label { name }
+            QUEUE_DATA=$(gh api graphql -f query='
+              query($owner: String!, $repo: String!) {
+                repository(owner: $owner, name: $repo) {
+                  issues(states: [OPEN], first: 100) {
+                    nodes {
+                      number
+                      createdAt
+                      labels(first: 20) { nodes { name } }
+                      timelineItems(itemTypes: [LABELED_EVENT], last: 20) {
+                        nodes {
+                          ... on LabeledEvent {
+                            createdAt
+                            label { name }
+                          }
                         }
                       }
                     }
                   }
                 }
-              }
-            }' -f owner="$OWNER" -f repo="$REPO" 2>/dev/null || true)
+              }' -f owner="$OWNER" -f repo="$REPO" 2>/dev/null || true)
 
-          QUEUE_HEAD=$(echo "$QUEUE_DATA" | jq -r '
-            [
-              .data.repository.issues.nodes[]?
-              | select(([.labels.nodes[].name] | index("needs:developer")) == null)
-              | {
-                  number: .number,
-                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "ready") | .createdAt] | last) // .createdAt)
-                }
-            ]
-            | sort_by(.readyAt, .number)
-            | .[0].number // empty
-          ')
+            QUEUE_HEAD=$(echo "$QUEUE_DATA" | jq -r '
+              [
+                .data.repository.issues.nodes[]?
+                | select([.labels.nodes[].name] | any(. == "ready" or . == "ready:think" or . == "ready:plan" or . == "ready:code"))
+                | select(([.labels.nodes[].name] | index("needs:developer")) == null)
+                | {
+                    number: .number,
+                    readyAt: (([.timelineItems.nodes[]? | select(.label.name == "ready" or .label.name == "ready:think" or .label.name == "ready:plan" or .label.name == "ready:code") | .createdAt] | last) // .createdAt)
+                  }
+              ]
+              | sort_by(.readyAt, .number)
+              | .[0].number // empty
+            ')
 
-          if [ "$ACTIVE_PIPELINE_RUNS" -gt 0 ] || [ "$OPEN_AGENT_PRS" -gt 0 ] || { [ -n "$QUEUE_HEAD" ] && [ "$QUEUE_HEAD" != "$ISSUE_NUMBER" ]; }; then
-            echo "::notice::Issue #${ISSUE_NUMBER} is queued in FIFO (head of queue: #${QUEUE_HEAD:-$ISSUE_NUMBER}, active runs: ${ACTIVE_PIPELINE_RUNS}, open PRs: ${OPEN_AGENT_PRS}). It will start automatically when the current issue completes."
-            echo "queued=true" >> "$GITHUB_OUTPUT"
+            if [ "$ACTIVE_PIPELINE_RUNS" -gt 0 ] || [ "$OPEN_AGENT_PRS" -gt 0 ] || { [ -n "$QUEUE_HEAD" ] && [ "$QUEUE_HEAD" != "$ISSUE_NUMBER" ]; }; then
+              echo "::notice::Issue #${ISSUE_NUMBER} is queued in FIFO (head of queue: #${QUEUE_HEAD:-$ISSUE_NUMBER}, active runs: ${ACTIVE_PIPELINE_RUNS}, open PRs: ${OPEN_AGENT_PRS}). It will start automatically when the current issue completes."
+              echo "queued=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          echo "queued=false" >> "$GITHUB_OUTPUT"
+
+          # Clear any previous manual review checkpoint labels now that the issue is active
+          gh issue edit "$ISSUE_NUMBER" --remove-label "review:think,review:plan,review:code" 2>/dev/null || true
+
+          ISSUE_VIEW=$(gh issue view "$ISSUE_NUMBER" --json labels,comments)
+          HAS_READY_THINK=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("ready:think") != null')
+          HAS_READY_PLAN=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("ready:plan") != null')
+          HAS_READY_CODE=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("ready:code") != null')
+          EXISTING_THINK=$(echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty')
+          EXISTING_PLAN=$(echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Plan:"; "m"))] | last // empty')
+          EXISTING_PR=$(gh pr list --state open --json number,headRefName \
+            --jq "[.[] | select(.headRefName | test(\"^(feature|fix|chore)/issue-${ISSUE_NUMBER}-\"))][0].number // empty" 2>/dev/null || true)
+
+          # Smart Resume 0: An open PR already exists for this issue and user labeled 'ready' -> jump straight to Prove!
+          if [ -n "$EXISTING_PR" ] && [ "$HAS_READY_THINK" != "true" ] && [ "$HAS_READY_PLAN" != "true" ] && [ "$HAS_READY_CODE" != "true" ]; then
+            echo "Found open PR #${EXISTING_PR} for issue #${ISSUE_NUMBER}; dispatching Prove and Validate PR directly."
+            gh pr edit "$EXISTING_PR" --remove-label "review:code" 2>/dev/null || true
+            gh workflow run prove.yml -f pr_number="$EXISTING_PR" -f issue_number="$ISSUE_NUMBER"
+            echo "resumed_stage=prove" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          echo "Issue #${ISSUE_NUMBER} is at the head of the FIFO queue; starting Think."
-          echo "queued=false" >> "$GITHUB_OUTPUT"
+          # Smart Resume 1: Both Think and Plan already exist on the issue, and user labeled 'ready' or 'ready:code' -> jump straight to Code!
+          if [ -n "$EXISTING_THINK" ] && [ -n "$EXISTING_PLAN" ] && [ "$HAS_READY_THINK" != "true" ] && [ "$HAS_READY_PLAN" != "true" ]; then
+            echo "Found validated # Think: and # Plan: comments on issue #${ISSUE_NUMBER}; dispatching Code Plan and Open PR directly."
+            gh workflow run code.yml -f issue_number="$ISSUE_NUMBER"
+            echo "resumed_stage=code" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Smart Resume 2: Think already exists on the issue, and user labeled 'ready:plan', 'ready:code', or 'ready' -> reuse existing think.md and proceed to Plan!
+          if [ -n "$EXISTING_THINK" ] && [ "$HAS_READY_THINK" != "true" ]; then
+            echo "Found validated # Think: comment on issue #${ISSUE_NUMBER}; reusing existing think.md to trigger Plan."
+            mkdir -p "specs/issue-${ISSUE_NUMBER}"
+            printf "%s\n" "$EXISTING_THINK" > "specs/issue-${ISSUE_NUMBER}/think.md"
+            echo "$ISSUE_NUMBER" > specs/issue_number.txt
+            echo "resumed_stage=plan" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "resumed_stage=none" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v4
-        if: steps.fifo.outputs.queued != 'true'
+        if: steps.fifo.outputs.queued != 'true' && steps.fifo.outputs.resumed_stage == 'none'
 
       - name: Install ALTEN-group/coding-pal think primitives
-        if: steps.fifo.outputs.queued != 'true'
+        if: steps.fifo.outputs.queued != 'true' && steps.fifo.outputs.resumed_stage == 'none'
         env:
           GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
         run: |
@@ -125,13 +162,13 @@ jobs:
           rm -rf /tmp/alten-coding-pal /tmp/1pizza-coding-pal
 
       - uses: actions/setup-node@v4
-        if: steps.fifo.outputs.queued != 'true'
+        if: steps.fifo.outputs.queued != 'true' && steps.fifo.outputs.resumed_stage == 'none'
         with:
           node-version: 22
           cache: npm
 
       - name: Clone sibling DoomR.js workspace for companion game editors
-        if: steps.fifo.outputs.queued != 'true'
+        if: steps.fifo.outputs.queued != 'true' && steps.fifo.outputs.resumed_stage == 'none'
         env:
           GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
           REPO_NAME: ${{ github.event.repository.name }}
@@ -145,13 +182,13 @@ jobs:
               ;;
           esac
 
-      - if: steps.fifo.outputs.queued != 'true'
+      - if: steps.fifo.outputs.queued != 'true' && steps.fifo.outputs.resumed_stage == 'none'
         run: npm ci
-      - if: steps.fifo.outputs.queued != 'true'
+      - if: steps.fifo.outputs.queued != 'true' && steps.fifo.outputs.resumed_stage == 'none'
         run: npm install -g @github/copilot
 
       - name: Fetch issue context and run Thinker agent
-        if: steps.fifo.outputs.queued != 'true'
+        if: steps.fifo.outputs.queued != 'true' && steps.fifo.outputs.resumed_stage == 'none'
         env:
           GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
@@ -196,7 +233,7 @@ jobs:
           Validate the generated file with: node .agents/skills/think/scripts/validate-think.mjs --think ${THINK_FILE} and fix any validation errors until it exits with code 0."
 
       - name: Validate think.md contract
-        if: steps.fifo.outputs.queued != 'true'
+        if: steps.fifo.outputs.queued != 'true' && steps.fifo.outputs.resumed_stage == 'none'
         env:
           ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
@@ -205,7 +242,7 @@ jobs:
           cat "$THINK_FILE" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Comment think.md on issue
-        if: steps.fifo.outputs.queued != 'true'
+        if: steps.fifo.outputs.queued != 'true' && steps.fifo.outputs.resumed_stage == 'none'
         env:
           GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
@@ -226,7 +263,7 @@ jobs:
 
       - name: Check for upstream @1pizzateam/* library escalation
         id: escalate
-        if: steps.fifo.outputs.queued != 'true'
+        if: steps.fifo.outputs.queued != 'true' && steps.fifo.outputs.resumed_stage == 'none'
         env:
           GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
           OWNER: ${{ github.repository_owner }}
@@ -290,7 +327,7 @@ jobs:
             --body "$UP_BODY")
           LIB_ISSUE_NUMBER="${LIB_ISSUE_URL##*/}"
 
-          gh issue edit "$ISSUE_NUMBER" --add-label "blocked:upstream,upstream-escalated:1" --remove-label "ready" || true
+          gh issue edit "$ISSUE_NUMBER" --add-label "blocked:upstream,upstream-escalated:1" --remove-label "ready,ready:think,ready:plan,ready:code" || true
           gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused for Upstream Dependency Escalation**
 
           The Think phase determined that \`${PKG}\` (\`${TARGET_REPO}\`) should be updated first before implementing #${ISSUE_NUMBER}.
@@ -306,7 +343,7 @@ jobs:
           QUEUE_DATA=$(gh api graphql -f query='
             query($owner: String!, $repo: String!) {
               repository(owner: $owner, name: $repo) {
-                issues(states: [OPEN], labels: ["ready"], first: 100) {
+                issues(states: [OPEN], first: 100) {
                   nodes {
                     number
                     createdAt
@@ -328,10 +365,11 @@ jobs:
             [
               .data.repository.issues.nodes[]?
               | select(.number != $current)
+              | select([.labels.nodes[].name] | any(. == "ready" or . == "ready:think" or . == "ready:plan" or . == "ready:code"))
               | select(([.labels.nodes[].name] | index("needs:developer")) == null)
               | {
                   number: .number,
-                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "ready") | .createdAt] | last) // .createdAt)
+                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "ready" or .label.name == "ready:think" or .label.name == "ready:plan" or .label.name == "ready:code") | .createdAt] | last) // .createdAt)
                 }
             ]
             | sort_by(.readyAt, .number)
@@ -343,8 +381,87 @@ jobs:
             gh workflow run think.yml -f issue_number="$NEXT_ISSUE"
           fi
 
+      - name: Check for manual validation checkpoint after Think
+        id: checkpoint
+        if: >-
+          steps.fifo.outputs.queued != 'true' &&
+          steps.fifo.outputs.resumed_stage == 'none' &&
+          steps.escalate.outputs.escalated != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+        run: |
+          ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --json body,labels)
+          PAUSE_THINK=$(echo "$ISSUE_JSON" | jq -r '
+            (([.labels[].name] | any(. == "ready:think" or . == "pause:think")))
+            or ((.body // "") | test("(\\[pause:think\\]|- \\[[xX]\\] [Pp]ause after [Tt]hink)"))
+          ')
+
+          if [ "$PAUSE_THINK" != "true" ]; then
+            echo "paused=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "paused=true" >> "$GITHUB_OUTPUT"
+          gh label create "review:think" --color "FBCA04" --force --description "Paused after Think; waiting for manual validation of think.md" || true
+          gh issue edit "$ISSUE_NUMBER" --add-label "review:think" --remove-label "ready,ready:think,pause:think" || true
+          gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused after Think for Manual Validation**
+
+          Review (and optionally edit) the \`# Think:\` specification comment above.
+          - To generate the **Plan** next and pause again for validation, add the **\`ready:plan\`** label.
+          - To run **\`Plan → Code\`** and stop at the Pull Request without auto-merging, add the **\`ready:code\`** label.
+          - To run **\`Plan → Code → Prove\`** and auto-merge, add the **\`ready\`** label."
+
+          QUEUE_DATA=$(gh api graphql -f query='
+            query($owner: String!, $repo: String!) {
+              repository(owner: $owner, name: $repo) {
+                issues(states: [OPEN], first: 100) {
+                  nodes {
+                    number
+                    createdAt
+                    labels(first: 20) { nodes { name } }
+                    timelineItems(itemTypes: [LABELED_EVENT], last: 20) {
+                      nodes {
+                        ... on LabeledEvent {
+                          createdAt
+                          label { name }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }' -f owner="$OWNER" -f repo="$REPO" 2>/dev/null || true)
+
+          NEXT_ISSUE=$(echo "$QUEUE_DATA" | jq -r --argjson current "$ISSUE_NUMBER" '
+            [
+              .data.repository.issues.nodes[]?
+              | select(.number != $current)
+              | select([.labels.nodes[].name] | any(. == "ready" or . == "ready:think" or . == "ready:plan" or . == "ready:code"))
+              | select(([.labels.nodes[].name] | index("needs:developer")) == null)
+              | {
+                  number: .number,
+                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "ready" or .label.name == "ready:think" or .label.name == "ready:plan" or .label.name == "ready:code") | .createdAt] | last) // .createdAt)
+                }
+            ]
+            | sort_by(.readyAt, .number)
+            | .[0].number // empty
+          ')
+
+          if [ -n "$NEXT_ISSUE" ]; then
+            echo "Advancing FIFO queue to next Ready issue #${NEXT_ISSUE} while #${ISSUE_NUMBER} awaits manual Think review..."
+            gh workflow run think.yml -f issue_number="$NEXT_ISSUE"
+          fi
+
       - name: Upload think.md artifact for Plan workflow
-        if: steps.fifo.outputs.queued != 'true' && steps.escalate.outputs.escalated != 'true'
+        if: >-
+          steps.fifo.outputs.queued != 'true' &&
+          steps.fifo.outputs.resumed_stage != 'code' &&
+          steps.fifo.outputs.resumed_stage != 'prove' &&
+          steps.escalate.outputs.escalated != 'true' &&
+          steps.checkpoint.outputs.paused != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: think-spec
@@ -363,12 +480,12 @@ jobs:
           ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
           gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
-          gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "ready" || true
+          gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "ready,ready:think,ready:plan,ready:code" || true
 
           QUEUE_DATA=$(gh api graphql -f query='
             query($owner: String!, $repo: String!) {
               repository(owner: $owner, name: $repo) {
-                issues(states: [OPEN], labels: ["ready"], first: 100) {
+                issues(states: [OPEN], first: 100) {
                   nodes {
                     number
                     createdAt
@@ -390,10 +507,11 @@ jobs:
             [
               .data.repository.issues.nodes[]?
               | select(.number != $current)
+              | select([.labels.nodes[].name] | any(. == "ready" or . == "ready:think" or . == "ready:plan" or . == "ready:code"))
               | select(([.labels.nodes[].name] | index("needs:developer")) == null)
               | {
                   number: .number,
-                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "ready") | .createdAt] | last) // .createdAt)
+                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "ready" or .label.name == "ready:think" or .label.name == "ready:plan" or .label.name == "ready:code") | .createdAt] | last) // .createdAt)
                 }
             ]
             | sort_by(.readyAt, .number)
