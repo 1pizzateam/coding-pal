@@ -47,15 +47,30 @@ jobs:
         run: |
           git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/1pizzateam/coding-pal.git /tmp/coding-pal
           rm -rf .github/instructions .github/agents .github/prompts .github/skills .github/copilot-instructions.md .agents .claude .cursor .gemini CLAUDE.md GEMINI.md AGENTS.md .cursorrules .windsurfrules
-          mkdir -p .github/instructions .github/agents
+          mkdir -p .github/instructions .github/agents .agents/skills
           cp /tmp/coding-pal/instructions/*.md .github/instructions/
           cp /tmp/coding-pal/agents/*.md .github/agents/
+          cp -R /tmp/coding-pal/skills/* .agents/skills/
           rm -rf /tmp/coding-pal
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+
+      - name: Clone sibling DoomR.js workspace for companion game editors
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          case "$REPO_NAME" in
+            Cadenza|MappR|PixelGun|PolyGun|ShaderGun)
+              if [ ! -d ../DoomR.js ]; then
+                git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/1pizzateam/DoomR.js.git" ../DoomR.js
+                npm --prefix ../DoomR.js ci
+              fi
+              ;;
+          esac
 
       - run: npm ci
       - run: npm install -g @github/copilot
@@ -68,7 +83,7 @@ jobs:
           EXTRA_PROMPT: ${{ inputs.prompt }}
         run: |
           copilot --agent="$AGENT" --allow-all-tools \
-            --prompt "Scope: ${SCOPE}. ${EXTRA_PROMPT} Write a brief Markdown summary of changes to audit-report.md. If an upstream @1pizzateam/* library (`@1pizzateam/roostr` -> `1pizzateam/RoostR.js`, `@1pizzateam/bumpr` -> `1pizzateam/BumpR.js`, `@1pizzateam/loopr` -> `1pizzateam/LoopR.js`, `@1pizzateam/spock` -> `1pizzateam/Spock.js`, `@1pizzateam/groovr` -> `1pizzateam/GroovR.js`) should be updated instead of (or prior to) changing this repository, write the structured request array to upstream-requests.json."
+            --prompt "Scope: ${SCOPE}. ${EXTRA_PROMPT} Write a brief Markdown summary of changes to audit-report.md. If an upstream @1pizzateam/* library (`@1pizzateam/roostr` -> `1pizzateam/RoostR.js`, `@1pizzateam/bumpr` -> `1pizzateam/BumpR.js`, `@1pizzateam/loopr` -> `1pizzateam/LoopR.js`, `@1pizzateam/spock` -> `1pizzateam/Spock.js`, `@1pizzateam/groovr` -> `1pizzateam/GroovR.js`) should be updated instead of (or prior to) changing this repository, write the structured request array to upstream-requests.json. If a change in DoomR.js requires a companion update in one of the 1PizzaTeam game editors (`cadenza` -> `1pizzateam/Cadenza`, `mappr` -> `1pizzateam/MappR`, `pixelgun` -> `1pizzateam/PixelGun`, `polygun` -> `1pizzateam/PolyGun`, `shadergun` -> `1pizzateam/ShaderGun`), write a JSON array to editor-requests.json with objects `{ \"editor\": \"<cadenza|mappr|pixelgun|polygun|shadergun>\", \"repo\": \"1pizzateam/<Editor>\", \"title\": \"<issue title>\", \"body\": \"<markdown body describing the editor update>\" }`."
 
       - name: Escalate upstream @1pizzateam/* library requests
         if: always()
@@ -150,6 +165,72 @@ jobs:
           done
 
           rm -f upstream-requests.json
+
+      - name: Dispatch companion game editor requests
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          CURRENT_REPO: ${{ github.repository }}
+        run: |
+          if [ ! -s editor-requests.json ]; then
+            rm -f editor-requests.json
+            exit 0
+          fi
+
+          COUNT=$(jq 'if type == "array" then length else 0 end' editor-requests.json 2>/dev/null || echo "0")
+          if [ "$COUNT" -eq 0 ]; then
+            rm -f editor-requests.json
+            exit 0
+          fi
+
+          MAX=$((COUNT > 5 ? 5 : COUNT))
+          for ((i = 0; i < MAX; i++)); do
+            EDITOR_NAME=$(jq -r ".[$i].editor // empty" editor-requests.json)
+            TARGET_REPO=$(jq -r ".[$i].repo // empty" editor-requests.json)
+            ED_TITLE=$(jq -r ".[$i].title // empty" editor-requests.json)
+            ED_BODY=$(jq -r ".[$i].body // .[$i].problem // empty" editor-requests.json)
+
+            if [ -z "$TARGET_REPO" ] && [ -n "$EDITOR_NAME" ]; then
+              case "$(echo "$EDITOR_NAME" | tr '[:upper:]' '[:lower:]')" in
+                cadenza)   TARGET_REPO="1pizzateam/Cadenza" ;;
+                mappr)     TARGET_REPO="1pizzateam/MappR" ;;
+                pixelgun)  TARGET_REPO="1pizzateam/PixelGun" ;;
+                polygun)   TARGET_REPO="1pizzateam/PolyGun" ;;
+                shadergun) TARGET_REPO="1pizzateam/ShaderGun" ;;
+              esac
+            fi
+
+            case "$TARGET_REPO" in
+              1pizzateam/Cadenza|1pizzateam/MappR|1pizzateam/PixelGun|1pizzateam/PolyGun|1pizzateam/ShaderGun) ;;
+              *) continue ;;
+            esac
+
+            if [ -z "$ED_TITLE" ] || [ "$TARGET_REPO" = "$CURRENT_REPO" ]; then
+              continue
+            fi
+
+            gh label create "ready" --repo "$TARGET_REPO" --force --description "Ready for autonomous Think -> Plan -> Code -> Prove pipeline" || true
+            gh label create "downstream:doomr" --repo "$TARGET_REPO" --force --description "Triggered by DoomR.js companion editor sync" || true
+
+            ED_ISSUE_URL=$(gh issue create --repo "$TARGET_REPO" \
+              --title "$ED_TITLE" \
+              --label "ready" \
+              --label "downstream:doomr" \
+              --body "${ED_BODY}
+
+          ---
+          ### Triggered by Companion Game Repository
+          - **Source-Repo:** \`${CURRENT_REPO}\`")
+
+            {
+              echo ""
+              echo "### Triggered Companion Game Editor Issue"
+              echo "- **Editor Repository:** \`${TARGET_REPO}\`"
+              echo "- **Issue:** ${ED_ISSUE_URL} (labeled \`ready\`)"
+            } >> audit-report.md
+          done
+
+          rm -f editor-requests.json
 
       - name: Restore repo primitives, publish summary & verify gate
         if: always()

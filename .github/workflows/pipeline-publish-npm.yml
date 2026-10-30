@@ -1,0 +1,132 @@
+name: Reusable Publish to npm
+
+on:
+  workflow_call:
+    inputs:
+      dry_run:
+        description: 'Run verification and npm publish --dry-run without publishing to npm'
+        required: false
+        default: false
+        type: boolean
+      node_version:
+        description: 'Node.js version'
+        required: false
+        default: '22'
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check tag is on default branch
+        if: inputs.dry_run != true && github.event_name == 'release'
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" "origin/${DEFAULT_BRANCH}" || {
+            echo "Tag ${GITHUB_REF_NAME} is not on ${DEFAULT_BRANCH}"
+            exit 1
+          }
+
+      - name: Check manual publish is on default branch
+        if: inputs.dry_run != true && github.event_name == 'workflow_dispatch'
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          [ "$GITHUB_REF" = "refs/heads/${DEFAULT_BRANCH}" ] || {
+            echo "Manual publish is only allowed from ${DEFAULT_BRANCH}"
+            exit 1
+          }
+
+      - name: Check tag matches package version
+        if: inputs.dry_run != true && github.event_name == 'release'
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} != v${VERSION} (package.json)"
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: Upgrade npm
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build library
+        run: |
+          if node -p "Boolean(require('./package.json').scripts?.['build:lib'])" | grep -q true; then
+            npm run build:lib
+          else
+            npm run build
+          fi
+
+      - name: Run library tests
+        run: npm test
+
+      - name: Verify release readiness (docs, CHANGELOG.md, package.json, tarball)
+        run: |
+          git clone --depth 1 https://github.com/1pizzateam/coding-pal.git /tmp/coding-pal
+          node /tmp/coding-pal/skills/release-readiness/scripts/verify-release-readiness.mjs --mode release --require-dist --build-docs
+          rm -rf /tmp/coding-pal
+
+      - name: Determine npm dist-tag
+        run: |
+          TAG=$(node -p "const m = require('./package.json').version.match(/-([a-zA-Z0-9]+)/); (m ? m[1] : 'latest').toLowerCase()")
+          echo "NPM_TAG=$TAG" >> "$GITHUB_ENV"
+
+      - name: Verify package publish (dry run)
+        run: npm publish --dry-run --access public --tag "$NPM_TAG"
+
+      - name: Publish package to npm
+        if: inputs.dry_run != true
+        run: npm publish --access public --provenance --tag "$NPM_TAG"
+
+      - name: Notify downstream consumers with blocked:upstream issues
+        if: inputs.dry_run != true && success()
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          UPSTREAM_REPO: ${{ github.repository }}
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then exit 0; fi
+          PACKAGE=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          for CONSUMER in \
+            "1pizzateam/DoomR.js" \
+            "1pizzateam/Cadenza" \
+            "1pizzateam/MappR" \
+            "1pizzateam/PixelGun" \
+            "1pizzateam/PolyGun" \
+            "1pizzateam/ShaderGun" \
+            "1pizzateam/BumpR.js" \
+            "1pizzateam/LoopR.js" \
+            "1pizzateam/RoostR.js" \
+            "1pizzateam/GroovR.js"; do
+            if [ "$CONSUMER" = "$UPSTREAM_REPO" ]; then continue; fi
+            WAITING_COUNT=$(gh api "repos/${CONSUMER}/issues?labels=blocked:upstream&state=open&per_page=5" --jq 'length' 2>/dev/null || echo "0")
+            if [ "${WAITING_COUNT:-0}" -gt 0 ]; then
+              echo "Notifying ${CONSUMER} (${WAITING_COUNT} blocked:upstream issue(s)) of ${PACKAGE}@${VERSION}..."
+              gh api "repos/${CONSUMER}/dispatches" \
+                --method POST \
+                -f event_type="upstream-library-released" \
+                -f "client_payload[package]=${PACKAGE}" \
+                -f "client_payload[version]=${VERSION}" \
+                -f "client_payload[upstream_repo]=${UPSTREAM_REPO}" || true
+            fi
+          done

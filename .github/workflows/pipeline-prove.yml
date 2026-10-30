@@ -163,19 +163,25 @@ jobs:
           GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
         run: |
           git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/ALTEN-group/coding-pal.git /tmp/alten-coding-pal
+          git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/1pizzateam/coding-pal.git /tmp/1pizza-coding-pal
           rm -rf .github/instructions .github/agents .github/prompts .github/skills .github/copilot-instructions.md .agents .claude .cursor .gemini CLAUDE.md GEMINI.md AGENTS.md .cursorrules .windsurfrules
           mkdir -p .github/instructions .github/agents .agents/skills
+          cp /tmp/1pizza-coding-pal/instructions/*.md .github/instructions/
+          cp -R /tmp/1pizza-coding-pal/skills/* .agents/skills/
           cp /tmp/alten-coding-pal/instructions/sharp-agent.instructions.md .github/instructions/
           cp /tmp/alten-coding-pal/instructions/code-loop.instructions.md .github/instructions/
           cp /tmp/alten-coding-pal/instructions/prove.instructions.md .github/instructions/
           cp /tmp/alten-coding-pal/instructions/prove-controls.instructions.md .github/instructions/
+          [ -d tests ] && [ -f /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md ] && cp /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md .github/instructions/
+          [ -d website ] && [ -f /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md ] && cp /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md .github/instructions/
+          [ -d website ] && [ -d /tmp/alten-coding-pal/skills/vitepress-docs-examples ] && cp -R /tmp/alten-coding-pal/skills/vitepress-docs-examples .agents/skills/vitepress-docs-examples
           cp /tmp/alten-coding-pal/agents/prove.agent.md .github/agents/
           cp /tmp/alten-coding-pal/agents/gate-fix.agent.md .github/agents/
           cp /tmp/alten-coding-pal/agents/code.agent.md .github/agents/
           for skill in think plan code-loop pr-record prove scope-guard secret-guard dependency-guard task-gate control-guard test-probe preview-smoke criteria-verify; do
             cp -R "/tmp/alten-coding-pal/skills/${skill}" ".agents/skills/${skill}"
           done
-          rm -rf /tmp/alten-coding-pal
+          rm -rf /tmp/alten-coding-pal /tmp/1pizza-coding-pal
 
           printf "%s\n" \
             ".github/instructions/" \
@@ -193,6 +199,21 @@ jobs:
         with:
           node-version: ${{ inputs.node_version }}
           cache: npm
+
+      - name: Clone sibling DoomR.js workspace for companion game editors
+        if: steps.resolve.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          case "$REPO_NAME" in
+            Cadenza|MappR|PixelGun|PolyGun|ShaderGun)
+              if [ ! -d ../DoomR.js ]; then
+                git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/1pizzateam/DoomR.js.git ../DoomR.js
+                npm --prefix ../DoomR.js ci
+              fi
+              ;;
+          esac
 
       - if: steps.resolve.outputs.skip != 'true'
         run: npm ci
@@ -250,14 +271,18 @@ jobs:
               }
             ' "${SPEC_DIR}/plan.md")
             run_check "scope-guard" node .agents/skills/scope-guard/scripts/scope-guard.mjs --git --base "origin/${BASE_REF}" "${SCOPE_ARGS[@]}"
-            run_check "task-gate" node .agents/skills/task-gate/scripts/task-gate.mjs --stage "test:npm test" --stage "build:npm run build"
+            TASK_STAGES=(--stage "test:npm test" --stage "build:npm run build")
+            if [ -f package.json ] && [ "$(node -p "const p=require('./package.json'); Boolean(p.name && p.name.startsWith('@1pizzateam/') && !p.private)")" = "true" ]; then
+              TASK_STAGES+=(--stage "release-readiness:node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs --mode pr --require-dist --build-docs")
+            fi
+            run_check "task-gate" node .agents/skills/task-gate/scripts/task-gate.mjs "${TASK_STAGES[@]}"
 
             if [ -f "./node_modules/jest/bin/jest.js" ]; then
               node --experimental-vm-modules ./node_modules/jest/bin/jest.js --json --outputFile=reports/test-report.json >/dev/null 2>&1 || true
               run_check "criteria-verify" node .agents/skills/criteria-verify/scripts/verify-criteria.mjs --plan "${SPEC_DIR}/plan.md" --report reports/test-report.json --require-test-files
             else
               {
-                for tf in tests/*.test.mjs tests/*.test.js; do
+                for tf in tests/*.test.mjs tests/*.test.js scripts/test-*.mjs; do
                   if [ -f "$tf" ]; then
                     echo "# file: ${tf}"
                     node "$tf" || true
@@ -389,10 +414,83 @@ jobs:
           gh pr merge "$PR_NUMBER" --squash --delete-branch
           gh issue edit "$ISSUE_NUMBER" --remove-label "ready" || true
 
+      - name: Dispatch companion game editor updates after PR merge
+        if: steps.resolve.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          REPO_FULL_NAME: ${{ github.repository }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          EDITOR_REQ_FILE="specs/issue-${ISSUE_NUMBER}/editor-requests.json"
+          if [ -s "$EDITOR_REQ_FILE" ] && jq -e 'type == "array" and length > 0' "$EDITOR_REQ_FILE" >/dev/null 2>&1; then
+            map_editor_repo() {
+              case "$(echo "$1" | tr '[:upper:]' '[:lower:]')" in
+                cadenza|1pizzateam/cadenza) echo "1pizzateam/Cadenza" ;;
+                mappr|1pizzateam/mappr) echo "1pizzateam/MappR" ;;
+                pixelgun|1pizzateam/pixelgun) echo "1pizzateam/PixelGun" ;;
+                polygun|1pizzateam/polygun) echo "1pizzateam/PolyGun" ;;
+                shadergun|1pizzateam/shadergun) echo "1pizzateam/ShaderGun" ;;
+                *) echo "" ;;
+              esac
+            }
+
+            DISPATCHED_LINKS=()
+            while IFS= read -r item; do
+              ED_KEY=$(echo "$item" | jq -r '.editor // empty')
+              ED_TITLE=$(echo "$item" | jq -r '.title // empty')
+              ED_BODY=$(echo "$item" | jq -r '.body // empty')
+              TARGET_REPO=$(map_editor_repo "$ED_KEY")
+              if [ -z "$TARGET_REPO" ] || [ -z "$ED_TITLE" ] || [ -z "$ED_BODY" ]; then
+                continue
+              fi
+
+              gh label create "ready" --repo "$TARGET_REPO" --force --description "Approved for autonomous Think -> Plan -> Code -> Prove pipeline" || true
+              gh label create "upstream:doomr" --repo "$TARGET_REPO" --force --description "Triggered by a merged DoomR.js feature update" || true
+
+              EXISTING=$(gh issue list --repo "$TARGET_REPO" --state open --limit 100 --json number,title \
+                --jq ".[] | select((.title | ascii_downcase) == ($(echo "$ED_TITLE" | jq -Rs 'ascii_downcase'))) | .number" | head -n 1)
+
+              if [ -n "$EXISTING" ]; then
+                ED_URL="https://github.com/${TARGET_REPO}/issues/${EXISTING}"
+                echo "Reusing open companion editor issue ${ED_URL}"
+              else
+                FULL_BODY="${ED_BODY}
+
+          ---
+          _Triggered automatically by merged ${REPO_FULL_NAME}#${ISSUE_NUMBER} (PR #${PR_NUMBER})._"
+                ED_URL=$(gh issue create \
+                  --repo "$TARGET_REPO" \
+                  --title "$ED_TITLE" \
+                  --body "$FULL_BODY" \
+                  --label "ready,upstream:doomr")
+                echo "Created companion editor issue ${ED_URL}"
+              fi
+              DISPATCHED_LINKS+=("- **${TARGET_REPO}**: ${ED_URL}")
+            done < <(jq -c '.[]' "$EDITOR_REQ_FILE")
+
+            if [ "${#DISPATCHED_LINKS[@]}" -gt 0 ]; then
+              COMMENT_BODY=$(printf "### Companion Game Editor Updates Dispatched\n\nNow that PR #%s is merged into \`%s\`, the following companion editor issues have been opened and labeled \`ready\` to trigger their autonomous pipelines:\n\n%s\n" \
+                "$PR_NUMBER" "$BASE_REF" "$(printf '%s\n' "${DISPATCHED_LINKS[@]}")")
+              gh issue comment "$ISSUE_NUMBER" --body "$COMMENT_BODY"
+            fi
+          fi
+
+          case "$REPO_NAME" in
+            Cadenza|MappR|PixelGun|PolyGun|ShaderGun)
+              HEAD_SHA=$(git rev-parse HEAD)
+              gh api repos/1pizzateam/DoomR.js/dispatches \
+                -f event_type="upstream-library-released" \
+                -f "client_payload[package]=1pizzateam/${REPO_NAME}" \
+                -f "client_payload[version]=${HEAD_SHA}" \
+                -f "client_payload[repository]=${REPO_FULL_NAME}" || true
+              ;;
+          esac
+
       - name: Auto-release merged @1pizzateam/* library version
         if: steps.resolve.outputs.skip != 'true' && inputs.auto_release_npm
         env:
           GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
         run: |
           if [ ! -f package.json ]; then exit 0; fi
           IS_PUBLISHABLE=$(node -p '
@@ -423,7 +521,60 @@ jobs:
           NEW_VERSION=$(node -p "require('./package.json').version")
           TAG_NAME="v${NEW_VERSION}"
 
-          git add package.json package-lock.json 2>/dev/null || git add package.json
+          if [ -f website/package.json ]; then
+            node -e '
+              const fs = require("fs");
+              const v = process.argv[1];
+              for (const f of ["website/package.json", "website/package-lock.json"]) {
+                if (!fs.existsSync(f)) continue;
+                const j = JSON.parse(fs.readFileSync(f, "utf8"));
+                j.version = v;
+                if (j.packages && j.packages[""]) j.packages[""].version = v;
+                fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\n");
+              }
+            ' "$NEW_VERSION"
+          fi
+
+          RELEASE_DATE=$(node -p '
+            const d = new Date();
+            const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+            const day = d.getUTCDate();
+            const suffix = (day % 10 === 1 && day !== 11) ? "st" : (day % 10 === 2 && day !== 12) ? "nd" : (day % 10 === 3 && day !== 13) ? "rd" : "th";
+            `${months[d.getUTCMonth()]} ${day}${suffix} ${d.getUTCFullYear()}`;
+          ')
+
+          SPEC_DIR="specs/issue-${ISSUE_NUMBER}"
+          copilot --allow-all-tools \
+            --prompt "Prepare release ${TAG_NAME} (bumped from ${CURRENT_VERSION}) for merged PR #${PR_NUMBER} / Issue #${ISSUE_NUMBER} (${ISSUE_TITLE}) following .agents/skills/release-readiness/SKILL.md.
+          1. Update CHANGELOG.md so the very first section at line 1 is:
+             Version ${NEW_VERSION} (${RELEASE_DATE})
+             -----------------------------
+              * <concise bullet point(s) summarizing the changes from ${SPEC_DIR}/plan.md and the latest merge commit>
+             Keep all previous Version sections intact below a blank line.
+          2. Check that all public runtime symbols exported from src/ are documented in website/docs/** (if website/docs exists) or README.md, and update documentation if any export or signature from this release is missing.
+          3. Run:
+             node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs --mode release --expected-version ${NEW_VERSION} --previous-version ${CURRENT_VERSION}
+             Fix any reported CHANGELOG.md, README.md, website/docs, or package.json issues until it exits 0. Do NOT create git commits or tags."
+
+          if node -p "Boolean(require('./package.json').scripts?.['build:lib'])" | grep -q true; then
+            npm run build:lib
+          else
+            npm run build
+          fi
+          npm test
+
+          node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs \
+            --mode release \
+            --expected-version "$NEW_VERSION" \
+            --previous-version "$CURRENT_VERSION" \
+            --require-dist \
+            --build-docs
+
+          npm publish --dry-run --access public
+
+          git add package.json CHANGELOG.md README.md
+          [ -f package-lock.json ] && git add package-lock.json
+          [ -d website ] && git add website
           git commit -m "chore(release): ${TAG_NAME} (for #${ISSUE_NUMBER})"
           git tag "$TAG_NAME"
           git push origin "$BASE_REF" --follow-tags
@@ -432,7 +583,7 @@ jobs:
             --target "$BASE_REF" \
             --title "$TAG_NAME" \
             --generate-notes
-          echo "Created GitHub Release ${TAG_NAME} on ${BASE_REF} to trigger publish-npm.yml."
+          echo "Created verified GitHub Release ${TAG_NAME} on ${BASE_REF} to trigger publish-npm.yml."
 
       - name: Sync issue to Done on Project board
         if: steps.resolve.outputs.skip != 'true'

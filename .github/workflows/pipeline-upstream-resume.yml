@@ -1,0 +1,109 @@
+name: Reusable Resume Blocked Issues on Upstream Library Release
+
+on:
+  workflow_call:
+    inputs:
+      package:
+        description: 'Published npm package name (e.g. @1pizzateam/roostr)'
+        required: false
+        default: ''
+        type: string
+      version:
+        description: 'Published npm package version (e.g. 0.10.0)'
+        required: false
+        default: ''
+        type: string
+      upstream_repo:
+        description: 'Upstream GitHub repository (e.g. 1pizzateam/RoostR.js)'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+  actions: write
+  pull-requests: read
+
+jobs:
+  resume:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for npm registry propagation and unblock waiting issues
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          PACKAGE: ${{ github.event.client_payload.package || inputs.package }}
+          VERSION: ${{ github.event.client_payload.version || inputs.version }}
+          UPSTREAM_REPO: ${{ github.event.client_payload.upstream_repo || github.event.client_payload.repo || inputs.upstream_repo }}
+        run: |
+          if [ -z "$PACKAGE" ] || [ -z "$VERSION" ]; then
+            echo "::error::Missing package or version payload."
+            exit 1
+          fi
+
+          if echo "$PACKAGE" | grep -q '^@1pizzateam/'; then
+            echo "Waiting for ${PACKAGE}@${VERSION} to become available on npm..."
+            for attempt in $(seq 1 15); do
+              PUBLISHED=$(npm view "${PACKAGE}@${VERSION}" version 2>/dev/null || true)
+              if [ "$PUBLISHED" = "$VERSION" ]; then
+                echo "✓ Verified ${PACKAGE}@${VERSION} is live on npm."
+                break
+              fi
+              echo "Attempt ${attempt}/15: ${PACKAGE}@${VERSION} not yet visible on npm; waiting 6s..."
+              sleep 6
+            done
+          fi
+
+          BLOCKED_ISSUES=$(gh issue list --state open --label "blocked:upstream" --limit 50 --json number,body,comments \
+            --jq --arg pkg "$PACKAGE" --arg repo "$UPSTREAM_REPO" '
+              [
+                .[]
+                | select(
+                    ((.body // "") | contains($pkg))
+                    or ([.comments[]?.body // "" | select(contains($pkg))] | length > 0)
+                    or ($repo != "" and (((.body // "") | contains($repo)) or ([.comments[]?.body // "" | select(contains($repo))] | length > 0)))
+                  )
+                | .number
+              ]
+              | sort
+              | .[]
+            ')
+
+          if [ -z "$BLOCKED_ISSUES" ]; then
+            echo "No blocked:upstream issues waiting on ${PACKAGE}@${VERSION}."
+            exit 0
+          fi
+
+          for ISSUE_NUMBER in $BLOCKED_ISSUES; do
+            echo "Unblocking issue #${ISSUE_NUMBER} for ${PACKAGE}@${VERSION}..."
+            gh issue comment "$ISSUE_NUMBER" --body "## Upstream Library Released
+          - **Package:** \`${PACKAGE}@${VERSION}\`
+          - **Upstream Repo:** \`${UPSTREAM_REPO:-1pizzateam}\`
+
+          The upstream library update has been implemented, proven, and published to npm as \`${PACKAGE}@${VERSION}\`.
+          When planning and implementing this issue:
+          1. Upgrade \`${PACKAGE}\` to \`\"${VERSION}\"\` in \`package.json\` (\`npm install ${PACKAGE}@${VERSION} --save-exact\`, and update \`overrides\` in \`package.json\` if \`${PACKAGE}\` is present there).
+          2. Include \`package.json\` and \`package-lock.json\` in \`## In Scope\` of \`plan.md\`.
+          3. Delegate directly to the newly released \`${PACKAGE}@${VERSION}\` API."
+
+            gh issue edit "$ISSUE_NUMBER" --remove-label "blocked:upstream" --add-label "ready"
+          done
+
+          # Check if the pipeline is currently idle; if so, dispatch Think for the head of the FIFO queue
+          ACTIVE_RUNS=0
+          for wf in "Think on Ready Issue" "Plan from Think Spec" "Code Plan and Open PR" "Prove and Validate PR"; do
+            COUNT=$(gh run list --workflow "$wf" --limit 5 --json status \
+              --jq '[.[] | select(.status == "in_progress" or .status == "queued" or .status == "waiting" or .status == "requested")] | length' 2>/dev/null || echo "0")
+            ACTIVE_RUNS=$((ACTIVE_RUNS + COUNT))
+          done
+
+          OPEN_AGENT_PRS=$(gh pr list --state open --json number,headRefName,labels \
+            --jq '[.[] | select(.headRefName | test("^(feature|fix|chore)/issue-[0-9]+-")) | select([.labels[].name] | index("needs:developer") == null)] | length' 2>/dev/null || echo "0")
+
+          if [ "$ACTIVE_RUNS" -eq 0 ] && [ "$OPEN_AGENT_PRS" -eq 0 ]; then
+            FIRST_ISSUE=$(echo "$BLOCKED_ISSUES" | head -n 1)
+            if [ -n "$FIRST_ISSUE" ]; then
+              echo "Pipeline is idle; dispatching Think on Ready Issue for #${FIRST_ISSUE}..."
+              gh workflow run think.yml -f issue_number="$FIRST_ISSUE"
+            fi
+          fi

@@ -175,6 +175,9 @@ jobs:
 
           git checkout -B "$BRANCH_NAME"
           git add "specs/issue-${ISSUE_NUMBER}/think.md" "specs/issue-${ISSUE_NUMBER}/plan.md"
+          if [ -f "specs/issue-${ISSUE_NUMBER}/editor-requests.json" ]; then
+            git add "specs/issue-${ISSUE_NUMBER}/editor-requests.json"
+          fi
           git commit -m "docs(specs): add think.md and plan.md for issue #${ISSUE_NUMBER}"
 
       - name: Install ALTEN-group/coding-pal code primitives
@@ -183,15 +186,21 @@ jobs:
           GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
         run: |
           git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/ALTEN-group/coding-pal.git /tmp/alten-coding-pal
+          git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/1pizzateam/coding-pal.git /tmp/1pizza-coding-pal
           rm -rf .github/instructions .github/agents .github/prompts .github/skills .github/copilot-instructions.md .agents .claude .cursor .gemini CLAUDE.md GEMINI.md AGENTS.md .cursorrules .windsurfrules
           mkdir -p .github/instructions .github/agents .agents/skills
+          cp /tmp/1pizza-coding-pal/instructions/*.md .github/instructions/
+          cp -R /tmp/1pizza-coding-pal/skills/* .agents/skills/
           cp /tmp/alten-coding-pal/instructions/sharp-agent.instructions.md .github/instructions/
           cp /tmp/alten-coding-pal/instructions/code-loop.instructions.md .github/instructions/
+          [ -d tests ] && [ -f /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md ] && cp /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md .github/instructions/
+          [ -d website ] && [ -f /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md ] && cp /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md .github/instructions/
+          [ -d website ] && [ -d /tmp/alten-coding-pal/skills/vitepress-docs-examples ] && cp -R /tmp/alten-coding-pal/skills/vitepress-docs-examples .agents/skills/vitepress-docs-examples
           cp /tmp/alten-coding-pal/agents/code.agent.md .github/agents/
           for skill in plan code-loop pr-record scope-guard secret-guard dependency-guard task-gate control-guard test-probe preview-smoke criteria-verify; do
             cp -R "/tmp/alten-coding-pal/skills/${skill}" ".agents/skills/${skill}"
           done
-          rm -rf /tmp/alten-coding-pal
+          rm -rf /tmp/alten-coding-pal /tmp/1pizza-coding-pal
 
           printf "%s\n" \
             ".github/instructions/" \
@@ -208,6 +217,21 @@ jobs:
         with:
           node-version: ${{ inputs.node_version }}
           cache: npm
+
+      - name: Clone sibling DoomR.js workspace for companion game editors
+        if: steps.resolve.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          case "$REPO_NAME" in
+            Cadenza|MappR|PixelGun|PolyGun|ShaderGun)
+              if [ ! -d ../DoomR.js ]; then
+                git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/1pizzateam/DoomR.js.git ../DoomR.js
+                npm --prefix ../DoomR.js ci
+              fi
+              ;;
+          esac
 
       - if: steps.resolve.outputs.skip != 'true'
         run: npm ci
@@ -253,6 +277,8 @@ jobs:
                node .agents/skills/test-probe/scripts/test-probe.mjs --base origin/${BASE_REF} --test-cmd 'npm test' --source <each modified src/** file>
              - Verify control integrity with:
                node .agents/skills/control-guard/scripts/control-guard.mjs --git origin/${BASE_REF}
+             - If this is a published @1pizzateam/* library, follow .agents/skills/release-readiness/SKILL.md and verify library documentation and package readiness with:
+               node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs --mode pr --require-dist --build-docs
           6. Author the pull request body at pr-body.md following .agents/skills/pr-record/references/pr-record-contract.md (with ## Links, ## Acceptance Criteria Traceability, ## Dependencies, ## Blast Radius, and ## Human Validation all set to Pending) and validate it until it exits 0:
              node .agents/skills/pr-record/scripts/validate-pr.mjs --body pr-body.md --dir ${SPEC_DIR} --stage code --allow-pending-approval"
 
@@ -285,7 +311,11 @@ jobs:
             }
           ' "${SPEC_DIR}/plan.md")
           node .agents/skills/scope-guard/scripts/scope-guard.mjs --git --base "origin/${BASE_REF}" "${SCOPE_ARGS[@]}"
-          node .agents/skills/task-gate/scripts/task-gate.mjs --stage "test:npm test" --stage "build:npm run build"
+          TASK_STAGES=(--stage "test:npm test" --stage "build:npm run build")
+          if [ -f package.json ] && [ "$(node -p "const p=require('./package.json'); Boolean(p.name && p.name.startsWith('@1pizzateam/') && !p.private)")" = "true" ]; then
+            TASK_STAGES+=(--stage "release-readiness:node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs --mode pr --require-dist --build-docs")
+          fi
+          node .agents/skills/task-gate/scripts/task-gate.mjs "${TASK_STAGES[@]}"
 
           mkdir -p reports
           if [ -f "./node_modules/jest/bin/jest.js" ]; then
@@ -293,7 +323,7 @@ jobs:
             node .agents/skills/criteria-verify/scripts/verify-criteria.mjs --plan "${SPEC_DIR}/plan.md" --report reports/test-report.json --require-test-files >> "$GITHUB_STEP_SUMMARY"
           else
             {
-              for tf in tests/*.test.mjs tests/*.test.js; do
+              for tf in tests/*.test.mjs tests/*.test.js scripts/test-*.mjs; do
                 if [ -f "$tf" ]; then
                   echo "# file: ${tf}"
                   node "$tf"
@@ -410,6 +440,7 @@ jobs:
             specs/pr_number.txt
             specs/issue-${{ env.ISSUE_NUMBER }}/think.md
             specs/issue-${{ env.ISSUE_NUMBER }}/plan.md
+            specs/issue-${{ env.ISSUE_NUMBER }}/editor-requests.json
           retention-days: 7
 
       - name: Advance FIFO queue if Code fails

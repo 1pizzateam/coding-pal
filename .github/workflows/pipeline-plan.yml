@@ -1,4 +1,4 @@
-name: Reusable Plan Pipeline
+name: Reusable Pipeline - Plan
 
 on:
   workflow_call:
@@ -6,15 +6,15 @@ on:
       issue_number:
         description: 'Optional issue number when triggered via workflow_dispatch'
         required: false
-        default: 0
-        type: number
-      event_name:
-        description: 'Triggering event name (workflow_run or workflow_dispatch)'
-        required: false
-        default: 'workflow_run'
+        default: ''
         type: string
-      run_id:
+      workflow_run_id:
         description: 'Upstream Think workflow_run ID'
+        required: false
+        default: ''
+        type: string
+      project_title:
+        description: 'Optional GitHub Project V2 board title'
         required: false
         default: ''
         type: string
@@ -31,21 +31,20 @@ jobs:
   plan:
     runs-on: ubuntu-latest
     concurrency:
-      group: copilot-plan-${{ inputs.issue_number || inputs.run_id || github.run_id }}
+      group: copilot-plan-${{ github.repository }}-${{ inputs.issue_number || inputs.workflow_run_id || github.run_id }}
       cancel-in-progress: false
     steps:
       - name: Resolve issue number and restore think.md
         id: resolve
         env:
-          GH_TOKEN: ${{ github.token }}
-          EVENT_NAME: ${{ inputs.event_name }}
-          RUN_ID: ${{ inputs.run_id }}
+          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          RUN_ID: ${{ inputs.workflow_run_id }}
           INPUT_ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
           rm -rf /tmp/specs
           mkdir -p /tmp/specs
 
-          if [ "$EVENT_NAME" = "workflow_run" ]; then
+          if [ -n "$RUN_ID" ] && [ -z "$INPUT_ISSUE_NUMBER" ]; then
             if ! gh run download "$RUN_ID" -n think-spec -D /tmp/specs 2>/dev/null; then
               echo "Triggering Think workflow run (#${RUN_ID}) was queued in FIFO (no think-spec artifact); skipping Plan."
               echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -90,19 +89,38 @@ jobs:
           mkdir -p specs
           cp -R /tmp/specs/. specs/
           git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/ALTEN-group/coding-pal.git /tmp/alten-coding-pal
+          git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/1pizzateam/coding-pal.git /tmp/1pizza-coding-pal
           rm -rf .github/instructions .github/agents .github/prompts .github/skills .github/copilot-instructions.md .agents .claude .cursor .gemini CLAUDE.md GEMINI.md AGENTS.md .cursorrules .windsurfrules
           mkdir -p .github/instructions .github/agents .agents/skills
+          cp /tmp/1pizza-coding-pal/instructions/*.md .github/instructions/
           cp /tmp/alten-coding-pal/instructions/sharp-agent.instructions.md .github/instructions/
           cp /tmp/alten-coding-pal/instructions/plan.instructions.md .github/instructions/
+          [ -d tests ] && [ -f /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md ] && cp /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md .github/instructions/
+          [ -d website ] && [ -f /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md ] && cp /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md .github/instructions/
           cp /tmp/alten-coding-pal/agents/plan.agent.md .github/agents/
           cp -R /tmp/alten-coding-pal/skills/plan .agents/skills/plan
-          rm -rf /tmp/alten-coding-pal
+          rm -rf /tmp/alten-coding-pal /tmp/1pizza-coding-pal
 
       - uses: actions/setup-node@v4
         if: steps.resolve.outputs.skip != 'true'
         with:
           node-version: 22
           cache: npm
+
+      - name: Clone sibling DoomR.js workspace for companion game editors
+        if: steps.resolve.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          case "$REPO_NAME" in
+            Cadenza|MappR|PixelGun|PolyGun|ShaderGun)
+              if [ ! -d ../DoomR.js ]; then
+                git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/1pizzateam/DoomR.js.git" ../DoomR.js
+                npm --prefix ../DoomR.js ci
+              fi
+              ;;
+          esac
 
       - if: steps.resolve.outputs.skip != 'true'
         run: npm ci
@@ -112,7 +130,7 @@ jobs:
       - name: Fetch issue context and run Planner agent
         if: steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
         run: |
           ISSUE_TITLE=$(gh issue view "$ISSUE_NUMBER" --json title --jq '.title')
@@ -120,6 +138,11 @@ jobs:
           SPEC_DIR="specs/issue-${ISSUE_NUMBER}"
           THINK_FILE="${SPEC_DIR}/think.md"
           PLAN_FILE="${SPEC_DIR}/plan.md"
+
+          LIBRARY_DOCS_HINT=""
+          if [ -f package.json ] && [ "$(node -p "const p=require('./package.json'); Boolean(p.name && p.name.startsWith('@1pizzateam/') && !p.private)")" = "true" ]; then
+            LIBRARY_DOCS_HINT="Because this repository is a published @1pizzateam/* library, if any public export, class, method, or signature in src/** is added or modified, ensure the corresponding documentation files (website/docs/** if website/docs exists, or README.md otherwise) are included in ## In Scope and updated in an atomic step so release-readiness verification (verify-release-readiness.mjs) passes."
+          fi
 
           copilot --agent="plan" --allow-all-tools \
             --prompt "Produce a validated Plan record at ${PLAN_FILE} derived strictly from ${THINK_FILE} for GitHub Issue #${ISSUE_NUMBER}.
@@ -129,7 +152,8 @@ jobs:
 
           Follow .github/instructions/plan.instructions.md and .agents/skills/plan/SKILL.md (and its references/plan-contract.md).
           Read ${THINK_FILE} first and ground all file scopes, acceptance criteria, atomic implementation steps (with New Code, Verification, Bootable Check, and Serves), test plan rows, and blast radius checks in ${THINK_FILE} and the existing repository conventions.
-          Every test in ## Test Plan and in test steps' New Code must include its acceptance criterion ID (`AC-1`, `AC-2`, etc.) in the test name (for example `test('AC-1: ...', ...)` or `it('AC-1: ...', ...)`) and start the Test Plan `Test` cell with the relative test file path (`tests/<file>: AC-1 ...`) so `criteria-verify` can verify every criterion with `--require-test-files`.
+          ${LIBRARY_DOCS_HINT}
+          Every test in ## Test Plan and in test steps' New Code must include its acceptance criterion ID (`AC-1`, `AC-2`, etc.) in the test name (for example `test('AC-1: ...', ...)` or `it('AC-1: ...', ...)`) and start the Test Plan `Test` cell with the relative test file path (`tests/<file>: AC-1 ...` or `scripts/<file>: AC-1 ...`) so `criteria-verify` can verify every criterion with `--require-test-files`.
           Do not modify any production or test files; only write ${PLAN_FILE}.
           Validate and cross-check the generated file with: node .agents/skills/plan/scripts/validate-plan.mjs --plan ${PLAN_FILE} --think ${THINK_FILE} and fix any validation errors until it exits with code 0."
 
@@ -144,7 +168,7 @@ jobs:
       - name: Comment plan.md on issue
         if: steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
         run: |
           PLAN_FILE="specs/issue-${ISSUE_NUMBER}/plan.md"
           gh issue comment "$ISSUE_NUMBER" --body-file "$PLAN_FILE"
@@ -158,6 +182,7 @@ jobs:
             specs/issue_number.txt
             specs/issue-${{ env.ISSUE_NUMBER }}/think.md
             specs/issue-${{ env.ISSUE_NUMBER }}/plan.md
+            specs/issue-${{ env.ISSUE_NUMBER }}/editor-requests.json
           retention-days: 7
 
       - name: Advance FIFO queue if Plan fails
