@@ -46,7 +46,7 @@ jobs:
           echo "ISSUE_NUMBER=${ISSUE_NUMBER}" >> "$GITHUB_ENV"
           if [ "$EVENT_NAME" != "workflow_dispatch" ]; then
             ACTIVE_PIPELINE_RUNS=0
-            for wf in "Plan from Think Spec" "Code Plan and Open PR" "Prove and Validate PR"; do
+            for wf in "Plan from Think Spec" "Code and Open PR" "Prove and Validate PR"; do
               COUNT=$(gh run list --workflow "$wf" --limit 5 --json status \
                 --jq '[.[] | select(.status == "in_progress" or .status == "queued" or .status == "waiting" or .status == "requested")] | length' 2>/dev/null || echo "0")
               ACTIVE_PIPELINE_RUNS=$((ACTIVE_PIPELINE_RUNS + COUNT))
@@ -122,7 +122,7 @@ jobs:
 
           # Smart Resume 1: Both Think and Plan already exist on the issue, and user labeled 'ready' or 'ready:code' -> jump straight to Code!
           if [ -n "$EXISTING_THINK" ] && [ -n "$EXISTING_PLAN" ] && [ "$HAS_READY_THINK" != "true" ] && [ "$HAS_READY_PLAN" != "true" ]; then
-            echo "Found validated # Think: and # Plan: comments on issue #${ISSUE_NUMBER}; dispatching Code Plan and Open PR directly."
+            echo "Found validated # Think: and # Plan: comments on issue #${ISSUE_NUMBER}; dispatching Code and Open PR directly."
             gh workflow run code.yml -f issue_number="$ISSUE_NUMBER"
             echo "resumed_stage=code" >> "$GITHUB_OUTPUT"
             exit 0
