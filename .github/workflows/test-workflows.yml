@@ -35,11 +35,6 @@ jobs:
           echo "$RUNNER_TEMP/actionlint" >> "$GITHUB_PATH"
       - name: Lint pipeline workflows
         run: |
-          actionlint -shellcheck= \
-            .github/workflows/pipeline-think.yml \
-            .github/workflows/pipeline-plan.yml \
-            .github/workflows/pipeline-code.yml \
-            .github/workflows/pipeline-prove.yml \
-            .github/workflows/test-workflows.yml
+          actionlint -shellcheck= .github/workflows/*.yml
       - name: Run workflow regression tests
         run: ruby tests/workflows_test.rb

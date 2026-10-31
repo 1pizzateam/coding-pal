@@ -17,13 +17,25 @@ end
 
 result = case ARGV.first(2)
          when ['pr', 'view']
-           scenario.fetch('pr')
+           if scenario['pr_sequence']
+             value = scenario.fetch('pr_sequence').shift
+             reject_command('Unexpected additional PR poll') unless value
+             File.write(ENV.fetch('TEST_SCENARIO'), JSON.generate(scenario))
+             value
+           else
+             scenario.fetch('pr')
+           end
          when ['pr', 'merge']
            nil
          when ['issue', 'view']
            scenario.fetch('issue')
          when ['pr', 'list']
            scenario.fetch('prs', [])
+         when ['issue', 'list']
+           scenario.fetch('issues', [])
+         when ['issue', 'create']
+           puts 'https://github.com/1pizzateam/MappR/issues/77'
+           nil
          when ['run', 'list']
            scenario.fetch('runs', [])
          when ['api', 'graphql']
@@ -48,7 +60,25 @@ result = case ARGV.first(2)
          when ['workflow', 'run']
            reject_command("Unexpected dispatch: #{ARGV.inspect}") unless %w[think.yml plan.yml code.yml prove.yml].include?(ARGV[2])
            nil
-         when ['label', 'create'], ['issue', 'edit'], ['issue', 'comment'], ['pr', 'edit'], ['pr', 'comment']
+         when ['pr', 'edit']
+           if scenario['track_fix_labels'] && argument('--add-label')&.start_with?('fix-loop:')
+             scenario.fetch('pr').fetch('labels').reject! { |label| label.fetch('name').start_with?('fix-loop:') }
+             scenario.fetch('pr').fetch('labels') << { 'name' => argument('--add-label') }
+             File.write(ENV.fetch('TEST_SCENARIO'), JSON.generate(scenario))
+           end
+           nil
+         when ->(args) { args.first == 'api' && args[1].match?(%r{\Arepos/test-owner/test-repo/actions/workflows/[^/]+/runs\?}) }
+           if scenario['release_api_failure']
+             warn 'Mock release API permission denied'
+             exit 1
+           end
+           workflow = ARGV[1].split('/workflows/').last.split('/runs?').first
+           responses = scenario.fetch('release_runs').fetch(workflow)
+           reject_command("Unexpected additional release poll for #{workflow}") if responses.empty?
+           value = responses.length > 1 ? responses.shift : responses.first
+           File.write(ENV.fetch('TEST_SCENARIO'), JSON.generate(scenario))
+           { 'workflow_runs' => value }
+         when ['label', 'create'], ['issue', 'edit'], ['issue', 'comment'], ['pr', 'comment']
            nil
          else
            reject_command("Unexpected gh command: #{ARGV.inspect}")

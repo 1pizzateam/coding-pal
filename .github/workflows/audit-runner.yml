@@ -189,19 +189,33 @@ jobs:
 
           MAX=$((COUNT > 5 ? 5 : COUNT))
           for ((i = 0; i < MAX; i++)); do
-            EDITOR_NAME=$(jq -r ".[$i].editor // empty" editor-requests.json)
+            EDITOR_NAME=$(jq -r "(.[$i].editor // empty) | ascii_downcase" editor-requests.json)
             TARGET_REPO=$(jq -r ".[$i].repo // empty" editor-requests.json)
             ED_TITLE=$(jq -r ".[$i].title // empty" editor-requests.json)
-            ED_BODY=$(jq -r ".[$i].body // .[$i].problem // empty" editor-requests.json)
+            ED_BODY=$(jq -r ".[$i].body // empty" editor-requests.json)
+            ED_PROBLEM=$(jq -r ".[$i].problem // empty" editor-requests.json)
+            ED_DIRECTION=$(jq -r ".[$i].suggestedDirection // empty" editor-requests.json)
+            ED_FILES=$(jq -r "(.[$i].affectedFiles // []) | map(\"- \`\" + . + \"\`\") | join(\"\\n\")" editor-requests.json)
 
             if [ -z "$TARGET_REPO" ] && [ -n "$EDITOR_NAME" ]; then
-              case "$(echo "$EDITOR_NAME" | tr '[:upper:]' '[:lower:]')" in
+              case "$EDITOR_NAME" in
                 cadenza)   TARGET_REPO="1pizzateam/Cadenza" ;;
                 mappr)     TARGET_REPO="1pizzateam/MappR" ;;
                 pixelgun)  TARGET_REPO="1pizzateam/PixelGun" ;;
                 polygun)   TARGET_REPO="1pizzateam/PolyGun" ;;
                 shadergun) TARGET_REPO="1pizzateam/ShaderGun" ;;
               esac
+            fi
+
+            if [ -z "$ED_BODY" ] && [ -n "$ED_PROBLEM" ]; then
+              ED_BODY="## Problem
+          ${ED_PROBLEM}
+
+          ## Affected DoomR.js Files
+          ${ED_FILES:-"- (see upstream DoomR.js audit)"}
+
+          ## Suggested Direction
+          ${ED_DIRECTION}"
             fi
 
             case "$TARGET_REPO" in

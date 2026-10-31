@@ -205,7 +205,7 @@ jobs:
 
           LIBRARY_DOCS_HINT=""
           if [ -f package.json ] && [ "$(node -p "const p=require('./package.json'); Boolean(p.name && p.name.startsWith('@1pizzateam/') && !p.private)")" = "true" ]; then
-            LIBRARY_DOCS_HINT="Because this repository is a published @1pizzateam/* library, if any public export, class, method, or signature in src/** is added or modified, ensure the corresponding documentation files (website/docs/** if website/docs exists, or README.md otherwise) are included in ## In Scope and updated in an atomic step so release-readiness verification (verify-release-readiness.mjs) passes."
+            LIBRARY_DOCS_HINT="Because this repository is a published @1pizzateam/* library, if any public export, class, method, or signature in src/** is added or modified, ensure the corresponding documentation files (exact files under website/docs/ if website/docs exists, or README.md otherwise) are included in ## File Scope & Boundaries (- **In Scope:**) and updated in an atomic step so release-readiness verification (verify-release-readiness.mjs) passes."
           fi
 
           copilot --model="auto" --agent="plan" --allow-all-tools \

@@ -86,7 +86,7 @@ jobs:
           The upstream library update has been implemented, proven, and published to npm as \`${PACKAGE}@${VERSION}\`.
           When planning and implementing this issue:
           1. Upgrade \`${PACKAGE}\` to \`\"${VERSION}\"\` in \`package.json\` (\`npm install ${PACKAGE}@${VERSION} --save-exact\`, and update \`overrides\` in \`package.json\` if \`${PACKAGE}\` is present there).
-          2. Include \`package.json\` and \`package-lock.json\` in \`## In Scope\` of \`plan.md\`.
+          2. Include \`package.json\` and \`package-lock.json\` in \`## File Scope & Boundaries\` (\`- **In Scope:**\`) of \`plan.md\`.
           3. Delegate directly to the newly released \`${PACKAGE}@${VERSION}\` API."
 
             gh issue edit "$ISSUE_NUMBER" --remove-label "blocked:upstream" --add-label "4-release"

@@ -15,7 +15,7 @@ class WorkflowsTest < Minitest::Test
     @directory = Dir.mktmpdir('coding-pal-workflows-')
     bin = File.join(@directory, 'bin')
     Dir.mkdir(bin)
-    %w[bash jq mkdir head uname].each do |command|
+    %w[bash jq mkdir head uname cat].each do |command|
       executable = ENV.fetch('PATH').split(File::PATH_SEPARATOR)
                       .map { |path| File.join(path, command) }
                       .find { |path| File.executable?(path) && !File.directory?(path) }
@@ -28,6 +28,7 @@ class WorkflowsTest < Minitest::Test
     @environment = {
       'PATH' => bin, 'HOME' => @directory, 'LC_ALL' => 'C', 'RUBYOPT' => '-EUTF-8',
       'GH_TOKEN' => 'fake-test-token', 'OWNER' => 'test-owner', 'REPO' => 'test-repo',
+      'RUNNER_TEMP' => @directory,
       'ISSUE_NUMBER' => '42', 'PR_NUMBER' => '99', 'PR_URL' => 'https://example.test/pr/99',
       'PROJECT_TITLE' => 'Test board', 'EVENT_NAME' => 'issues',
       'GITHUB_OUTPUT' => File.join(@directory, 'output'),
@@ -64,6 +65,11 @@ class WorkflowsTest < Minitest::Test
 
   def run_step(entry, data, environment = {}, success: true)
     script = entry.fetch('run')
+    if entry['id'] == 'checkpoint' && script.include?('code-project-status.sh')
+      status_script = status_step('code', 'Code').fetch('run').split("<<'STATUS_SCRIPT'\n", 2).last.split("\nSTATUS_SCRIPT", 2).first
+      File.write(File.join(@directory, 'code-project-status.sh'), status_script)
+      data = { 'project' => project }.merge(data)
+    end
     refute_includes script, '${{', 'Tested shell steps must take Actions expressions through env'
     File.write(@environment.fetch('TEST_SCENARIO'), JSON.generate(data))
     %w[GITHUB_OUTPUT GITHUB_ENV TEST_CALLS TEST_VIOLATIONS].each do |key|
@@ -100,6 +106,10 @@ class WorkflowsTest < Minitest::Test
           next unless entry['run']
           _, error, status = Open3.capture3('bash', '-n', stdin_data: entry['run'])
           assert status.success?, "#{path}: #{entry['name']}\n#{error}"
+          entry['run'].scan(/<<'([A-Z_]+)'\n(.*?)\n\1/m).each do |_, script|
+            _, error, status = Open3.capture3('bash', '-n', stdin_data: script)
+            assert status.success?, "#{path}: #{entry['name']} helper\n#{error}"
+          end
         end
 
       end
@@ -333,7 +343,7 @@ class WorkflowsTest < Minitest::Test
       'issue' => { 'id' => 'ISSUE' },
       'owner' => { 'projectsV2' => { 'nodes' => [{
         'id' => 'PROJECT', 'title' => 'Test board',
-        'field' => { 'id' => 'STATUS', 'options' => %w[Think Plan Code Release Done].map { |name| { 'name' => name, 'id' => name.downcase } } }
+        'field' => { 'id' => 'STATUS', 'options' => %w[Think Plan Code Prove Release Done].map { |name| { 'name' => name, 'id' => name.downcase } } }
       }] } }
     } } }
   end
@@ -343,7 +353,7 @@ class WorkflowsTest < Minitest::Test
   end
 
   def test_status_updates_use_the_expected_project_and_option
-    { 'think' => 'Think', 'plan' => 'Plan', 'code' => 'Code', 'prove' => 'Release' }.each do |phase, status|
+    { 'think' => 'Think', 'plan' => 'Plan', 'code' => 'Code', 'prove' => 'Prove' }.each do |phase, status|
       entry = status_step(phase, status)
       run_step(entry, scenario([], project: project))
       update = @calls.find { |args| args.any? { |arg| arg.start_with?('query=') && arg.include?('updateProjectV2ItemFieldValue') } }
@@ -372,12 +382,12 @@ class WorkflowsTest < Minitest::Test
     assert_equal 'true', output.fetch('paused')
     edit = @calls.find { |args| args.first(2) == %w[issue edit] }
     assert_equal 'review:code', edit[edit.index('--add-label') + 1]
-    refute @calls.any? { |args| args.any? { |arg| arg.include?('updateProjectV2ItemFieldValue') } }
+    assert @calls.any? { |args| args.include?('optionId=code') }
   end
 
   def test_status_configuration_and_permission_errors_are_explicit
     PHASES.each do |phase|
-      status = { 'think' => 'Think', 'plan' => 'Plan', 'code' => 'Code', 'prove' => 'Release' }.fetch(phase)
+      status = { 'think' => 'Think', 'plan' => 'Plan', 'code' => 'Code', 'prove' => 'Prove' }.fetch(phase)
       entry = status_step(phase, status)
       data = scenario([], project: project)
       data['project']['data']['repository']['owner']['projectsV2']['nodes'][0]['field']['options'] = []
@@ -390,13 +400,362 @@ class WorkflowsTest < Minitest::Test
     end
   end
 
+  def run_prove_loop(control_failures: 0, review_failures: 0, record_failures: 0, success: true)
+    entry = steps('prove').find { |item| item['name'] == 'Run Prove validation and auto-remediation loop' }.dup
+    controls = <<~'BASH'
+      run_deterministic_controls() {
+        ROUND=$(( ${ROUND:-0} + 1 ))
+        mkdir -p reports
+        echo "checks:${ROUND}" >> "$RUNNER_TEMP/events"
+        echo "exact check output round ${ROUND}" > gate-output.log
+        [ "$ROUND" -gt "$TEST_CONTROL_FAILURES" ]
+      }
+      wait_for_pr_checks() {
+        return 0
+      }
+    BASH
+    entry['run'] = entry.fetch('run').sub(/run_deterministic_controls\(\) \{.*?\n\}/m, controls)
+    mock = <<~'RUBY'
+      count_path = File.join(ENV.fetch('RUNNER_TEMP'), 'fix-count')
+      fixes = File.exist?(count_path) ? File.read(count_path).to_i : 0
+      events = File.join(ENV.fetch('RUNNER_TEMP'), 'events')
+      case File.basename($0)
+      when 'git'
+        puts "head-#{fixes}" if ARGV.first == 'rev-parse'
+      when 'copilot'
+        review = ARGV.include?('--agent=prove')
+        File.open(events, 'a') { |f| f.puts(review ? 'review' : 'repair') }
+        if review
+          File.write('specs/issue-42/prove.md', "Independent review findings at head-#{fixes}")
+        else
+          report = File.read('reports/repair-attempt.md')
+          File.write(File.join(ENV.fetch('RUNNER_TEMP'), "repair-#{fixes + 1}"), report)
+          File.write(count_path, (fixes + 1).to_s)
+        end
+      when 'node'
+        if ARGV.first.include?('validate-prove')
+          review_path = File.join(ENV.fetch('RUNNER_TEMP'), 'review-count')
+          reviews = File.exist?(review_path) ? File.read(review_path).to_i : 0
+          File.write(review_path, (reviews + 1).to_s)
+          if reviews < ENV.fetch('TEST_REVIEW_FAILURES').to_i
+            warn 'Review verdict failed: missing acceptance criterion AC-2'
+            exit 1
+          end
+        end
+      end
+    RUBY
+    %w[copilot git node].each do |command|
+      path = File.join(@directory, 'bin', command)
+      File.write(path, "#!#{RbConfig.ruby}\n#{mock}")
+      File.chmod(0o755, path)
+    end
+    status_script = status_step('prove', 'Prove').fetch('run').split("<<'STATUS_SCRIPT'\n", 2).last.split("\nSTATUS_SCRIPT", 2).first
+    File.write(File.join(@directory, 'prove-project-status.sh'), status_script)
+    File.write(File.join(@directory, 'record-prove.sh'), <<~'BASH')
+      RECORD_COUNT=0
+      if [ -f "$RUNNER_TEMP/record-count" ]; then
+        RECORD_COUNT=$(cat "$RUNNER_TEMP/record-count")
+      fi
+      echo $((RECORD_COUNT + 1)) > "$RUNNER_TEMP/record-count"
+      if [ "$RECORD_COUNT" -lt "$TEST_RECORD_FAILURES" ]; then
+        echo "PR metadata failed: rollback evidence missing"
+        exit 1
+      fi
+    BASH
+    FileUtils.mkdir_p(File.join(@directory, 'specs/issue-42'))
+    File.write(File.join(@directory, 'specs/issue-42/prove.md'), 'STALE REVIEW')
+    data = scenario([], project: project, pr: { 'labels' => [] }, track_fix_labels: true)
+    run_step(entry, data, {
+      'BASE_REF' => 'main', 'BRANCH_NAME' => 'issue-42', 'FIX_LOOP_LIMIT' => '5',
+      'TEST_CONTROL_FAILURES' => control_failures.to_s, 'TEST_REVIEW_FAILURES' => review_failures.to_s,
+      'TEST_RECORD_FAILURES' => record_failures.to_s
+    }, success: success)
+    File.readlines(File.join(@directory, 'events'), chomp: true)
+  end
+
+  def test_failed_checks_skip_review_and_return_to_code_with_exact_context
+    assert_equal %w[checks:1 repair checks:2 review], run_prove_loop(control_failures: 1)
+    report = File.read(File.join(@directory, 'repair-1'))
+    assert_includes report, 'exact check output round 1'
+    assert_includes report, 'Independent review deferred'
+    refute_includes report, 'STALE REVIEW'
+    assert_includes report, 'specs/issue-42/plan.md'
+    assert_includes report, 'head-0'
+    %w[issue pr].each do |target|
+      assert @calls.any? { |args| args.first(2) == [target, 'comment'] && args.include?('reports/repair-attempt.md') },
+             "Repair report must persist on the #{target}"
+    end
+    statuses = @calls.flat_map { |args| args.grep(/^optionId=/) }
+    assert_equal %w[optionId=code optionId=prove], statuses
+  end
+
+  def test_failed_review_is_given_to_code_and_checks_run_again_before_review
+    assert_equal %w[checks:1 review repair checks:2 review], run_prove_loop(review_failures: 1)
+    report = File.read(File.join(@directory, 'repair-1'))
+    assert_includes report, 'Independent review findings at head-0'
+    assert_includes report, 'Review verdict failed: missing acceptance criterion AC-2'
+  end
+
+  def test_five_repairs_stop_without_review_or_merge_when_checks_keep_failing
+    events = run_prove_loop(control_failures: 10, success: false)
+    assert_equal 5, events.count('repair')
+    assert_equal 6, events.count { |event| event.start_with?('checks:') }
+    refute_includes events, 'review'
+    assert @calls.any? { |args| args.first(2) == %w[issue edit] && args.include?('needs:developer') }
+    refute @calls.any? { |args| args.first(2) == %w[pr merge] }
+    assert_equal 'optionId=code', @calls.flat_map { |args| args.grep(/^optionId=/) }.last
+  end
+
+  def test_final_pr_metadata_failure_also_returns_to_code_with_context
+    assert_equal %w[checks:1 review repair checks:2 review], run_prove_loop(record_failures: 1)
+    assert_includes File.read(File.join(@directory, 'repair-1')), 'PR metadata failed: rollback evidence missing'
+  end
+
+  def test_release_starts_only_after_validation_and_before_merge
+    entries = steps('prove')
+    validate = entries.index { |entry| entry['name'] == 'Run Prove validation and auto-remediation loop' }
+    release = entries.index(status_step('prove', 'Release'))
+    merge = entries.index { |entry| entry['name'] == 'Verify validated revisions and merge' }
+    assert_operator release, :>, validate
+    assert_operator release, :<, merge
+    refute_match(/always\(|failure\(/, entries.fetch(release).fetch('if'))
+    create = steps('code').find { |entry| entry.fetch('run', '').include?('gh pr create') }.fetch('run')
+    assert_operator create.index('TARGET_STATUS=Prove'), :<, create.index('gh pr create')
+  end
+
+  def run_pr_checks(rollups, success: true)
+    script = steps('prove').find { |entry| entry['name'] == 'Run Prove validation and auto-remediation loop' }.fetch('run')
+    function = script.match(/wait_for_pr_checks\(\) \{.*?\n\}/m)[0]
+    sleep_path = File.join(@directory, 'bin/sleep')
+    File.write(sleep_path, "#!#{RbConfig.ruby}\nexit 0\n")
+    File.chmod(0o755, sleep_path)
+    run_step({ 'run' => "#{function}\nwait_for_pr_checks\n" },
+             scenario([], pr_sequence: rollups.map { |rollup| { 'statusCheckRollup' => rollup } }),
+             { 'GITHUB_RUN_ID' => '123' }, success: success)
+  end
+
+  def test_pr_checks_wait_for_pending_ci_and_ignore_current_delivery_run
+    own = { '__typename' => 'CheckRun', 'status' => 'IN_PROGRESS',
+            'detailsUrl' => 'https://github.com/test/repo/actions/runs/123/job/456' }
+    ci = { '__typename' => 'CheckRun', 'name' => 'test-and-build', 'status' => 'IN_PROGRESS',
+           'detailsUrl' => 'https://github.com/test/repo/actions/runs/321/job/654' }
+    run_pr_checks([[own, ci], [own, ci.merge('status' => 'COMPLETED', 'conclusion' => 'SUCCESS')]])
+    assert_equal 2, @calls.count { |args| args.first(2) == %w[pr view] }
+  end
+
+  def test_failed_ci_and_external_status_block_independent_review
+    [
+      { '__typename' => 'CheckRun', 'status' => 'COMPLETED', 'conclusion' => 'FAILURE',
+        'name' => 'tests', 'detailsUrl' => 'https://example.test/ci' },
+      { '__typename' => 'StatusContext', 'state' => 'ERROR', 'context' => 'external CI',
+        'targetUrl' => 'https://example.test/ci' }
+    ].each do |check|
+      run_pr_checks([[check]], success: false)
+      assert_includes @stdout, 'GitHub PR checks failed'
+      assert_includes @stdout, 'https://example.test/ci'
+    end
+  end
+
+  def test_repositories_without_pr_checks_allow_registration_grace_period
+    run_pr_checks([[], [], [], []])
+    assert_equal 4, @calls.count { |args| args.first(2) == %w[pr view] }
+  end
+
   def test_done_is_success_gated_and_after_release_preparation
     entries = steps('prove')
     done = status_step('prove', 'Done')
     refute_match(/always\(|failure\(/, done.fetch('if'))
     assert_operator entries.index(done), :>, entries.index { |entry| entry['name'].to_s.start_with?('Auto-release merged') }
+    assert_operator entries.index(done), :>, entries.index { |entry| entry['id'] == 'release_completion' }
+    assert_includes done.fetch('if'), "steps.release_completion.outcome == 'success'"
     run_step(done, scenario([], project: project))
     assert @calls.any? { |args| args.include?('optionId=done') }
+  end
+
+  def release_run(sha, event, status: 'completed', conclusion: 'success', id: 101, created: '2026-01-02T00:00:01Z')
+    {
+      'id' => id, 'head_sha' => sha, 'event' => event, 'status' => status,
+      'conclusion' => conclusion, 'created_at' => created,
+      'html_url' => "https://example.test/actions/runs/#{id}"
+    }
+  end
+
+  def release_environment
+    {
+      'RELEASE_STARTED_AT' => '2026-01-02T00:00:00Z', 'RELEASE_MERGE_SHA' => 'merge-sha',
+      'RELEASE_SHA' => '', 'RELEASE_TAG' => '', 'DEPLOYMENT_WORKFLOW' => '', 'DEPLOYMENT_PATHS' => '',
+      'BASE_REF' => 'main', 'PROVE_BASE_SHA' => 'base-sha', 'GITHUB_REPOSITORY' => 'test-owner/test-repo',
+      'GITHUB_SERVER_URL' => 'https://github.com', 'GITHUB_RUN_ID' => '123',
+      'GITHUB_STEP_SUMMARY' => File.join(@directory, 'summary')
+    }
+  end
+
+  def run_release_completion(runs, environment = {}, success: true, api_failure: false)
+    %w[git sleep].each do |command|
+      executable = File.join(@directory, 'bin', command)
+      File.write(executable, "#!#{RbConfig.ruby}\nexit 0\n")
+      File.chmod(0o755, executable)
+    end
+    entry = step('prove', 'release_completion')
+    data = scenario([], release_runs: runs, release_api_failure: api_failure)
+    run_step(entry, data, release_environment.merge(environment), success: success)
+    File.read(File.join(@directory, 'reports/release.md'))
+  end
+
+  def test_doomr_waits_for_exact_merge_deployment_not_an_unrelated_success
+    wrong_sha = release_run('older-sha', 'push')
+    wrong_event = release_run('merge-sha', 'workflow_dispatch', id: 102)
+    stale = release_run('merge-sha', 'push', id: 103, created: '2026-01-01T00:00:00Z')
+    pending = release_run('merge-sha', 'push', id: 104, status: 'in_progress', conclusion: nil)
+    success = pending.merge('status' => 'completed', 'conclusion' => 'success')
+    report = run_release_completion(
+      { 'deploy-pages.yml' => [[wrong_sha, wrong_event, stale], [pending], [success]] },
+      { 'DEPLOYMENT_WORKFLOW' => 'deploy-pages.yml' }
+    )
+    assert_includes report, 'https://example.test/actions/runs/104'
+    assert_includes report, 'All required release workflows succeeded'
+    polls = @calls.select { |args| args.first == 'api' }
+    assert_equal 3, polls.length
+    assert polls.all? { |args| args[1].include?('head_sha=merge-sha') }
+    assert_empty dispatches
+    %w[issue pr].each do |target|
+      assert @calls.any? { |args| args.first(2) == [target, 'comment'] && args.include?('reports/release.md') }
+    end
+  end
+
+  def test_library_waits_for_npm_and_documentation_at_release_revision
+    report = run_release_completion({
+      'publish-npm.yml' => [[release_run('release-sha', 'release')]],
+      'deploy-docs.yml' => [[release_run('release-sha', 'push', id: 102)]]
+    }, { 'RELEASE_SHA' => 'release-sha', 'RELEASE_TAG' => 'v1.2.3', 'DEPLOYMENT_WORKFLOW' => 'deploy-docs.yml' })
+    assert_includes report, 'GitHub Release: v1.2.3'
+    assert_includes report, 'publish-npm.yml'
+    assert_includes report, 'deploy-docs.yml'
+    assert_includes report, 'All required release workflows succeeded'
+    assert_equal 2, @calls.count { |args| args.first == 'api' }
+  end
+
+  def test_failed_cancelled_or_skipped_release_does_not_pass
+    %w[failure cancelled skipped timed_out action_required].each do |conclusion|
+      report = run_release_completion(
+        { 'publish-npm.yml' => [[release_run('release-sha', 'release', conclusion: conclusion)]] },
+        { 'RELEASE_SHA' => 'release-sha', 'RELEASE_TAG' => 'v1.2.3' }, success: false
+      )
+      assert_includes report, conclusion
+      assert_includes report, 'Issue stays in Release'
+      assert_includes report, 'https://example.test/actions/runs/101'
+      refute_includes report, 'All required release workflows succeeded'
+    end
+  end
+
+  def test_successful_npm_publish_does_not_hide_failed_documentation_deployment
+    report = run_release_completion({
+      'publish-npm.yml' => [[release_run('release-sha', 'release')]],
+      'deploy-docs.yml' => [[release_run('release-sha', 'push', id: 102, conclusion: 'failure')]]
+    }, { 'RELEASE_SHA' => 'release-sha', 'RELEASE_TAG' => 'v1.2.3', 'DEPLOYMENT_WORKFLOW' => 'deploy-docs.yml' },
+                                       success: false)
+    assert_includes report, 'publish-npm.yml, run 101: https://example.test/actions/runs/101 — success'
+    assert_includes report, 'deploy-docs.yml, run 102: https://example.test/actions/runs/102 — failure'
+    assert_includes report, 'Issue stays in Release'
+  end
+
+  def test_release_revision_and_reports_are_persisted
+    release = step('prove', 'release').fetch('run')
+    assert_includes release, '--target "$RELEASE_COMMIT"'
+    assert_includes release, 'echo "release_sha=${RELEASE_COMMIT}" >> "$GITHUB_OUTPUT"'
+    artifact = steps('prove').find { |entry| entry.dig('with', 'name') == 'prove-spec' }
+    assert_includes artifact.dig('with', 'path'), 'reports/release.md'
+    assert_includes artifact.fetch('if'), 'always()'
+  end
+
+  def test_missing_release_run_times_out_instead_of_marking_done
+    report = run_release_completion(
+      { 'deploy-pages.yml' => [[]] }, { 'DEPLOYMENT_WORKFLOW' => 'deploy-pages.yml' }, success: false
+    )
+    assert_includes report, 'Timed out'
+    assert_includes report, 'Last run: not created'
+    assert_equal 120, @calls.count { |args| args.first == 'api' }
+  end
+
+  def test_release_api_failure_is_explicit_and_reported
+    report = run_release_completion({}, { 'DEPLOYMENT_WORKFLOW' => 'deploy-pages.yml' },
+                                    success: false, api_failure: true)
+    assert_includes report, 'Could not read deploy-pages.yml'
+    assert_includes @stdout, '::error::'
+    assert @calls.any? { |args| args.first(2) == %w[issue comment] }
+  end
+
+  def test_merge_only_repositories_complete_without_waiting_for_nonexistent_workflows
+    report = run_release_completion({})
+    assert_includes report, 'no external publication/deployment was applicable'
+    refute @calls.any? { |args| args.first == 'api' }
+  end
+
+  def test_release_failure_keeps_status_and_posts_durable_failure_links
+    status_script = status_step('prove', 'Prove').fetch('run').split("<<'STATUS_SCRIPT'\n", 2).last.split("\nSTATUS_SCRIPT", 2).first
+    File.write(File.join(@directory, 'prove-project-status.sh'), status_script)
+    entry = steps('prove').find { |item| item['name'] == 'Report Release failure on the issue and PR' }
+    assert_includes entry.fetch('if'), 'failure()'
+    assert_includes entry.fetch('if'), "steps.release_stage.outcome == 'success'"
+    run_step(entry, scenario([], project: project), release_environment)
+    assert @calls.any? { |args| args.include?('optionId=release') }
+    %w[issue pr].each do |target|
+      assert @calls.any? { |args| args.first(2) == [target, 'comment'] && args.last.include?('actions/runs/123') }
+    end
+    marker = steps('prove').find { |item| item['name'] == 'Mark issue needs:developer if Prove failed' }
+    run_step(marker, scenario)
+    assert @calls.any? { |args| args.first(2) == %w[issue edit] && args.include?('needs:developer') }
+  end
+
+  def test_documentation_path_gate_uses_real_git_and_selects_the_triggering_push
+    prepare_stale_pr
+    run_freshness_script('Refresh PR branch against latest base')
+    FileUtils.mkdir_p(File.join(@repository, 'src'))
+    File.write(File.join(@repository, 'src/library.js'), 'export const value = 1;')
+    git_command('add', '.')
+    git_command('commit', '-m', 'Library implementation')
+    merge_sha = git_command('rev-parse', 'HEAD')
+    File.write(File.join(@repository, 'CHANGELOG.md'), 'New release')
+    git_command('add', '.')
+    git_command('commit', '-m', 'Release metadata only')
+    release_sha = git_command('rev-parse', 'HEAD')
+    environment = release_environment.merge(
+      'RELEASE_MERGE_SHA' => merge_sha, 'RELEASE_SHA' => release_sha, 'RELEASE_TAG' => 'v1.2.3',
+      'DEPLOYMENT_WORKFLOW' => 'deploy-docs.yml', 'DEPLOYMENT_PATHS' => "website/\nsrc/\n.github/workflows/deploy-docs.yml",
+      'PROVE_BASE_SHA' => @base_sha
+    )
+    data = scenario([], release_runs: {
+      'publish-npm.yml' => [[release_run(release_sha, 'release')]],
+      'deploy-docs.yml' => [[release_run(merge_sha, 'push')]]
+    })
+    run_freshness_script('Wait for publication and deployment before Done', data: data, **environment.transform_keys(&:to_sym))
+    assert @calls.any? { |args| args.first == 'api' && args[1].include?("deploy-docs.yml/runs?event=push&head_sha=#{merge_sha}") }
+
+    FileUtils.mkdir_p(File.join(@repository, 'website'))
+    File.write(File.join(@repository, 'website/package.json'), '{"version":"1.2.3"}')
+    git_command('add', '.')
+    git_command('commit', '-m', 'Release website metadata')
+    release_sha = git_command('rev-parse', 'HEAD')
+    data['release_runs'] = {
+      'publish-npm.yml' => [[release_run(release_sha, 'release')]],
+      'deploy-docs.yml' => [[release_run(release_sha, 'push')]]
+    }
+    run_freshness_script('Wait for publication and deployment before Done', data: data,
+                         **environment.merge('RELEASE_SHA' => release_sha).transform_keys(&:to_sym))
+    assert @calls.any? { |args| args.first == 'api' && args[1].include?("deploy-docs.yml/runs?event=push&head_sha=#{release_sha}") }
+  end
+
+  def test_documentation_is_not_awaited_when_neither_push_matches_its_paths
+    prepare_stale_pr
+    run_freshness_script('Refresh PR branch against latest base')
+    merge_sha = git_command('rev-parse', 'HEAD')
+    environment = release_environment.merge(
+      'RELEASE_MERGE_SHA' => merge_sha, 'PROVE_BASE_SHA' => @base_sha,
+      'DEPLOYMENT_WORKFLOW' => 'deploy-docs.yml', 'DEPLOYMENT_PATHS' => "website/\nsrc/\n.github/workflows/deploy-docs.yml"
+    )
+    run_freshness_script('Wait for publication and deployment before Done', data: scenario, **environment.transform_keys(&:to_sym))
+    refute @calls.any? { |args| args.first == 'api' }
+    assert_includes File.read(File.join(@repository, 'reports/release.md')), 'Deployment not applicable'
   end
 
   def test_autonomous_decision_validation_is_installed_for_think
@@ -406,7 +765,7 @@ class WorkflowsTest < Minitest::Test
   end
 
   def test_high_risk_automated_metadata_is_checked_before_merge
-    script = steps('prove').find { |entry| entry['name'] == 'Record automated validation, approve PR, and auto-merge' }.fetch('run')
+    script = steps('prove').find { |entry| entry['name'] == 'Prepare automated validation recording' }.fetch('run')
     assert_includes script, 'readPlan, readThink'
     assert_includes script, 'if [ "$TIER" = "High" ] || [ "$TIER" = "Critical" ]'
     assert_includes script, "only when concrete rollback verification evidence is recorded"
@@ -415,7 +774,7 @@ class WorkflowsTest < Minitest::Test
     assert_operator script.index('copilot --model="auto" --agent="prove"'), :<, script.index('--stage prove')
     entries = steps('prove')
     merge = entries.find { |entry| entry['name'] == 'Verify validated revisions and merge' }
-    assert_operator entries.index(merge), :>, entries.index { |entry| entry['name'] == 'Record automated validation, approve PR, and auto-merge' }
+    assert_operator entries.index(merge), :>, entries.index { |entry| entry['name'] == 'Run Prove validation and auto-remediation loop' }
   end
 
   def git_command(*arguments, directory: @repository)
@@ -488,6 +847,35 @@ class WorkflowsTest < Minitest::Test
                     entries.index { |entry| entry['name'] == 'Run Prove validation and auto-remediation loop' }
   end
 
+  def test_code_creates_branch_from_latest_remote_base_not_stale_checkout
+    prepare_stale_pr
+    old_base = git_command('rev-parse', 'main~1')
+    git_command('checkout', '--detach', old_base)
+    git_command('update-ref', 'refs/remotes/origin/main', old_base)
+    specs = File.join(@repository, 'specs/issue-42')
+    FileUtils.mkdir_p(specs)
+    File.write(File.join(specs, 'think.md'), "# Think: test\n")
+    File.write(File.join(specs, 'plan.md'), "# Plan: test\n")
+    File.write(@environment.fetch('TEST_SCENARIO'), JSON.generate(scenario.merge('issue' => { 'title' => 'Fresh branch' })))
+    File.write(@environment.fetch('TEST_CALLS'), '')
+    File.write(@environment.fetch('TEST_VIOLATIONS'), '')
+    entry = steps('code').find { |item| item['name'] == 'Prepare implementation branch and commit specs' }
+    environment = @environment.merge(
+      'PATH' => "#{@environment.fetch('PATH')}#{File::PATH_SEPARATOR}#{ENV.fetch('PATH')}",
+      'BASE_REF' => 'main'
+    )
+    output, error, status = Open3.capture3(
+      environment, 'bash', '--noprofile', '--norc', '-eo', 'pipefail',
+      stdin_data: entry.fetch('run'), chdir: @repository, unsetenv_others: true
+    )
+    assert status.success?, "#{output}\n#{error}"
+    assert_equal '', File.read(@environment.fetch('TEST_VIOLATIONS'))
+    assert_equal 'feature/issue-42-fresh-branch', git_command('branch', '--show-current')
+    assert_equal @base_sha, git_command('rev-parse', 'HEAD~1')
+    assert_equal "updated base\n", File.read(File.join(@repository, 'shared.txt'))
+    assert_equal "# Plan: test\n", git_command('show', 'HEAD:specs/issue-42/plan.md') + "\n"
+  end
+
   def test_conflicts_abort_without_pushing_or_merging
     prepare_stale_pr(conflict: true)
     head = git_command('rev-parse', 'HEAD')
@@ -505,8 +893,9 @@ class WorkflowsTest < Minitest::Test
     run_freshness_script('Refresh PR branch against latest base')
     head = git_command('rev-parse', 'HEAD')
     name = 'Verify validated revisions and merge'
-    run_freshness_script(name, data: scenario(pr: { 'headRefOid' => head }), PROVE_BASE_SHA: @base_sha)
+    run_freshness_script(name, data: scenario(pr: { 'headRefOid' => head, 'mergeCommit' => { 'oid' => 'merged-sha' } }), PROVE_BASE_SHA: @base_sha)
     assert_includes @calls, ['pr', 'merge', '99', '--squash', '--delete-branch', '--match-head-commit', head]
+    assert_includes File.read(@environment.fetch('GITHUB_ENV')), 'RELEASE_MERGE_SHA=merged-sha'
     [
       [@base_sha, 'a' * 40],
       ['b' * 40, head]
@@ -519,6 +908,31 @@ class WorkflowsTest < Minitest::Test
   end
 
   if ENV['PROJECT_WORKFLOWS_ROOT']
+    def test_all_deployment_callers_track_completion_with_matching_push_filters
+      root = ENV.fetch('PROJECT_WORKFLOWS_ROOT')
+      Dir.glob(File.join(root, '*/.github/workflows/code.yml')).each do |code_path|
+        directory = File.dirname(code_path)
+        %w[code prove].each do |phase|
+          current = YAML.load_file(File.join(directory, "#{phase}.yml"))
+          settings = current.fetch('jobs').fetch('prove').fetch('with')
+          deployment = Dir.glob(File.join(directory, 'deploy-*.yml'))
+          assert_operator deployment.length, :<=, 1
+          if deployment.empty?
+            refute settings.key?('deployment_workflow'), code_path
+            next
+          end
+          filename = File.basename(deployment.first)
+          assert_equal filename, settings.fetch('deployment_workflow'), code_path
+          workflow = YAML.load_file(deployment.first)
+          triggers = workflow['on'] || workflow.fetch(true)
+          push = triggers.fetch('push')
+          expected = settings.fetch('deployment_paths', '').lines.map(&:strip).reject(&:empty?)
+          paths = push.fetch('paths', []).map { |path| path.delete_suffix('**') }
+          assert_equal paths, expected, code_path
+        end
+      end
+    end
+
     def test_project_wrapper_contracts
       projects = {
         'BumpR.js' => 'BumpR', 'Cadenza' => 'Cadenza', 'DoomR.js' => 'DoomR',
@@ -564,6 +978,8 @@ class WorkflowsTest < Minitest::Test
           end
         end
         code = YAML.load_file(File.join(directory, 'code.yml'))
+        prove_wrapper = YAML.load_file(File.join(directory, 'prove.yml'))
+        expected_npm_release = %w[BumpR.js GroovR.js LoopR.js RoostR.js Spock.js].include?(repository)
         prove = code.fetch('jobs').fetch('prove')
         assert_equal 'code', prove.fetch('needs')
         assert_equal "needs.code.outputs.continue_to_prove == 'true'", prove.fetch('if')
@@ -571,10 +987,62 @@ class WorkflowsTest < Minitest::Test
         assert_equal '${{ github.run_id }}', prove.dig('with', 'workflow_run_id')
         assert_equal title, prove.dig('with', 'project_title')
         assert_equal 'inherit', prove.fetch('secrets')
-        assert_equal false, prove.dig('with', 'auto_release_npm') if repository == 'DoomR.js'
+        assert_equal expected_npm_release, prove.dig('with', 'auto_release_npm'), "#{repository} code.yml"
+        assert_equal expected_npm_release, prove_wrapper.dig('jobs', 'prove', 'with', 'auto_release_npm'), "#{repository} prove.yml"
         audits = YAML.load_file(File.join(directory, 'audits.yml'))
         assert_equal 'Audit - Run audit', audits.fetch('name')
+        resume = YAML.load_file(File.join(directory, 'upstream-resume.yml'))
+        assert_equal 'Pipeline - Resume upstream', resume.fetch('name'), "#{repository} upstream-resume.yml"
+        assert_equal '1pizzateam/coding-pal/.github/workflows/pipeline-upstream-resume.yml@main',
+                     resume.dig('jobs', 'resume', 'uses'), "#{repository} upstream-resume.yml"
       end
     end
+  end
+
+  def test_scope_guard_extracts_in_scope_from_file_scope_and_boundaries
+    plan_md = <<~MARKDOWN
+      # Plan: Secret Room Door SFX
+
+      ## File Scope & Boundaries
+      - **In Scope:** `src/levels/door.ts`, `tests/door.test.ts`
+      - **Out of Scope:** `src/audio/engine.ts`
+      - **Irreversible Changes:** _None._
+    MARKDOWN
+    plan_file = File.join(@directory, 'plan.md')
+    File.write(plan_file, plan_md)
+    [
+      steps('code').find { |item| item['name'] == 'Run deterministic Code exit gates' }.fetch('run'),
+      steps('prove').find { |item| item['name'] == 'Run Prove validation and auto-remediation loop' }.fetch('run')
+    ].each do |script|
+      snippet = script[/node -e '\s*(const fs = require\("fs"\);.*?)' "\$\{SPEC_DIR\}\/plan\.md"/m, 1]
+      refute_nil snippet
+      out, status = Open3.capture2('node', '-e', snippet, plan_file)
+      assert status.success?
+      assert_equal %w[src/levels/door.ts tests/door.test.ts], out.lines.map(&:strip).reject(&:empty?)
+    end
+  end
+
+  def test_companion_editor_dispatch_supports_think_schema_and_body_fallback
+    entry = steps('prove').find { |item| item['name'] == 'Dispatch companion game editor updates after PR merge' }
+    FileUtils.mkdir_p(File.join(@directory, 'specs/issue-42'))
+    File.write(File.join(@directory, 'specs/issue-42/editor-requests.json'), JSON.generate([
+      {
+        'editor' => 'mappr',
+        'repo' => '1pizzateam/MappR',
+        'title' => 'feat(doors): support secret door SFX trigger property',
+        'problem' => 'DoomR.js moved secret room SFX to door open state.',
+        'suggestedDirection' => 'Update src/inspector/DoorInspector.ts',
+        'affectedFiles' => ['src/levels/door.ts']
+      }
+    ]))
+    run_step(entry, scenario, { 'REPO_FULL_NAME' => '1pizzateam/DoomR.js', 'REPO_NAME' => 'DoomR.js', 'BASE_REF' => 'main' })
+    create_call = @calls.find { |args| args.first(2) == %w[issue create] }
+    refute_nil create_call
+    assert_includes create_call, '1pizzateam/MappR'
+    body_arg = create_call[create_call.index('--body') + 1]
+    assert_includes body_arg, '## Problem'
+    assert_includes body_arg, 'DoomR.js moved secret room SFX to door open state.'
+    assert_includes body_arg, '## Suggested Direction'
+    assert_includes body_arg, 'src/levels/door.ts'
   end
 end

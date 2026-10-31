@@ -113,7 +113,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin "$BASE_REF"
+          git fetch origin "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          git checkout --detach "refs/remotes/origin/${BASE_REF}"
           mkdir -p specs
           cp -R /tmp/specs/. specs/
 
@@ -126,6 +127,7 @@ jobs:
           PROJECT_TITLE: ${{ inputs.project_title }}
           TARGET_STATUS: Code
         run: |
+          cat > "$RUNNER_TEMP/code-project-status.sh" <<'STATUS_SCRIPT'
           if [ -z "$PROJECT_TITLE" ]; then
             echo "::notice::No project_title configured; skipping Project status update."
             exit 0
@@ -158,7 +160,7 @@ jobs:
           PROJECT=$(echo "$DATA" | jq -c --arg title "$PROJECT_TITLE" '.data.repository.owner.projectsV2.nodes[]? | select((.title | ascii_downcase) == ($title | ascii_downcase))' | head -n 1)
           PROJECT_ID=$(echo "$PROJECT" | jq -r '.id // empty')
           FIELD_ID=$(echo "$PROJECT" | jq -r '.field.id // empty')
-          OPTION_ID=$(echo "$PROJECT" | jq -r --arg status "$TARGET_STATUS" '.field.options[] | select((.name | ascii_downcase) == ($status | ascii_downcase)) | .id' | head -n 1)
+          OPTION_ID=$(echo "$PROJECT" | jq -r --arg status "$TARGET_STATUS" '.field.options[]? | select((.name | ascii_downcase) == ($status | ascii_downcase)) | .id' | head -n 1)
           if [ -z "$ISSUE_ID" ] || [ -z "$PROJECT_ID" ] || [ -z "$FIELD_ID" ] || [ -z "$OPTION_ID" ]; then
             echo "::error::Could not find issue, project, Status field, or '$TARGET_STATUS' option for ${OWNER}/${REPO} in Project '$PROJECT_TITLE'."
             exit 1
@@ -176,6 +178,8 @@ jobs:
                 value: { singleSelectOptionId: $optionId }
               }) { projectV2Item { id } }
             }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$FIELD_ID" -f optionId="$OPTION_ID" >/dev/null
+          STATUS_SCRIPT
+          bash -eo pipefail "$RUNNER_TEMP/code-project-status.sh"
 
       - name: Prepare implementation branch and commit specs
         if: steps.resolve.outputs.skip != 'true'
@@ -188,7 +192,8 @@ jobs:
           BRANCH_NAME="feature/issue-${ISSUE_NUMBER}-${SLUG}"
           echo "BRANCH_NAME=${BRANCH_NAME}" >> "$GITHUB_ENV"
 
-          git checkout -B "$BRANCH_NAME"
+          git fetch origin "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          git checkout -B "$BRANCH_NAME" "refs/remotes/origin/${BASE_REF}"
           git add "specs/issue-${ISSUE_NUMBER}/think.md" "specs/issue-${ISSUE_NUMBER}/plan.md"
           if [ -f "specs/issue-${ISSUE_NUMBER}/editor-requests.json" ]; then
             git add "specs/issue-${ISSUE_NUMBER}/editor-requests.json"
@@ -269,7 +274,7 @@ jobs:
             --prompt "Implement the validated Plan record at ${PLAN_FILE} (with ${THINK_FILE}) for GitHub Issue #${ISSUE_NUMBER} (${ISSUE_TITLE}) on the current branch ${BRANCH_NAME} (base: ${BASE_REF}).
 
           Follow .github/instructions/code-loop.instructions.md, .agents/skills/code-loop/SKILL.md, and .agents/skills/pr-record/SKILL.md.
-          1. Validate specs first: node .agents/skills/plan/scripts/validate-plan.mjs --dir ${SPEC_DIR} --stage draft
+          1. Validate specs first: node .agents/skills/plan/scripts/validate-plan.mjs --dir ${SPEC_DIR} --stage draft. Think and Plan may predate intervening merges. Check their assumptions against the current base before implementing; if they are no longer valid, stop with an explicit blocking explanation rather than changing specs or broadening scope.
           2. Check the branch: node .agents/skills/code-loop/scripts/branch-guard.mjs --git --base ${BASE_REF}
           3. Drive the implementation loop one step at a time using code-loop:
              - node .agents/skills/code-loop/scripts/code-loop.mjs next --dir ${SPEC_DIR} --allow-pending-approval
@@ -318,61 +323,51 @@ jobs:
           done < <(node -e '
             const fs = require("fs");
             const md = fs.readFileSync(process.argv[1], "utf8");
-            const sec = md.match(/^##\s+In Scope\s*\n([\s\S]*?)(?:\n##\s+|$)/m);
-            if (sec) {
-              for (const m of sec[1].matchAll(/`([^`\n]+)`/g)) {
-                console.log(m[1].trim());
+            const paths = new Set();
+            const boundary = md.match(/^##\s+File Scope & Boundaries\s*\n([\s\S]*?)(?:\n##\s+|$)/m);
+            if (boundary) {
+              let collecting = false;
+              let buf = "";
+              for (const line of boundary[1].split(/\r?\n/)) {
+                const m = line.match(/^- \*\*(.+?):\*\*\s*(.*)$/);
+                if (m) {
+                  if (m[1].trim().toLowerCase() === "in scope") {
+                    collecting = true;
+                    buf += m[2] + "\n";
+                  } else if (collecting) {
+                    break;
+                  }
+                } else if (collecting) {
+                  buf += line + "\n";
+                }
+              }
+              for (const m of buf.matchAll(/`([^`\n]+)`/g)) {
+                const p = m[1].trim();
+                if (p && p !== "_None._") paths.add(p);
               }
             }
+            const legacy = md.match(/^##\s+In Scope\s*\n([\s\S]*?)(?:\n##\s+|$)/m);
+            if (legacy) {
+              for (const m of legacy[1].matchAll(/`([^`\n]+)`/g)) {
+                const p = m[1].trim();
+                if (p && p !== "_None._") paths.add(p);
+              }
+            }
+            for (const p of paths) console.log(p);
           ' "${SPEC_DIR}/plan.md")
           node .agents/skills/scope-guard/scripts/scope-guard.mjs --git --base "origin/${BASE_REF}" "${SCOPE_ARGS[@]}"
-          TASK_STAGES=(--stage "test:npm test" --stage "build:npm run build")
-          if [ -f package.json ] && [ "$(node -p "const p=require('./package.json'); Boolean(p.name && p.name.startsWith('@1pizzateam/') && !p.private)")" = "true" ]; then
-            TASK_STAGES+=(--stage "release-readiness:node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs --mode pr --require-dist --build-docs")
-          fi
-          node .agents/skills/task-gate/scripts/task-gate.mjs "${TASK_STAGES[@]}"
-
-          mkdir -p reports
-          if [ -f "./node_modules/jest/bin/jest.js" ]; then
-            node --experimental-vm-modules ./node_modules/jest/bin/jest.js --json --outputFile=reports/test-report.json
-            node .agents/skills/criteria-verify/scripts/verify-criteria.mjs --plan "${SPEC_DIR}/plan.md" --report reports/test-report.json --require-test-files >> "$GITHUB_STEP_SUMMARY"
-          else
-            {
-              for tf in tests/*.test.mjs tests/*.test.js scripts/test-*.mjs; do
-                if [ -f "$tf" ]; then
-                  echo "# file: ${tf}"
-                  node "$tf"
-                fi
-              done
-            } | tee reports/test-report.log
-            node .agents/skills/criteria-verify/scripts/verify-criteria.mjs --plan "${SPEC_DIR}/plan.md" --report reports/test-report.log --require-test-files >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-          MODIFIED_SRCS=$(git diff --name-only --diff-filter=M "origin/${BASE_REF}..HEAD" -- 'src/**')
-          if [ -n "$MODIFIED_SRCS" ]; then
-            PROBE_ARGS=()
-            for src in $MODIFIED_SRCS; do
-              PROBE_ARGS+=(--source "$src")
-            done
-            node .agents/skills/test-probe/scripts/test-probe.mjs --base "origin/${BASE_REF}" --test-cmd "npm test" "${PROBE_ARGS[@]}"
-          fi
-
-          if node -e 'const pkg=require("./package.json"); process.exit((pkg.dependencies?.vite || pkg.devDependencies?.vite) ? 0 : 1)' 2>/dev/null; then
-            npx vite preview --port 4173 --host 127.0.0.1 >/tmp/vite-preview.log 2>&1 &
-            PREVIEW_PID=$!
-            trap 'kill $PREVIEW_PID 2>/dev/null || true' EXIT
-            node .agents/skills/preview-smoke/scripts/preview-smoke.mjs --url http://127.0.0.1:4173 --routes /tmp/preview-routes.json --timeout-ms 5000 --retries 5 --retry-delay-ms 1000
-            kill "$PREVIEW_PID" 2>/dev/null || true
-          fi
-
           node .agents/skills/pr-record/scripts/validate-pr.mjs --body pr-body.md --dir "$SPEC_DIR" --stage code --allow-pending-approval
           cat pr-body.md >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Push branch and open Pull Request
+      - name: Enter Prove and create or update Pull Request
         if: steps.resolve.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          PROJECT_TITLE: ${{ inputs.project_title }}
         run: |
+          TARGET_STATUS=Prove bash -eo pipefail "$RUNNER_TEMP/code-project-status.sh"
           ISSUE_TITLE=$(gh issue view "$ISSUE_NUMBER" --json title --jq '.title')
           PR_TITLE="feat(issue-${ISSUE_NUMBER}): ${ISSUE_TITLE}"
 
@@ -399,6 +394,7 @@ jobs:
         if: steps.resolve.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          PROJECT_TITLE: ${{ inputs.project_title }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
         run: |
@@ -414,6 +410,7 @@ jobs:
           fi
 
           echo "paused=true" >> "$GITHUB_OUTPUT"
+          TARGET_STATUS=Code bash -eo pipefail "$RUNNER_TEMP/code-project-status.sh"
           gh label create "review:code" --color "FBCA04" --force --description "Paused after Code; PR open and waiting for manual validation or merge" || true
           gh issue edit "$ISSUE_NUMBER" --add-label "review:code" --remove-label "1-think,2-plan,3-code,4-release,pause:code" || true
           gh pr edit "$PR_NUMBER" --add-label "review:code" || true

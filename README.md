@@ -80,7 +80,7 @@ Create these labels in each application repository. Add one to an open issue:
 | `1-think` | Think | Specification comment, with `review:think` |
 | `2-plan` | Think -> Plan | Plan comment, with `review:plan` |
 | `3-code` | Think -> Plan -> Code | Open PR, with `review:code` |
-| `4-release` | Think -> Plan -> Code -> Prove | Automatic merge and any configured release preparation |
+| `4-release` | Think -> Plan -> Code -> Prove -> Release | Merge, configured publication/deployment, then Done |
 
 Use **`4-release`** for the full autonomous pipeline. With an existing PR, it resumes directly at Prove.
 
@@ -88,11 +88,13 @@ Only the numbered labels trigger delivery. The old `ready*` labels and unprefixe
 
 **Think and Plan run in parallel across issues.** They do not wait for another issue's implementation or review.
 
-**Code onward is serialized per repository.** Code holds one delivery slot through its dependent Prove job, merge, and configured release preparation. A standalone Prove request joins the same queue. Other repositories have their own queues.
+**Code onward is serialized per repository.** Code holds one delivery slot through its dependent Prove job, merge, and completion of required publication/deployment. A standalone Prove request joins the same queue. Other repositories have their own queues.
+
+After obtaining the slot, Code fetches the latest default branch and creates the issue branch from that revision, not the older workflow checkout. This includes earlier deliveries that have merged. Code checks whether the parallel Think/Plan still applies; invalid assumptions require replanning, not an expanded implementation scope.
 
 GitHub queues up to **100 pending deliveries** with `queue: max`, without replacing earlier pending runs. FIFO follows entry into the concurrency queue, not issue creation or label time. GitHub does not guarantee dispatch-time ordering; requests beyond the limit are canceled and must be resubmitted.
 
-A Code review pause releases the slot. Adding `4-release` later queues Prove as a new delivery request. Failures also release the slot and leave the issue flagged for attention. Separate npm publication and documentation deployment are outside this queue.
+A Code review pause releases the slot. Adding `4-release` later queues Prove as a new delivery request. Failures also release the slot and leave the issue flagged for attention. Publication/deployment run as separate workflows without acquiring the delivery slot; the delivery run waits for their results before releasing its slot.
 
 Before validation, Prove merges the latest base into the PR branch and pushes clean updates. Merge conflicts stop with a PR comment and `needs:developer`; resolve them within the approved plan, or revise Think/Plan before retrying. All controls and the independent assessment run on the refreshed branch, including checks for interactions with intervening changes.
 
@@ -132,12 +134,15 @@ Add these options to the Project's `Status` field:
 |---|---|---|
 | Think | **Think** | Stays Think until Plan starts |
 | Plan | **Plan** | Stays Plan until Code starts |
-| Code | **Code** | Stays Code until Prove starts, including review pauses |
-| Prove | **Release** | Changes to **Done** after merge and configured release preparation |
+| Code | **Code** | Enters Prove when opening the PR; returns to Code for a requested review pause |
+| Prove | **Prove** | Returns to Code for fixes, or enters Release after checks and independent review pass |
+| Release (inside the Prove workflow) | **Release** | Changes to **Done** only after required publication/deployment succeeds |
 
-Prove is different: it sets **Release** before validation and **Done** after completion. A failed run can remain in Release with `needs:developer`. Check the workflow result and labels.
+**Prove** means validation/review, not release. Failed checks or review move the issue back to **Code** for repairs, then **Prove** to verify again. After five unsuccessful repair attempts, it stays in Code with `needs:developer`. **Release** starts only after successful validation/review; it merges the PR and prepares any configured release. A later failure can leave it in Release.
 
-**Done does not mean npm publishing has finished.** Publishing runs separately.
+**Done means required release workflows succeeded.** DoomR waits for Pages. Libraries wait for npm publication when an automatic GitHub Release was created, plus applicable documentation deployment. Repositories without configured publication/deployment finish after merge.
+
+In the GitHub Project's **Workflows** settings, disable any built-in automation that sets Status to Done when an issue is closed or a PR is merged. Merge can close the issue before publication finishes; only this pipeline should set Done for delivery.
 
 ## Pipeline Walkthrough
 
@@ -173,9 +178,9 @@ Prove is different: it sets **Release** before validation and **Done** after com
 1. Restores both specs and prepares the implementation branch.
 2. Sets Project Status to **Code**.
 3. Runs the Code agent to implement the plan and prepare the PR record.
-4. Checks tests, build, scope, and applicable library release requirements.
-5. Pushes the branch and creates or updates the PR.
-6. Pauses with `review:code` if requested; otherwise, passes the specs and PR number to Prove.
+4. Checks branch/history, scope, control integrity, secrets, dependencies, and the PR record before publishing the branch. Full test/build verification belongs to Prove so failures enter its repair loop.
+5. Enters **Prove**, pushes the branch, and creates or updates the PR.
+6. If requested, returns to Code with `review:code` for manual PR review; otherwise, passes the specs and PR number to Prove.
 
 **Stops at:** an open PR for review or handoff to Prove. Code does not merge.
 
@@ -185,17 +190,23 @@ Failed Think, Plan, or Code runs mark the issue `needs:developer`. They do not r
 
 [`Pipeline - Prove`](.github/workflows/pipeline-prove.yml) validates and merges the PR:
 
-1. Sets Project Status to **Release**.
-2. Checks specs, scope, secrets, dependencies, tests, builds, acceptance criteria, and PR metadata.
-3. Runs the Prove agent for an independent assessment and validation record.
-4. Fixes failures and retries, **up to 5 times by default**.
-5. If everything passes, attempts approval and **squash-merges the PR**, deleting its branch.
+1. Sets Project Status to **Prove**.
+2. Checks specs, scope, secrets, dependencies, tests, builds, acceptance criteria, and PR metadata. Waits for GitHub PR checks too (up to 20 minutes, excluding the current delivery run).
+3. Only when checks pass, runs the Prove agent for independent code review and a validation record.
+4. On failed checks or review, returns to **Code**. The Code agent receives the exact check output, review findings, commit/base, and validated Think/Plan specs. It fixes within scope, then returns to Prove and reruns checks and review, **up to 5 repair attempts by default**.
+5. If everything passes, enters **Release**, then **squash-merges the PR**, deleting its branch. Approval is attempted after the review passes.
 6. Dispatches companion editor updates. For eligible libraries with automatic release enabled, prepares the version and creates a GitHub Release.
-7. Sets **Done**. Finishing the delivery run releases the slot for the next queued request.
+7. Waits for the existing publication/deployment runs for the exact delivered commit, then sets **Done**. Finishing the delivery run releases the slot for the next queued request.
 
 High/Critical changes require rollback verification evidence. Critical also requires a staged rollout reference. Missing evidence blocks merge; automation does not fabricate human sign-off.
 
-**Stops at:** successful merge/release preparation or a failure needing attention. There is no routine human approval pause. At the fix limit, the PR stays open and the issue/PR get `needs:developer`. A failure after merge does not undo it.
+Every failed Prove attempt posts a new **Prove repair request** comment on both the issue and PR, preserving its check output, review findings (when review ran), and commit reference for later analysis. Earlier comments are not overwritten. The workflow's `prove-spec` artifact also contains the latest repair report and validation log, subject to GitHub Actions artifact retention.
+
+Release completion does not launch duplicate workflows. It observes `publish-npm.yml` runs triggered by the GitHub Release and the push-triggered deployment configured by each application's Code and Prove callers (`deployment_workflow`). Documentation callers also pass `deployment_paths`, matching their push filters, so changes which cannot trigger a deployment do not wait for one. The gate tracks the release commit when that push matches, otherwise the merge commit if its push matched. DoomR's Pages workflow runs on every main push.
+
+Each required workflow has a 30-minute completion timeout, including time queued or awaiting environment approval. A failed, cancelled, skipped, missing, or timed-out run prevents Done, leaves the issue in **Release**, and adds `needs:developer`. A **Release report** is posted on the issue and PR with run links and outcomes and included in `prove-spec`. Release failures before the wait step also post the delivery-run link. Fix/retry the failed release workflow and verify its result before manually moving the issue to Done; retrying publication alone does not automatically rerun the completion gate.
+
+**Stops at:** successful merge and required publication/deployment completion, or a failure needing attention. There is no routine human approval pause. At the fix limit, the PR stays open and the issue/PR get `needs:developer`. A failure after merge does not undo it.
 
 Manual Prove dispatch also permits auto-merge without a `4-release` label. DoomR disables automatic npm release. Library npm publication runs separately.
 
