@@ -37,6 +37,110 @@ Centralized CI audit instructions, specialist agents, and reusable GitHub Action
 | | `.github/workflows/pipeline-upstream-resume.yml` | Reusable consumer workflow that waits for npm registry propagation, unblocks `blocked:upstream` issues, and resumes the FIFO pipeline |
 | **Skills** (1) | `skills/release-readiness/SKILL.md` & `skills/release-readiness/scripts/verify-release-readiness.mjs` | Deterministic pre-release gate for `@1pizzateam/*` libraries verifying `package.json` & lockfile sync, `CHANGELOG.md` top version entry & format, public `src/` export documentation coverage (`website/docs/**` & `README.md`), VitePress sidebar links, docs build, and `npm pack --dry-run --json` tarball contents |
 
+## Pipeline Walkthrough
+
+The main delivery flow is **Think -> Plan -> Code -> Prove**. The issue's trigger label chooses where it pauses; Project Status shows the current phase rather than starting it.
+
+**When statuses change:** each workflow sets its phase status near the start of its own run, before running the agent.
+
+| Workflow | Status at phase start | Status after successful completion |
+|---|---|---|
+| Think | **Think** | Stays **Think** until Plan starts |
+| Plan | **Plan** | Stays **Plan** until Code starts |
+| Code | **Code** | Stays **Code** until Prove starts, including when paused for human review with `review:code` |
+| Prove | **Release** | Changes to **Done** after merge and any configured release preparation |
+
+Unlike the other phases, **Prove explicitly marks final completion**. **Release** means the ticket has entered validation/merge/release preparation, not that it has passed. A failed Prove run can leave it in **Release** with `needs:developer`; check the workflow result and labels rather than treating a phase status as proof that a run is still active. **Done** does not certify completion of the separate npm publishing workflow.
+
+### Pipeline - Think
+
+[`Pipeline - Think`](.github/workflows/pipeline-think.yml) turns an issue into a validated specification:
+
+1. Checks the FIFO queue and existing specification comments or PR to decide whether to wait, start Think, or resume a later phase.
+2. Sets the ticket's Project Status to **Think** when a new Think phase starts.
+3. Runs the Think agent to define the problem, scope, constraints, and acceptance criteria.
+4. Validates the Think contract and posts the specification as a `# Think:` issue comment.
+5. If an upstream library change is required, opens an upstream `4-release` issue and pauses this issue with `blocked:upstream`.
+6. Otherwise, pauses with `review:think` when requested by `1-think` or a Think pause directive; if not paused, uploads the specification for Plan.
+
+**Stopping point:** the Think specification for manual review, an upstream dependency gate, or handoff to Plan. A failed Think run marks the issue `needs:developer` and advances the queue.
+
+### Pipeline - Plan
+
+[`Pipeline - Plan`](.github/workflows/pipeline-plan.yml) converts the specification into an implementation plan:
+
+1. Restores the Think specification from the preceding artifact or the issue's existing comment.
+2. Sets the ticket's Project Status to **Plan** before generating the plan.
+3. Runs the Plan agent to define implementation steps, affected files, tests, and documentation scope.
+4. Validates the plan and cross-checks it against the Think specification.
+5. Posts the plan as a `# Plan:` issue comment.
+6. Pauses with `review:plan` when requested by `2-plan` or a Plan pause directive; otherwise, uploads the specifications for Code.
+
+**Stopping point:** the implementation plan for manual review, or handoff to Code. A failed Plan run marks the issue `needs:developer` and advances the queue.
+
+### Pipeline - Code
+
+[`Pipeline - Code`](.github/workflows/pipeline-code.yml) implements the plan and opens a PR:
+
+1. Restores the Think and Plan specifications and determines the base branch.
+2. Sets the ticket's Project Status to **Code** before implementation starts.
+3. Prepares the implementation branch and runs the Code agent to implement the plan and prepare the PR record.
+4. Runs deterministic exit gates, including the applicable tests, build, scope checks, and library release-readiness checks.
+5. Pushes the branch and creates or updates the PR.
+6. When requested by `3-code` or a Code pause directive, keeps the status at **Code**, adds `review:code`, and withholds the artifact that would start Prove. Otherwise, uploads the specifications and PR number for Prove.
+
+**Stopping point:** an open PR awaiting human review, or handoff to Prove. Code does not merge the PR. A failed Code run marks the issue `needs:developer` and advances the queue.
+
+### Pipeline - Prove
+
+[`Pipeline - Prove`](.github/workflows/pipeline-prove.yml) validates an existing PR before merging it:
+
+1. Sets the ticket's Project Status to **Release** before validation starts; this does not mean the PR has passed Prove.
+2. Runs checks covering specs, scope, secrets, dependencies, tests, builds, acceptance criteria, and PR metadata.
+3. Runs the Prove agent to assess the implementation and write a validation record.
+4. If checks fail, runs automatic fixes and retries, up to the configured limit, **5 by default**.
+5. If everything passes, approves and **squash-merges the PR**, deleting its branch.
+
+After merging, Prove dispatches any companion editor updates. For eligible `@1pizzateam/*` libraries with automatic release enabled, it bumps the version, updates release documentation, runs release-readiness checks and an npm dry run, then pushes the version commit/tag and creates a GitHub Release. It finally sets **Done** and advances the queue.
+
+**Stopping point:** successful merge and any configured GitHub Release preparation, or a failure requiring developer attention. There is **no human approval pause before auto-merge**. If the fix limit is reached, the PR remains open and the issue/PR are flagged `needs:developer`. A failure after merging does not undo the merge.
+
+The `4-release` label continues through Prove automatically; on an issue with an existing PR, it resumes directly at Prove. Manually dispatching Prove also permits auto-merge and does not require the label. DoomR disables automatic npm release, so its successful Prove path ends after merge and completion bookkeeping. Actual npm publication for libraries is a separate workflow; **Done does not guarantee npm publishing has finished**.
+
+### Release - Publish npm
+
+[`Release - Publish npm`](.github/workflows/pipeline-publish-npm.yml) publishes a prepared library version:
+
+1. Checks the release tag belongs to the default branch and matches the package version, or verifies a manual publish uses the default branch.
+2. Installs dependencies, builds the library, and runs its tests.
+3. Verifies release documentation, package metadata, and the distributable tarball.
+4. Selects the npm dist-tag and runs `npm publish --dry-run`.
+5. Unless dry-run mode is enabled, publishes to npm with provenance and attempts to notify downstream repositories with blocked issues.
+
+**Stopping point:** a verified dry run, a published npm package, or the first failing validation/publish step. This workflow does not implement or merge a PR.
+
+### Deploy - Documentation
+
+[`Deploy - Documentation`](.github/workflows/pipeline-deploy-docs.yml) builds and deploys library documentation:
+
+1. Installs dependencies and builds the library.
+2. Installs the website dependencies and builds the VitePress site.
+3. Uploads the generated site as a Pages artifact.
+4. Deploys that artifact to GitHub Pages, subject to any configured environment approvals.
+
+**Stopping point:** a deployed documentation site, a required environment approval, or a failed build/deployment. This is separate from PR validation and npm publishing.
+
+### Pipeline - Resume upstream
+
+[`Pipeline - Resume upstream`](.github/workflows/pipeline-upstream-resume.yml) restarts consumer work after an upstream release notification:
+
+1. Reads the released package/version and polls npm for propagation for `@1pizzateam/*` packages.
+2. Finds open `blocked:upstream` issues referencing that package or upstream repository.
+3. Posts upgrade instructions, removes `blocked:upstream`, and applies `4-release`.
+4. If the pipeline is idle, dispatches Think for the first unblocked issue; otherwise, leaves the issues for queue processing.
+
+**Stopping point:** issues unblocked and queued/dispatched, or no matching blocked issues. The propagation polling is currently best-effort: exhausting its retries does not prevent unblocking.
+
 ## Manual Validation Checkpoints & Smart Resume (`Think` & `Plan`)
 
 Add one of the following labels to an open issue to choose how far the pipeline runs. Create the labels in each repository first so they appear in the issue's Labels picker.
@@ -52,7 +156,7 @@ The old `ready`, `ready:think`, `ready:plan`, and `ready:code` labels are no lon
 The unprefixed labels `think`, `plan`, `code`, and `release` are also no longer triggers. Create or rename the repository labels to the numbered names above; the prefixes keep them in pipeline order in GitHub's label picker. Project Status options remain unprefixed.
 
 ### Project board Status
-Project Status tracks pipeline progress; it does not trigger workflows. CI moves the issue through **Think**, **Plan**, **Code**, and **Release** as those phases begin. **In review** means Code has opened a PR and is paused for a person to review it (for example, when triggered with the `3-code` label). **Done** is set after Prove completes and any configured library release finishes. Add these options to each board's `Status` field. The `COPILOT_GITHUB_TOKEN` secret must have permission to read and update the project.
+Project Status tracks pipeline progress; it does not trigger workflows. CI moves the issue through **Think**, **Plan**, **Code**, and **Release** as those phases begin. A PR paused for human review stays in **Code**, with the `review:code` label indicating the pause (for example, when triggered with `3-code`). No separate review status is required. **Done** is set after Prove completes and any configured GitHub Release preparation finishes; separate npm publishing may still be running. Add these options to each board's `Status` field. The `COPILOT_GITHUB_TOKEN` secret must have permission to read and update the project.
 
 ### 2. Triggering via Issue Body Checkboxes / Directives
 You can also use issue-body checkboxes or directives with a pipeline label to request a manual pause:

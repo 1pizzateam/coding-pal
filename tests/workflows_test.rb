@@ -254,7 +254,7 @@ class WorkflowsTest < Minitest::Test
       'issue' => { 'id' => 'ISSUE' },
       'owner' => { 'projectsV2' => { 'nodes' => [{
         'id' => 'PROJECT', 'title' => 'Test board',
-        'field' => { 'id' => 'STATUS', 'options' => %w[Think Plan Code Release Done].map { |name| { 'name' => name, 'id' => name.downcase } } + [{ 'name' => 'In review', 'id' => 'review' }] }
+        'field' => { 'id' => 'STATUS', 'options' => %w[Think Plan Code Release Done].map { |name| { 'name' => name, 'id' => name.downcase } } }
       }] } }
     } } }
   end
@@ -283,12 +283,17 @@ class WorkflowsTest < Minitest::Test
     assert @calls.any? { |args| args.include?('optionId=think') }
   end
 
-  def test_review_status_only_for_paused_code
-    entry = status_step('code', 'In review')
-    run_step(entry, scenario(['4-release'], project: project))
-    refute @calls.any? { |args| args.first(2) == %w[api graphql] }
-    run_step(entry, scenario(['3-code'], project: project))
-    assert @calls.any? { |args| args.include?('optionId=review') }
+  def test_paused_code_keeps_code_status_and_adds_review_label
+    status_entries = steps('code').select { |entry| entry.dig('env', 'TARGET_STATUS') }
+    assert_equal ['Code'], status_entries.map { |entry| entry.dig('env', 'TARGET_STATUS') }
+    run_step(status_entries.first, scenario(['3-code'], project: project))
+    assert @calls.any? { |args| args.include?('optionId=code') }
+
+    output = run_step(step('code', 'checkpoint'), scenario(['3-code'], project: project))
+    assert_equal 'true', output.fetch('paused')
+    edit = @calls.find { |args| args.first(2) == %w[issue edit] }
+    assert_equal 'review:code', edit[edit.index('--add-label') + 1]
+    refute @calls.any? { |args| args.any? { |arg| arg.include?('updateProjectV2ItemFieldValue') } }
   end
 
   def test_status_configuration_and_permission_errors_are_explicit
