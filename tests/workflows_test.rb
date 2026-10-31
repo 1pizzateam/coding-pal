@@ -117,7 +117,7 @@ class WorkflowsTest < Minitest::Test
   end
 
   def test_copilot_and_github_credentials_are_separate
-    workflows = (PHASES + %w[publish-npm upstream-resume]).map { |phase| workflow(phase) }
+    workflows = (PHASES + %w[release publish-npm upstream-resume]).map { |phase| workflow(phase) }
     workflows << YAML.load_file(File.join(ROOT, '.github/workflows/audit-runner.yml'))
     workflows.each do |current|
       triggers = current['on'] || current.fetch(true)
@@ -139,12 +139,12 @@ class WorkflowsTest < Minitest::Test
         end
       end
     end
-    (PHASES + ['upstream-resume']).each do |phase|
+    (PHASES + %w[release upstream-resume]).each do |phase|
       current = workflow(phase)
       triggers = current['on'] || current.fetch(true)
       assert triggers.dig('workflow_call', 'secrets', 'PIPELINE_GITHUB_TOKEN', 'required')
     end
-    %w[code prove].each do |phase|
+    %w[code prove release].each do |phase|
       checkout = steps(phase).find { |entry| entry['uses'].to_s.start_with?('actions/checkout@') }
       assert_equal '${{ secrets.PIPELINE_GITHUB_TOKEN }}', checkout.dig('with', 'token')
     end
@@ -562,10 +562,12 @@ class WorkflowsTest < Minitest::Test
   end
 
   def test_done_is_success_gated_and_after_release_preparation
-    entries = steps('prove')
-    done = status_step('prove', 'Done')
+    prove_entries = steps('prove')
+    start_release = prove_entries.find { |entry| entry['id'] == 'start_release' }
+    assert_operator prove_entries.index(start_release), :>, prove_entries.index { |entry| entry['name'].to_s.start_with?('Auto-release merged') }
+    entries = steps('release')
+    done = status_step('release', 'Done')
     refute_match(/always\(|failure\(/, done.fetch('if'))
-    assert_operator entries.index(done), :>, entries.index { |entry| entry['name'].to_s.start_with?('Auto-release merged') }
     assert_operator entries.index(done), :>, entries.index { |entry| entry['id'] == 'release_completion' }
     assert_includes done.fetch('if'), "steps.release_completion.outcome == 'success'"
     run_step(done, scenario([], project: project))
@@ -596,7 +598,7 @@ class WorkflowsTest < Minitest::Test
       File.write(executable, "#!#{RbConfig.ruby}\nexit 0\n")
       File.chmod(0o755, executable)
     end
-    entry = step('prove', 'release_completion')
+    entry = step('release', 'release_completion')
     data = scenario([], release_runs: runs, release_api_failure: api_failure)
     run_step(entry, data, release_environment.merge(environment), success: success)
     File.read(File.join(@directory, 'reports/release.md'))
@@ -666,6 +668,9 @@ class WorkflowsTest < Minitest::Test
     artifact = steps('prove').find { |entry| entry.dig('with', 'name') == 'prove-spec' }
     assert_includes artifact.dig('with', 'path'), 'reports/release.md'
     assert_includes artifact.fetch('if'), 'always()'
+    release_artifact = steps('release').find { |entry| entry['uses'].to_s.start_with?('actions/upload-artifact@') }
+    assert_includes release_artifact.dig('with', 'path'), 'reports/release.md'
+    assert_includes release_artifact.fetch('if'), 'always()'
   end
 
   def test_missing_release_run_times_out_instead_of_marking_done
@@ -814,7 +819,7 @@ class WorkflowsTest < Minitest::Test
   end
 
   def run_freshness_script(name, data: scenario, success: true, **environment)
-    entry = steps('prove').find { |item| item['name'] == name }
+    entry = (steps('prove') + steps('release')).find { |item| item['name'] == name }
     File.write(@environment.fetch('TEST_SCENARIO'), JSON.generate(data))
     File.write(@environment.fetch('TEST_CALLS'), '')
     File.write(@environment.fetch('TEST_VIOLATIONS'), '')
@@ -995,6 +1000,11 @@ class WorkflowsTest < Minitest::Test
         assert_equal 'Pipeline - Resume upstream', resume.fetch('name'), "#{repository} upstream-resume.yml"
         assert_equal '1pizzateam/coding-pal/.github/workflows/pipeline-upstream-resume.yml@main',
                      resume.dig('jobs', 'resume', 'uses'), "#{repository} upstream-resume.yml"
+        release_wrapper = YAML.load_file(File.join(directory, 'release.yml'))
+        assert_equal 'Pipeline - Release', release_wrapper.fetch('name'), "#{repository} release.yml"
+        assert_equal '1pizzateam/coding-pal/.github/workflows/pipeline-release.yml@main',
+                     release_wrapper.dig('jobs', 'release', 'uses'), "#{repository} release.yml"
+        refute release_wrapper.key?('concurrency'), "#{repository} release.yml must not share the delivery concurrency lock"
       end
     end
   end

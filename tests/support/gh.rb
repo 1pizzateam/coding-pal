@@ -58,7 +58,7 @@ result = case ARGV.first(2)
              reject_command("Unexpected GraphQL operation: #{query}")
            end
          when ['workflow', 'run']
-           reject_command("Unexpected dispatch: #{ARGV.inspect}") unless %w[think.yml plan.yml code.yml prove.yml].include?(ARGV[2])
+           reject_command("Unexpected dispatch: #{ARGV.inspect}") unless %w[think.yml plan.yml code.yml prove.yml release.yml].include?(ARGV[2])
            nil
          when ['pr', 'edit']
            if scenario['track_fix_labels'] && argument('--add-label')&.start_with?('fix-loop:')
