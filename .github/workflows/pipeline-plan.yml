@@ -208,7 +208,7 @@ jobs:
             LIBRARY_DOCS_HINT="Because this repository is a published @1pizzateam/* library, if any public export, class, method, or signature in src/** is added or modified, ensure the corresponding documentation files (website/docs/** if website/docs exists, or README.md otherwise) are included in ## In Scope and updated in an atomic step so release-readiness verification (verify-release-readiness.mjs) passes."
           fi
 
-          copilot --agent="plan" --allow-all-tools \
+          copilot --model="auto" --agent="plan" --allow-all-tools \
             --prompt "Produce a validated Plan record at ${PLAN_FILE} derived strictly from ${THINK_FILE} for GitHub Issue #${ISSUE_NUMBER}.
           Issue Title: ${ISSUE_TITLE}
           Issue Body:

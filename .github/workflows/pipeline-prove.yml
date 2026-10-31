@@ -389,7 +389,7 @@ jobs:
               CONTROLS_OK=1
             fi
 
-            copilot --agent="prove" --allow-all-tools \
+            copilot --model="auto" --agent="prove" --allow-all-tools \
               --prompt "Run the Prove validation for Pull Request #${PR_NUMBER} (GitHub Issue #${ISSUE_NUMBER}: ${ISSUE_TITLE}) on branch ${BRANCH_NAME} (base: ${BASE_REF}).
 
             Follow .github/instructions/prove.instructions.md, .agents/skills/prove/SKILL.md, and .agents/skills/prove/references/prove-contract.md.
@@ -426,7 +426,7 @@ jobs:
             fi
 
             BEFORE=$(git rev-parse HEAD)
-            copilot --agent="gate-fix" --allow-all-tools \
+            copilot --model="auto" --agent="gate-fix" --allow-all-tools \
               --prompt "Remediate the failing Prove controls and findings for Pull Request #${PR_NUMBER} (Issue #${ISSUE_NUMBER}, attempt ${NEXT}/${FIX_LOOP_LIMIT}).
 
             Read gate-output.log and ${PROVE_FILE} (especially ## Findings), plus ${SPEC_DIR}/plan.md and pr-body.md.
@@ -478,7 +478,7 @@ jobs:
             console.log(TIERS[Math.max(...tiers.map(tier => TIERS.indexOf(tier)))]);
           ')
           if [ "$TIER" = "High" ] || [ "$TIER" = "Critical" ]; then
-            copilot --agent="prove" --allow-all-tools \
+            copilot --model="auto" --agent="prove" --allow-all-tools \
               --prompt "Complete only pr-body.md for autonomous ${TIER} Prove validation using ${PROVE_FILE}, ${SPEC_DIR}/think.md, ${SPEC_DIR}/plan.md and actual verification evidence.
             No human sign-off is required or may be invented. Follow the autonomous Prove section of .agents/skills/pr-record/references/pr-record-contract.md.
             Keep the three assessment fields Auto-merge only because the independently validated Prove report passed.
@@ -625,7 +625,7 @@ jobs:
           ')
 
           SPEC_DIR="specs/issue-${ISSUE_NUMBER}"
-          copilot --allow-all-tools \
+          copilot --model="auto" --allow-all-tools \
             --prompt "Prepare release ${TAG_NAME} (bumped from ${CURRENT_VERSION}) for merged PR #${PR_NUMBER} / Issue #${ISSUE_NUMBER} (${ISSUE_TITLE}) following .agents/skills/release-readiness/SKILL.md.
           1. Update CHANGELOG.md so the very first section at line 1 is:
              Version ${NEW_VERSION} (${RELEASE_DATE})

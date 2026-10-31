@@ -145,6 +145,23 @@ class WorkflowsTest < Minitest::Test
     assert_equal '${{ secrets.PIPELINE_GITHUB_TOKEN }}', checkout.dig('with', 'token')
   end
 
+  def test_every_copilot_invocation_uses_auto
+    calls = []
+    Dir.glob(File.join(ROOT, '.github/workflows/*.yml')).each do |path|
+      YAML.load_file(path).fetch('jobs').each_value do |job|
+        Array(job['steps']).each do |entry|
+          entry.fetch('run', '').each_line do |line|
+            next unless line.match?(/^\s*copilot\s/)
+            calls << line
+            assert_match(/^\s*copilot --model="auto"(?:\s|$)/, line, "#{path}: #{entry['name']}")
+            refute_match(/--(?:fusion-tier|auto-tier|reasoning-effort)\b/, line)
+          end
+        end
+      end
+    end
+    assert_equal 8, calls.length
+  end
+
   def test_publish_checks_pipeline_credentials_before_publishing
     entries = workflow('publish-npm').fetch('jobs').fetch('publish').fetch('steps')
     check = entries.find { |entry| entry['name'] == 'Check downstream notification credentials' }
@@ -383,8 +400,8 @@ class WorkflowsTest < Minitest::Test
     assert_includes script, 'if [ "$TIER" = "High" ] || [ "$TIER" = "Critical" ]'
     assert_includes script, "only when concrete rollback verification evidence is recorded"
     assert_includes script, "leave the affected field Pending"
-    assert_operator script.index('--stage pass'), :<, script.index('copilot --agent="prove"')
-    assert_operator script.index('copilot --agent="prove"'), :<, script.index('--stage prove')
+    assert_operator script.index('--stage pass'), :<, script.index('copilot --model="auto" --agent="prove"')
+    assert_operator script.index('copilot --model="auto" --agent="prove"'), :<, script.index('--stage prove')
     assert_operator script.index('--stage prove'), :<, script.index('gh pr merge')
   end
 

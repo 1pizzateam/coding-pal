@@ -294,7 +294,7 @@ jobs:
             LIBRARY_DOCS_HINT="Because this repository is a published @1pizzateam/* library, if solving this issue adds or changes any public export, class, method, or signature in src/**, you MUST include the corresponding documentation files (website/docs/** if website/docs exists, or README.md otherwise) in ## In Scope so documentation stays in sync with src/ and passes release-readiness verification."
           fi
 
-          copilot --agent="think" --allow-all-tools \
+          copilot --model="auto" --agent="think" --allow-all-tools \
             --prompt "Produce a validated Think record at ${THINK_FILE} for GitHub Issue #${ISSUE_NUMBER}.
           Issue Title: ${ISSUE_TITLE}
           Issue Body:

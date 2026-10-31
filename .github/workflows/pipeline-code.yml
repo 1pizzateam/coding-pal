@@ -259,7 +259,7 @@ jobs:
           THINK_FILE="${SPEC_DIR}/think.md"
           PLAN_FILE="${SPEC_DIR}/plan.md"
 
-          copilot --agent="code" --allow-all-tools \
+          copilot --model="auto" --agent="code" --allow-all-tools \
             --prompt "Implement the validated Plan record at ${PLAN_FILE} (with ${THINK_FILE}) for GitHub Issue #${ISSUE_NUMBER} (${ISSUE_TITLE}) on the current branch ${BRANCH_NAME} (base: ${BASE_REF}).
 
           Follow .github/instructions/code-loop.instructions.md, .agents/skills/code-loop/SKILL.md, and .agents/skills/pr-record/SKILL.md.

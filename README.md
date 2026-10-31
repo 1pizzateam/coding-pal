@@ -18,6 +18,12 @@ Audits find and fix specific problems. Separate workflows publish npm packages a
 
 Applications do not install this repository through `apm.yml`. Workflows load the required agents and instructions at runtime.
 
+## Model selection
+
+Every Copilot call uses **`--model="auto"`**: Think, Plan, Code, Prove, automatic fixes, release preparation, and audits. Copilot selects the model within your account and organization policies.
+
+No model variables or issue selections are required. Per-issue Standard/High effort selection is not implemented: the verified CLI release exposes `--auto-tier`, but its catalog-specific profile IDs have not been verified. Fusion's documented `--fusion-tier` flag is unavailable in CLI 1.0.105 and prerelease 1.0.106-0. `--reasoning-effort` is a separate setting, not a substitute for Fusion tiers.
+
 ## Pipeline authentication
 
 Create two fine-grained personal access tokens. Do not paste them into issues, source files, or chat.
