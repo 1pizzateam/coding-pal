@@ -1,4 +1,4 @@
-name: Reusable Pipeline - Prove
+name: Pipeline - Prove (reusable)
 
 on:
   workflow_call:

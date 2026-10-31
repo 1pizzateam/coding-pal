@@ -1,4 +1,4 @@
-name: Reusable Pipeline - Plan
+name: Pipeline - Plan (reusable)
 
 on:
   workflow_call:
@@ -74,7 +74,7 @@ jobs:
           fi
 
           if [ ! -s "$THINK_FILE" ]; then
-            echo "::error::No think.md found in artifact or comments for issue #${ISSUE_NUMBER}. Run 'Think from Issue Label' first."
+            echo "::error::No think.md found in artifact or comments for issue #${ISSUE_NUMBER}. Run 'Pipeline - Think' first."
             exit 1
           fi
 

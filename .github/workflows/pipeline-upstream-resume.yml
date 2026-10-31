@@ -1,4 +1,4 @@
-name: Reusable Resume Blocked Issues on Upstream Library Release
+name: Pipeline - Resume upstream (reusable)
 
 on:
   workflow_call:
@@ -91,7 +91,7 @@ jobs:
 
           # Check if the pipeline is currently idle; if so, dispatch Think for the head of the FIFO queue
           ACTIVE_RUNS=0
-          for wf in "Think from Issue Label" "Plan from Think Spec" "Code and Open PR" "Prove and Validate PR"; do
+          for wf in "Pipeline - Think" "Pipeline - Plan" "Pipeline - Code" "Pipeline - Prove"; do
             COUNT=$(gh run list --workflow "$wf" --limit 5 --json status \
               --jq '[.[] | select(.status == "in_progress" or .status == "queued" or .status == "waiting" or .status == "requested")] | length' 2>/dev/null || echo "0")
             ACTIVE_RUNS=$((ACTIVE_RUNS + COUNT))
@@ -103,7 +103,7 @@ jobs:
           if [ "$ACTIVE_RUNS" -eq 0 ] && [ "$OPEN_AGENT_PRS" -eq 0 ]; then
             FIRST_ISSUE=$(echo "$BLOCKED_ISSUES" | head -n 1)
             if [ -n "$FIRST_ISSUE" ]; then
-              echo "Pipeline is idle; dispatching Think from Issue Label for #${FIRST_ISSUE}..."
+              echo "Pipeline is idle; dispatching Pipeline - Think for #${FIRST_ISSUE}..."
               gh workflow run think.yml -f issue_number="$FIRST_ISSUE"
             fi
           fi

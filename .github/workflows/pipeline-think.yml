@@ -1,4 +1,4 @@
-name: Reusable Pipeline - Think
+name: Pipeline - Think (reusable)
 
 on:
   workflow_call:
@@ -46,7 +46,7 @@ jobs:
           echo "ISSUE_NUMBER=${ISSUE_NUMBER}" >> "$GITHUB_ENV"
           if [ "$EVENT_NAME" != "workflow_dispatch" ]; then
             ACTIVE_PIPELINE_RUNS=0
-            for wf in "Plan from Think Spec" "Code and Open PR" "Prove and Validate PR"; do
+            for wf in "Pipeline - Plan" "Pipeline - Code" "Pipeline - Prove"; do
               COUNT=$(gh run list --workflow "$wf" --limit 5 --json status \
                 --jq '[.[] | select(.status == "in_progress" or .status == "queued" or .status == "waiting" or .status == "requested")] | length' 2>/dev/null || echo "0")
               ACTIVE_PIPELINE_RUNS=$((ACTIVE_PIPELINE_RUNS + COUNT))
@@ -114,7 +114,7 @@ jobs:
 
           # Smart Resume 0: An open PR already exists and the issue was explicitly marked for release.
           if [ -n "$EXISTING_PR" ] && [ "$HAS_RELEASE_TRIGGER" = "true" ]; then
-            echo "Found open PR #${EXISTING_PR} for issue #${ISSUE_NUMBER}; dispatching Prove and Validate PR directly."
+            echo "Found open PR #${EXISTING_PR} for issue #${ISSUE_NUMBER}; dispatching Pipeline - Prove directly."
             gh pr edit "$EXISTING_PR" --remove-label "review:code" 2>/dev/null || true
             gh workflow run prove.yml -f pr_number="$EXISTING_PR" -f issue_number="$ISSUE_NUMBER"
             echo "resumed_stage=prove" >> "$GITHUB_OUTPUT"
@@ -131,7 +131,7 @@ jobs:
 
           # Smart Resume 1: Reuse both specs for Code unless Think or Plan was explicitly requested.
           if [ -n "$EXISTING_THINK" ] && [ -n "$EXISTING_PLAN" ] && [ "$HAS_THINK_TRIGGER" != "true" ] && [ "$HAS_PLAN_TRIGGER" != "true" ]; then
-            echo "Found validated # Think: and # Plan: comments on issue #${ISSUE_NUMBER}; dispatching Code and Open PR directly."
+            echo "Found validated # Think: and # Plan: comments on issue #${ISSUE_NUMBER}; dispatching Pipeline - Code directly."
             gh workflow run code.yml -f issue_number="$ISSUE_NUMBER"
             echo "resumed_stage=code" >> "$GITHUB_OUTPUT"
             exit 0

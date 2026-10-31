@@ -1,4 +1,4 @@
-name: Reusable Pipeline - Code
+name: Pipeline - Code (reusable)
 
 on:
   workflow_call:
@@ -484,7 +484,7 @@ jobs:
 
           Pull Request #${PR_NUMBER} (${PR_URL}) is open and ready for your review.
           - **Manual merge:** Review and merge PR #${PR_NUMBER} directly on GitHub.
-          - **Run Prove & auto-merge:** Add the **\`4-release\`** label to this issue (or run \`Prove and Validate PR\` for PR #${PR_NUMBER}) to run the 13 Prove controls and merge automatically."
+          - **Run Prove & auto-merge:** Add the **\`4-release\`** label to this issue (or run \`Pipeline - Prove\` for PR #${PR_NUMBER}) to run the 13 Prove controls and merge automatically."
 
           QUEUE_DATA=$(gh api graphql -f query='
             query($owner: String!, $repo: String!) {

@@ -1,4 +1,4 @@
-name: Reusable Deploy VitePress Docs to GitHub Pages
+name: Deploy - Documentation (reusable)
 
 on:
   workflow_call:
@@ -68,6 +68,6 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Deploy to GitHub Pages
+      - name: Deploy - GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

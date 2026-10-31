@@ -1,4 +1,4 @@
-name: Copilot Audit Runner
+name: Audit - Runner
 
 on:
   workflow_call:

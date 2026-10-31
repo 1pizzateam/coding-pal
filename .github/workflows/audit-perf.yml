@@ -1,4 +1,4 @@
-name: Performance & Zero-GC Audit
+name: Audit - Performance & Zero-GC
 
 on:
   workflow_call:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   audit:
-    uses: 1pizzateam/coding-pal/.github/workflows/copilot-audit.yml@main
+    uses: 1pizzateam/coding-pal/.github/workflows/audit-runner.yml@main
     with:
       agent: perf-audit
       scope: ${{ inputs.scope }}

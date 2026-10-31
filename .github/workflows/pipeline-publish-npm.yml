@@ -1,4 +1,4 @@
-name: Reusable Publish to npm
+name: Release - Publish npm (reusable)
 
 on:
   workflow_call:
