@@ -19,6 +19,8 @@ on:
         default: ''
         type: string
     secrets:
+      PIPELINE_GITHUB_TOKEN:
+        required: true
       COPILOT_GITHUB_TOKEN:
         required: true
 
@@ -37,7 +39,7 @@ jobs:
       - name: Resolve issue number and restore think.md
         id: resolve
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           RUN_ID: ${{ inputs.workflow_run_id }}
           INPUT_ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
@@ -81,7 +83,7 @@ jobs:
       - name: Sync issue to Plan on Project board
         if: steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
           PROJECT_TITLE: ${{ inputs.project_title }}
@@ -146,7 +148,7 @@ jobs:
       - name: Install ALTEN-group/coding-pal plan primitives
         if: steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
         run: |
           mkdir -p specs
           cp -R /tmp/specs/. specs/
@@ -172,7 +174,7 @@ jobs:
       - name: Clone sibling DoomR.js workspace for companion game editors
         if: steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           REPO_NAME: ${{ github.event.repository.name }}
         run: |
           case "$REPO_NAME" in
@@ -192,7 +194,7 @@ jobs:
       - name: Fetch issue context and run Planner agent
         if: steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
         run: |
           ISSUE_TITLE=$(gh issue view "$ISSUE_NUMBER" --json title --jq '.title')
@@ -230,7 +232,7 @@ jobs:
       - name: Comment plan.md on issue
         if: steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
         run: |
           PLAN_FILE="specs/issue-${ISSUE_NUMBER}/plan.md"
           gh issue comment "$ISSUE_NUMBER" --body-file "$PLAN_FILE"
@@ -239,7 +241,7 @@ jobs:
         id: checkpoint
         if: steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
         run: |
@@ -319,7 +321,7 @@ jobs:
       - name: Advance FIFO queue if Plan fails
         if: failure() && steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
         run: |

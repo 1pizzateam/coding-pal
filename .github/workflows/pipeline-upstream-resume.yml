@@ -2,6 +2,9 @@ name: Pipeline - Resume upstream (reusable)
 
 on:
   workflow_call:
+    secrets:
+      PIPELINE_GITHUB_TOKEN:
+        required: true
     inputs:
       package:
         description: 'Published npm package name (e.g. @1pizzateam/roostr)'
@@ -31,7 +34,7 @@ jobs:
     steps:
       - name: Wait for npm registry propagation and unblock waiting issues
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           PACKAGE: ${{ github.event.client_payload.package || inputs.package }}
           VERSION: ${{ github.event.client_payload.version || inputs.version }}
           UPSTREAM_REPO: ${{ github.event.client_payload.upstream_repo || github.event.client_payload.repo || inputs.upstream_repo }}

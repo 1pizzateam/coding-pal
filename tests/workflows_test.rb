@@ -106,6 +106,57 @@ class WorkflowsTest < Minitest::Test
     end
   end
 
+  def test_copilot_and_github_credentials_are_separate
+    workflows = (PHASES + %w[publish-npm upstream-resume]).map { |phase| workflow(phase) }
+    workflows << YAML.load_file(File.join(ROOT, '.github/workflows/audit-runner.yml'))
+    workflows.each do |current|
+      triggers = current['on'] || current.fetch(true)
+      secrets = triggers.fetch('workflow_call').fetch('secrets')
+      assert secrets.key?('PIPELINE_GITHUB_TOKEN'), current.fetch('name')
+      current.fetch('jobs').each_value do |job|
+        Array(job['steps']).each do |entry|
+          environment = entry.fetch('env', {})
+          if environment.key?('GH_TOKEN')
+            assert_equal '${{ secrets.PIPELINE_GITHUB_TOKEN }}', environment.fetch('GH_TOKEN'), entry['name']
+          end
+          if entry.fetch('run', '').match?(/\bcopilot --/)
+            assert_equal '${{ secrets.COPILOT_GITHUB_TOKEN }}', environment.fetch('COPILOT_GITHUB_TOKEN'), entry['name']
+            assert_equal '${{ secrets.PIPELINE_GITHUB_TOKEN }}', environment.fetch('GH_TOKEN'), entry['name']
+          end
+          entry.fetch('with', {}).each_value do |value|
+            refute_includes value.to_s, 'secrets.COPILOT_GITHUB_TOKEN'
+          end
+        end
+      end
+    end
+    (PHASES + ['upstream-resume']).each do |phase|
+      current = workflow(phase)
+      triggers = current['on'] || current.fetch(true)
+      assert triggers.dig('workflow_call', 'secrets', 'PIPELINE_GITHUB_TOKEN', 'required')
+    end
+    %w[code prove].each do |phase|
+      checkout = steps(phase).find { |entry| entry['uses'].to_s.start_with?('actions/checkout@') }
+      assert_equal '${{ secrets.PIPELINE_GITHUB_TOKEN }}', checkout.dig('with', 'token')
+    end
+    audit = YAML.load_file(File.join(ROOT, '.github/workflows/audit-runner.yml'))
+    triggers = audit['on'] || audit.fetch(true)
+    assert triggers.dig('workflow_call', 'secrets', 'PIPELINE_GITHUB_TOKEN', 'required')
+    checkout = audit.fetch('jobs').fetch('audit').fetch('steps').first
+    assert_equal '${{ secrets.PIPELINE_GITHUB_TOKEN }}', checkout.dig('with', 'token')
+  end
+
+  def test_publish_checks_pipeline_credentials_before_publishing
+    entries = workflow('publish-npm').fetch('jobs').fetch('publish').fetch('steps')
+    check = entries.find { |entry| entry['name'] == 'Check downstream notification credentials' }
+    assert_equal 'inputs.dry_run != true', check.fetch('if')
+    assert_operator entries.index(check), :<, entries.index { |entry| entry['name'] == 'Publish package to npm' }
+    run_step(check, scenario, { 'GH_TOKEN' => '' }, success: false)
+    assert_includes @stdout, '::error::PIPELINE_GITHUB_TOKEN'
+    assert_empty @calls
+    run_step(check, scenario)
+    assert_empty @calls
+  end
+
   def test_shared_workflow_references_resolve_to_existing_files
     paths = Dir.glob(File.join(ROOT, '.github/workflows/*.yml'))
     if ENV['PROJECT_WORKFLOWS_ROOT']
@@ -352,6 +403,7 @@ class WorkflowsTest < Minitest::Test
         triggers = wrapper['on'] || wrapper.fetch(true)
         assert_equal ['labeled'], triggers.fetch('issues').fetch('types'), repository
         job = wrapper.fetch('jobs').fetch('think')
+        assert_equal 'inherit', job.fetch('secrets'), repository
         labels = job.fetch('if').scan(/github.event.label.name == '([^']+)'/).flatten
         assert_equal LABELS, labels, repository
         expected = "github.event_name == 'workflow_dispatch' || " \
@@ -366,6 +418,7 @@ class WorkflowsTest < Minitest::Test
         assert_equal [wrapper.fetch('name')], plan_triggers.fetch('workflow_run').fetch('workflows')
         %w[plan code prove].each do |phase|
           current = YAML.load_file(File.join(directory, "#{phase}.yml"))
+          assert_equal 'inherit', current.fetch('jobs').fetch(phase).fetch('secrets'), repository
           upstream_phase = { 'plan' => 'think', 'code' => 'plan', 'prove' => 'code' }.fetch(phase)
           upstream = YAML.load_file(File.join(directory, "#{upstream_phase}.yml"))
           events = current['on'] || current.fetch(true)

@@ -39,6 +39,8 @@ on:
         type: string
         default: '22'
     secrets:
+      PIPELINE_GITHUB_TOKEN:
+        required: true
       COPILOT_GITHUB_TOKEN:
         required: true
 
@@ -60,7 +62,7 @@ jobs:
       - name: Resolve PR, branch, and issue number
         id: resolve
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           RUN_ID: ${{ inputs.workflow_run_id }}
           INPUT_PR_NUMBER: ${{ inputs.pr_number }}
           INPUT_ISSUE_NUMBER: ${{ inputs.issue_number }}
@@ -127,7 +129,7 @@ jobs:
       - name: Sync issue to Release on Project board
         if: steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
           PROJECT_TITLE: ${{ inputs.project_title }}
@@ -191,12 +193,12 @@ jobs:
         with:
           ref: ${{ env.BRANCH_NAME }}
           fetch-depth: 0
-          token: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          token: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
 
       - name: Configure git identity and restore specs / PR body
         if: steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -222,7 +224,7 @@ jobs:
       - name: Install ALTEN-group/coding-pal Prove and Remediation primitives
         if: steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
         run: |
           git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/ALTEN-group/coding-pal.git /tmp/alten-coding-pal
           git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/1pizzateam/coding-pal.git /tmp/1pizza-coding-pal
@@ -265,7 +267,7 @@ jobs:
       - name: Clone sibling DoomR.js workspace for companion game editors
         if: steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           REPO_NAME: ${{ github.event.repository.name }}
         run: |
           case "$REPO_NAME" in
@@ -285,7 +287,7 @@ jobs:
       - name: Run Prove validation and auto-remediation loop
         if: steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           ALLOW_PENDING_APPROVAL: "1"
           ALLOW_AUTO_PROVE: "1"
@@ -443,7 +445,8 @@ jobs:
       - name: Record automated validation, approve PR, and auto-merge
         if: steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           ALLOW_PENDING_APPROVAL: "1"
           ALLOW_AUTO_PROVE: "1"
         run: |
@@ -495,7 +498,7 @@ jobs:
       - name: Dispatch companion game editor updates after PR merge
         if: steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           REPO_FULL_NAME: ${{ github.repository }}
           REPO_NAME: ${{ github.event.repository.name }}
         run: |
@@ -567,7 +570,7 @@ jobs:
       - name: Auto-release merged @1pizzateam/* library version
         if: steps.resolve.outputs.skip != 'true' && inputs.auto_release_npm
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
         run: |
           if [ ! -f package.json ]; then exit 0; fi
@@ -666,7 +669,7 @@ jobs:
       - name: Sync issue to Done on Project board
         if: steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
           PROJECT_TITLE: ${{ inputs.project_title }}
@@ -735,7 +738,7 @@ jobs:
       - name: Mark issue needs:developer if Prove failed
         if: failure() && steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
         run: |
           if [ -n "${ISSUE_NUMBER:-}" ]; then
             gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
@@ -745,7 +748,7 @@ jobs:
       - name: Trigger next labeled issue in FIFO queue
         if: always() && steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
         run: |

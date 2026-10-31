@@ -22,6 +22,8 @@ on:
         required: true
         type: string
     secrets:
+      PIPELINE_GITHUB_TOKEN:
+        required: true
       COPILOT_GITHUB_TOKEN:
         required: true
 
@@ -40,10 +42,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
 
       - name: Inject 1pizzateam/coding-pal primitives
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
         run: |
           git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/1pizzateam/coding-pal.git /tmp/coding-pal
           rm -rf .github/instructions .github/agents .github/prompts .github/skills .github/copilot-instructions.md .agents .claude .cursor .gemini CLAUDE.md GEMINI.md AGENTS.md .cursorrules .windsurfrules
@@ -60,7 +63,7 @@ jobs:
 
       - name: Clone sibling DoomR.js workspace for companion game editors
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           REPO_NAME: ${{ github.event.repository.name }}
         run: |
           case "$REPO_NAME" in
@@ -77,6 +80,7 @@ jobs:
 
       - name: Run ${{ inputs.agent }} agent
         env:
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           AGENT: ${{ inputs.agent }}
           SCOPE: ${{ inputs.scope }}
@@ -88,7 +92,7 @@ jobs:
       - name: Escalate upstream @1pizzateam/* library requests
         if: always()
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           CURRENT_REPO: ${{ github.repository }}
         run: |
           if [ ! -s upstream-requests.json ]; then
@@ -169,7 +173,7 @@ jobs:
       - name: Dispatch companion game editor requests
         if: always()
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           CURRENT_REPO: ${{ github.repository }}
         run: |
           if [ ! -s editor-requests.json ]; then
@@ -248,7 +252,7 @@ jobs:
 
       - name: Open Pull Request if code changed
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           AGENT: ${{ inputs.agent }}
           PR_TITLE: ${{ inputs.pr_title }}
         run: |

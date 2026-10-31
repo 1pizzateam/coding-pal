@@ -24,6 +24,8 @@ on:
         type: string
         default: '22'
     secrets:
+      PIPELINE_GITHUB_TOKEN:
+        required: true
       COPILOT_GITHUB_TOKEN:
         required: true
 
@@ -43,7 +45,7 @@ jobs:
       - name: Resolve issue number, base branch, and restore think.md and plan.md
         id: resolve
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           RUN_ID: ${{ inputs.workflow_run_id }}
           INPUT_ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
@@ -98,7 +100,7 @@ jobs:
         if: steps.resolve.outputs.skip != 'true'
         with:
           fetch-depth: 0
-          token: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          token: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
 
       - name: Configure git identity and restore specs
         if: steps.resolve.outputs.skip != 'true'
@@ -112,7 +114,7 @@ jobs:
       - name: Sync issue to Code on Project board
         if: steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
           PROJECT_TITLE: ${{ inputs.project_title }}
@@ -172,7 +174,7 @@ jobs:
       - name: Prepare implementation branch and commit specs
         if: steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
         run: |
           ISSUE_TITLE=$(gh issue view "$ISSUE_NUMBER" --json title --jq '.title')
           SLUG=$(echo "$ISSUE_TITLE" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g' | cut -c1-36 | sed -E 's/-+$//')
@@ -190,7 +192,7 @@ jobs:
       - name: Install ALTEN-group/coding-pal code primitives
         if: steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
         run: |
           git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/ALTEN-group/coding-pal.git /tmp/alten-coding-pal
           git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/1pizzateam/coding-pal.git /tmp/1pizza-coding-pal
@@ -228,7 +230,7 @@ jobs:
       - name: Clone sibling DoomR.js workspace for companion game editors
         if: steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           REPO_NAME: ${{ github.event.repository.name }}
         run: |
           case "$REPO_NAME" in
@@ -248,7 +250,7 @@ jobs:
       - name: Run Code Agent to implement plan.md and prepare pr-body.md
         if: steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           ALLOW_PENDING_APPROVAL: "1"
         run: |
@@ -363,7 +365,7 @@ jobs:
       - name: Push branch and open Pull Request
         if: steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
         run: |
           ISSUE_TITLE=$(gh issue view "$ISSUE_NUMBER" --json title --jq '.title')
           PR_TITLE="feat(issue-${ISSUE_NUMBER}): ${ISSUE_TITLE}"
@@ -390,7 +392,7 @@ jobs:
         id: checkpoint
         if: steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
         run: |
@@ -472,7 +474,7 @@ jobs:
       - name: Advance FIFO queue if Code fails
         if: failure() && steps.resolve.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
         run: |

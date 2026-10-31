@@ -18,6 +18,8 @@ on:
         default: ''
         type: string
     secrets:
+      PIPELINE_GITHUB_TOKEN:
+        required: true
       COPILOT_GITHUB_TOKEN:
         required: true
 
@@ -37,7 +39,7 @@ jobs:
       - name: Check FIFO queue and inspect existing specs for Smart Resume
         id: fifo
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
           EVENT_NAME: ${{ github.event_name }}
@@ -152,7 +154,7 @@ jobs:
       - name: Sync issue to Think on Project board
         if: steps.fifo.outputs.queued != 'true' && steps.fifo.outputs.resumed_stage == 'none'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
           PROJECT_TITLE: ${{ inputs.project_title }}
@@ -217,7 +219,7 @@ jobs:
       - name: Install ALTEN-group/coding-pal think primitives
         if: steps.fifo.outputs.queued != 'true' && steps.fifo.outputs.resumed_stage == 'none'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
         run: |
           git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/ALTEN-group/coding-pal.git /tmp/alten-coding-pal
           git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/1pizzateam/coding-pal.git /tmp/1pizza-coding-pal
@@ -243,7 +245,7 @@ jobs:
       - name: Clone sibling DoomR.js workspace for companion game editors
         if: steps.fifo.outputs.queued != 'true' && steps.fifo.outputs.resumed_stage == 'none'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           REPO_NAME: ${{ github.event.repository.name }}
         run: |
           case "$REPO_NAME" in
@@ -263,7 +265,7 @@ jobs:
       - name: Fetch issue context and run Thinker agent
         if: steps.fifo.outputs.queued != 'true' && steps.fifo.outputs.resumed_stage == 'none'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
@@ -317,7 +319,7 @@ jobs:
       - name: Comment think.md on issue
         if: steps.fifo.outputs.queued != 'true' && steps.fifo.outputs.resumed_stage == 'none'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
           THINK_FILE="specs/issue-${ISSUE_NUMBER}/think.md"
@@ -338,7 +340,7 @@ jobs:
         id: escalate
         if: steps.fifo.outputs.queued != 'true' && steps.fifo.outputs.resumed_stage == 'none'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
           CURRENT_REPO: ${{ github.repository }}
@@ -461,7 +463,7 @@ jobs:
           steps.fifo.outputs.resumed_stage == 'none' &&
           steps.escalate.outputs.escalated != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
@@ -547,7 +549,7 @@ jobs:
       - name: Advance FIFO queue if Think fails
         if: failure() && steps.fifo.outputs.queued != 'true'
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}

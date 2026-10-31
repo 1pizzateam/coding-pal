@@ -2,6 +2,9 @@ name: Release - Publish npm (reusable)
 
 on:
   workflow_call:
+    secrets:
+      PIPELINE_GITHUB_TOKEN:
+        required: false
     inputs:
       dry_run:
         description: 'Run verification and npm publish --dry-run without publishing to npm'
@@ -22,6 +25,16 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
+      - name: Check downstream notification credentials
+        if: inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::PIPELINE_GITHUB_TOKEN is required to notify downstream consumers."
+            exit 1
+          fi
+
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -101,10 +114,9 @@ jobs:
       - name: Notify downstream consumers with blocked:upstream issues
         if: inputs.dry_run != true && success()
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           UPSTREAM_REPO: ${{ github.repository }}
         run: |
-          if [ -z "${GH_TOKEN:-}" ]; then exit 0; fi
           PACKAGE=$(node -p "require('./package.json').name")
           VERSION=$(node -p "require('./package.json').version")
           for CONSUMER in \
