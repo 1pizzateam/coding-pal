@@ -97,7 +97,7 @@ Unlike the other phases, **Prove explicitly marks final completion**. **Release*
 
 1. Sets the ticket's Project Status to **Release** before validation starts; this does not mean the PR has passed Prove.
 2. Runs checks covering specs, scope, secrets, dependencies, tests, builds, acceptance criteria, and PR metadata.
-3. Runs the Prove agent to assess the implementation and write a validation record.
+3. Runs the Prove agent to independently assess the implementation and write a validation record. Automated validation is supported at every risk tier: High/Critical require rollback verification evidence, and Critical also requires a staged rollout reference. Missing evidence blocks merge; automation never fabricates human sign-off.
 4. If checks fail, runs automatic fixes and retries, up to the configured limit, **5 by default**.
 5. If everything passes, approves and **squash-merges the PR**, deleting its branch.
 

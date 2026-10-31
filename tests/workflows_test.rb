@@ -320,6 +320,23 @@ class WorkflowsTest < Minitest::Test
     assert @calls.any? { |args| args.include?('optionId=done') }
   end
 
+  def test_autonomous_decision_validation_is_installed_for_think
+    install = steps('think').find { |entry| entry['name'] == 'Install ALTEN-group/coding-pal think primitives' }.fetch('run')
+    assert_includes install, 'cp -R /tmp/alten-coding-pal/skills/decision-record .agents/skills/decision-record'
+    assert_includes install, 'cp /tmp/alten-coding-pal/instructions/decision-record.instructions.md .github/instructions/'
+  end
+
+  def test_high_risk_automated_metadata_is_checked_before_merge
+    script = steps('prove').find { |entry| entry['name'] == 'Record automated validation, approve PR, and auto-merge' }.fetch('run')
+    assert_includes script, 'readPlan, readThink'
+    assert_includes script, 'if [ "$TIER" = "High" ] || [ "$TIER" = "Critical" ]'
+    assert_includes script, "only when concrete rollback verification evidence is recorded"
+    assert_includes script, "leave the affected field Pending"
+    assert_operator script.index('--stage pass'), :<, script.index('copilot --agent="prove"')
+    assert_operator script.index('copilot --agent="prove"'), :<, script.index('--stage prove')
+    assert_operator script.index('--stage prove'), :<, script.index('gh pr merge')
+  end
+
   if ENV['PROJECT_WORKFLOWS_ROOT']
     def test_project_wrapper_contracts
       projects = {

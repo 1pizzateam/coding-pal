@@ -440,7 +440,7 @@ jobs:
             fi
           done
 
-      - name: Record Human Validation, approve PR, and auto-merge
+      - name: Record automated validation, approve PR, and auto-merge
         if: steps.resolve.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN || github.token }}
@@ -467,6 +467,22 @@ jobs:
             }
             fs.writeFileSync("pr-body.md", body);
           '
+          TIER=$(node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import { readPlan, readThink, TIERS } from "./.agents/skills/pr-record/scripts/validate-pr.mjs";
+            const dir = `specs/issue-${process.env.ISSUE_NUMBER}`;
+            const tiers = [readPlan(readFileSync(`${dir}/plan.md`, "utf8")).tier, readThink(readFileSync(`${dir}/think.md`, "utf8")).tier];
+            console.log(TIERS[Math.max(...tiers.map(tier => TIERS.indexOf(tier)))]);
+          ')
+          if [ "$TIER" = "High" ] || [ "$TIER" = "Critical" ]; then
+            copilot --agent="prove" --allow-all-tools \
+              --prompt "Complete only pr-body.md for autonomous ${TIER} Prove validation using ${PROVE_FILE}, ${SPEC_DIR}/think.md, ${SPEC_DIR}/plan.md and actual verification evidence.
+            No human sign-off is required or may be invented. Follow the autonomous Prove section of .agents/skills/pr-record/references/pr-record-contract.md.
+            Keep the three assessment fields Auto-merge only because the independently validated Prove report passed.
+            Set Rollback Validated to the exact rollback mechanism from Think followed by '; Automated verification' only when concrete rollback verification evidence is recorded in ${PROVE_FILE}.
+            For Critical also set Joint Sign-off to 'Automated verification' and Staged Rollout to an existing, validated rollout record reference.
+            If evidence is missing, leave the affected field Pending and report the failure; never invent verification or edit controls, production code, tests, or specifications."
+          fi
           TODAY=$(date -u +%Y-%m-%d)
           node .agents/skills/pr-record/scripts/validate-pr.mjs --body pr-body.md --dir "$SPEC_DIR" --stage prove --pr-date "$TODAY" --allow-auto-prove
           gh pr edit "$PR_NUMBER" --body-file pr-body.md

@@ -226,10 +226,12 @@ jobs:
           cp /tmp/1pizza-coding-pal/instructions/*.md .github/instructions/
           cp /tmp/alten-coding-pal/instructions/sharp-agent.instructions.md .github/instructions/
           cp /tmp/alten-coding-pal/instructions/think.instructions.md .github/instructions/
+          cp /tmp/alten-coding-pal/instructions/decision-record.instructions.md .github/instructions/
           [ -d tests ] && [ -f /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md ] && cp /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md .github/instructions/
           [ -d website ] && [ -f /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md ] && cp /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md .github/instructions/
           cp /tmp/alten-coding-pal/agents/think.agent.md .github/agents/
           cp -R /tmp/alten-coding-pal/skills/think .agents/skills/think
+          cp -R /tmp/alten-coding-pal/skills/decision-record .agents/skills/decision-record
           rm -rf /tmp/alten-coding-pal /tmp/1pizza-coding-pal
 
       - uses: actions/setup-node@v4
