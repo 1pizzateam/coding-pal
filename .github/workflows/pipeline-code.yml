@@ -397,7 +397,7 @@ jobs:
         run: |
           ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --json body,labels)
           PAUSE_CODE=$(echo "$ISSUE_JSON" | jq -r '
-            (([.labels[].name] | any(. == "code" or . == "pause:code")))
+            (([.labels[].name] | any(. == "3-code" or . == "pause:code")))
             or ((.body // "") | test("(\\[pause:code\\]|- \\[[xX]\\] [Pp]ause after [Cc]ode)"))
           ')
 
@@ -467,7 +467,7 @@ jobs:
         run: |
           ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --json body,labels)
           PAUSE_CODE=$(echo "$ISSUE_JSON" | jq -r '
-            (([.labels[].name] | any(. == "code" or . == "pause:code")))
+            (([.labels[].name] | any(. == "3-code" or . == "pause:code")))
             or ((.body // "") | test("(\\[pause:code\\]|- \\[[xX]\\] [Pp]ause after [Cc]ode)"))
           ')
 
@@ -478,13 +478,13 @@ jobs:
 
           echo "paused=true" >> "$GITHUB_OUTPUT"
           gh label create "review:code" --color "FBCA04" --force --description "Paused after Code; PR open and waiting for manual validation or merge" || true
-          gh issue edit "$ISSUE_NUMBER" --add-label "review:code" --remove-label "think,plan,code,release,pause:code" || true
+          gh issue edit "$ISSUE_NUMBER" --add-label "review:code" --remove-label "1-think,2-plan,3-code,4-release,pause:code" || true
           gh pr edit "$PR_NUMBER" --add-label "review:code" || true
           gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused after Code for Manual PR Validation**
 
           Pull Request #${PR_NUMBER} (${PR_URL}) is open and ready for your review.
           - **Manual merge:** Review and merge PR #${PR_NUMBER} directly on GitHub.
-          - **Run Prove & auto-merge:** Add the **\`release\`** label to this issue (or run \`Prove and Validate PR\` for PR #${PR_NUMBER}) to run the 13 Prove controls and merge automatically."
+          - **Run Prove & auto-merge:** Add the **\`4-release\`** label to this issue (or run \`Prove and Validate PR\` for PR #${PR_NUMBER}) to run the 13 Prove controls and merge automatically."
 
           QUEUE_DATA=$(gh api graphql -f query='
             query($owner: String!, $repo: String!) {
@@ -511,11 +511,11 @@ jobs:
             [
               .data.repository.issues.nodes[]?
               | select(.number != $current)
-              | select([.labels.nodes[].name] | any(. == "think" or . == "plan" or . == "code" or . == "release"))
+              | select([.labels.nodes[].name] | any(. == "1-think" or . == "2-plan" or . == "3-code" or . == "4-release"))
               | select(([.labels.nodes[].name] | index("needs:developer")) == null)
               | {
                   number: .number,
-                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "think" or .label.name == "plan" or .label.name == "code" or .label.name == "release") | .createdAt] | last) // .createdAt)
+                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "1-think" or .label.name == "2-plan" or .label.name == "3-code" or .label.name == "4-release") | .createdAt] | last) // .createdAt)
                 }
             ]
             | sort_by(.readyAt, .number)
@@ -549,7 +549,7 @@ jobs:
         run: |
           if [ -n "${ISSUE_NUMBER:-}" ]; then
             gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
-            gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "think,plan,code,release" || true
+            gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
           fi
 
           QUEUE_DATA=$(gh api graphql -f query='
@@ -577,11 +577,11 @@ jobs:
             [
               .data.repository.issues.nodes[]?
               | select(.number != $current)
-              | select([.labels.nodes[].name] | any(. == "think" or . == "plan" or . == "code" or . == "release"))
+              | select([.labels.nodes[].name] | any(. == "1-think" or . == "2-plan" or . == "3-code" or . == "4-release"))
               | select(([.labels.nodes[].name] | index("needs:developer")) == null)
               | {
                   number: .number,
-                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "think" or .label.name == "plan" or .label.name == "code" or .label.name == "release") | .createdAt] | last) // .createdAt)
+                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "1-think" or .label.name == "2-plan" or .label.name == "3-code" or .label.name == "4-release") | .createdAt] | last) // .createdAt)
                 }
             ]
             | sort_by(.readyAt, .number)

@@ -86,7 +86,7 @@ jobs:
           2. Include \`package.json\` and \`package-lock.json\` in \`## In Scope\` of \`plan.md\`.
           3. Delegate directly to the newly released \`${PACKAGE}@${VERSION}\` API."
 
-            gh issue edit "$ISSUE_NUMBER" --remove-label "blocked:upstream" --add-label "release"
+            gh issue edit "$ISSUE_NUMBER" --remove-label "blocked:upstream" --add-label "4-release"
           done
 
           # Check if the pipeline is currently idle; if so, dispatch Think for the head of the FIFO queue

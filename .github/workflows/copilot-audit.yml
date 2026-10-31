@@ -134,13 +134,13 @@ jobs:
           - **Waiting-Repo:** \`${TARGET_REPO}\`")
             CONSUMER_ISSUE_NUMBER="${CONSUMER_ISSUE_URL##*/}"
 
-            # 2. Create the issue in the upstream library repo and label it 'release' to trigger its FIFO pipeline
-            gh label create "release" --repo "$TARGET_REPO" --force --description "Run the autonomous Think -> Plan -> Code -> Prove pipeline" || true
+            # 2. Create the issue in the upstream library repo and label it '4-release' to trigger its FIFO pipeline
+            gh label create "4-release" --repo "$TARGET_REPO" --force --description "Run the autonomous Think -> Plan -> Code -> Prove pipeline" || true
             gh label create "upstream-escalated:1" --repo "$TARGET_REPO" --force --description "Triggered by downstream consumer audit" || true
 
             LIB_ISSUE_URL=$(gh issue create --repo "$TARGET_REPO" \
               --title "$LIB_TITLE" \
-              --label "release" \
+              --label "4-release" \
               --label "upstream-escalated:1" \
               --body "${LIB_BODY}
 
@@ -153,13 +153,13 @@ jobs:
 
             # 3. Record the exact upstream issue reference on the consumer issue
             gh issue comment "$CONSUMER_ISSUE_NUMBER" --repo "$CURRENT_REPO" \
-              --body "Blocked waiting on upstream library issue ${TARGET_REPO}#${LIB_ISSUE_NUMBER} (${LIB_ISSUE_URL}) for package \`${PKG}\`. Once \`${TARGET_REPO}\` merges and publishes the new release to npm, this issue will automatically be labeled \`release\` and resume implementation."
+              --body "Blocked waiting on upstream library issue ${TARGET_REPO}#${LIB_ISSUE_NUMBER} (${LIB_ISSUE_URL}) for package \`${PKG}\`. Once \`${TARGET_REPO}\` merges and publishes the new release to npm, this issue will automatically be labeled \`4-release\` and resume implementation."
 
             {
               echo ""
               echo "### Escalated Upstream Library Issue"
               echo "- **Library:** \`${PKG}\` (\`${TARGET_REPO}\`)"
-              echo "- **Upstream Issue:** ${LIB_ISSUE_URL} (labeled \`release\`)"
+              echo "- **Upstream Issue:** ${LIB_ISSUE_URL} (labeled \`4-release\`)"
               echo "- **Downstream Tracking Issue:** ${CONSUMER_ISSUE_URL} (labeled \`blocked:upstream\`)"
             } >> audit-report.md
           done
@@ -209,12 +209,12 @@ jobs:
               continue
             fi
 
-            gh label create "release" --repo "$TARGET_REPO" --force --description "Run the autonomous Think -> Plan -> Code -> Prove pipeline" || true
+            gh label create "4-release" --repo "$TARGET_REPO" --force --description "Run the autonomous Think -> Plan -> Code -> Prove pipeline" || true
             gh label create "downstream:doomr" --repo "$TARGET_REPO" --force --description "Triggered by DoomR.js companion editor sync" || true
 
             ED_ISSUE_URL=$(gh issue create --repo "$TARGET_REPO" \
               --title "$ED_TITLE" \
-              --label "release" \
+              --label "4-release" \
               --label "downstream:doomr" \
               --body "${ED_BODY}
 
@@ -226,7 +226,7 @@ jobs:
               echo ""
               echo "### Triggered Companion Game Editor Issue"
               echo "- **Editor Repository:** \`${TARGET_REPO}\`"
-              echo "- **Issue:** ${ED_ISSUE_URL} (labeled \`release\`)"
+              echo "- **Issue:** ${ED_ISSUE_URL} (labeled \`4-release\`)"
             } >> audit-report.md
           done
 

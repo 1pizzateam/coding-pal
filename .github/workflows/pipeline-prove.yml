@@ -408,7 +408,7 @@ jobs:
             if [ "$ATTEMPTS" -ge "$FIX_LOOP_LIMIT" ]; then
               gh label create needs:developer --force --description "Fix-loop limit reached" || true
               gh pr edit "$PR_NUMBER" --add-label needs:developer
-              gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "think,plan,code,release" || true
+              gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
               if [ -f "$PROVE_FILE" ]; then
                 gh pr review "$PR_NUMBER" --request-changes --body-file "$PROVE_FILE" || gh pr comment "$PR_NUMBER" --body-file "$PROVE_FILE"
               fi
@@ -474,7 +474,7 @@ jobs:
           gh pr review "$PR_NUMBER" --approve --body-file "$PROVE_FILE" || gh pr comment "$PR_NUMBER" --body-file "$PROVE_FILE"
 
           gh pr merge "$PR_NUMBER" --squash --delete-branch
-          gh issue edit "$ISSUE_NUMBER" --remove-label "think,plan,code,release,review:code" || true
+          gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-release,review:code" || true
 
       - name: Dispatch companion game editor updates after PR merge
         if: steps.resolve.outputs.skip != 'true'
@@ -506,7 +506,7 @@ jobs:
                 continue
               fi
 
-              gh label create "release" --repo "$TARGET_REPO" --force --description "Run the autonomous Think -> Plan -> Code -> Prove pipeline" || true
+              gh label create "4-release" --repo "$TARGET_REPO" --force --description "Run the autonomous Think -> Plan -> Code -> Prove pipeline" || true
               gh label create "upstream:doomr" --repo "$TARGET_REPO" --force --description "Triggered by a merged DoomR.js feature update" || true
 
               EXISTING=$(gh issue list --repo "$TARGET_REPO" --state open --limit 100 --json number,title \
@@ -524,14 +524,14 @@ jobs:
                   --repo "$TARGET_REPO" \
                   --title "$ED_TITLE" \
                   --body "$FULL_BODY" \
-                  --label "release,upstream:doomr")
+                  --label "4-release,upstream:doomr")
                 echo "Created companion editor issue ${ED_URL}"
               fi
               DISPATCHED_LINKS+=("- **${TARGET_REPO}**: ${ED_URL}")
             done < <(jq -c '.[]' "$EDITOR_REQ_FILE")
 
             if [ "${#DISPATCHED_LINKS[@]}" -gt 0 ]; then
-              COMMENT_BODY=$(printf "### Companion Game Editor Updates Dispatched\n\nNow that PR #%s is merged into \`%s\`, the following companion editor issues have been opened and labeled \`release\` to trigger their autonomous pipelines:\n\n%s\n" \
+              COMMENT_BODY=$(printf "### Companion Game Editor Updates Dispatched\n\nNow that PR #%s is merged into \`%s\`, the following companion editor issues have been opened and labeled \`4-release\` to trigger their autonomous pipelines:\n\n%s\n" \
                 "$PR_NUMBER" "$BASE_REF" "$(printf '%s\n' "${DISPATCHED_LINKS[@]}")")
               gh issue comment "$ISSUE_NUMBER" --body "$COMMENT_BODY"
             fi
@@ -723,7 +723,7 @@ jobs:
         run: |
           if [ -n "${ISSUE_NUMBER:-}" ]; then
             gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
-            gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "think,plan,code,release" || true
+            gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
           fi
 
       - name: Trigger next labeled issue in FIFO queue
@@ -758,11 +758,11 @@ jobs:
             [
               .data.repository.issues.nodes[]?
               | select(.number != $current)
-              | select([.labels.nodes[].name] | any(. == "think" or . == "plan" or . == "code" or . == "release"))
+              | select([.labels.nodes[].name] | any(. == "1-think" or . == "2-plan" or . == "3-code" or . == "4-release"))
               | select(([.labels.nodes[].name] | index("needs:developer")) == null)
               | {
                   number: .number,
-                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "think" or .label.name == "plan" or .label.name == "code" or .label.name == "release") | .createdAt] | last) // .createdAt)
+                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "1-think" or .label.name == "2-plan" or .label.name == "3-code" or .label.name == "4-release") | .createdAt] | last) // .createdAt)
                 }
             ]
             | sort_by(.readyAt, .number)

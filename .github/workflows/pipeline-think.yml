@@ -79,11 +79,11 @@ jobs:
             QUEUE_HEAD=$(echo "$QUEUE_DATA" | jq -r '
               [
                 .data.repository.issues.nodes[]?
-                | select([.labels.nodes[].name] | any(. == "think" or . == "plan" or . == "code" or . == "release"))
+                | select([.labels.nodes[].name] | any(. == "1-think" or . == "2-plan" or . == "3-code" or . == "4-release"))
                 | select(([.labels.nodes[].name] | index("needs:developer")) == null)
                 | {
                     number: .number,
-                    readyAt: (([.timelineItems.nodes[]? | select(.label.name == "think" or .label.name == "plan" or .label.name == "code" or .label.name == "release") | .createdAt] | last) // .createdAt)
+                    readyAt: (([.timelineItems.nodes[]? | select(.label.name == "1-think" or .label.name == "2-plan" or .label.name == "3-code" or .label.name == "4-release") | .createdAt] | last) // .createdAt)
                   }
               ]
               | sort_by(.readyAt, .number)
@@ -103,10 +103,10 @@ jobs:
           gh issue edit "$ISSUE_NUMBER" --remove-label "review:think,review:plan,review:code" 2>/dev/null || true
 
           ISSUE_VIEW=$(gh issue view "$ISSUE_NUMBER" --json labels,comments)
-          HAS_THINK_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("think") != null')
-          HAS_PLAN_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("plan") != null')
-          HAS_CODE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("code") != null')
-          HAS_RELEASE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("release") != null')
+          HAS_THINK_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("1-think") != null')
+          HAS_PLAN_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("2-plan") != null')
+          HAS_CODE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("3-code") != null')
+          HAS_RELEASE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("4-release") != null')
           EXISTING_THINK=$(echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty')
           EXISTING_PLAN=$(echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Plan:"; "m"))] | last // empty')
           EXISTING_PR=$(gh pr list --state open --json number,headRefName \
@@ -123,7 +123,7 @@ jobs:
 
           if [ -n "$EXISTING_PR" ] && [ "$HAS_CODE_TRIGGER" = "true" ]; then
             echo "Issue #${ISSUE_NUMBER} already has open PR #${EXISTING_PR}; leaving it at the manual review checkpoint."
-            gh issue edit "$ISSUE_NUMBER" --add-label "review:code" --remove-label "code" || true
+            gh issue edit "$ISSUE_NUMBER" --add-label "review:code" --remove-label "3-code" || true
             gh pr edit "$EXISTING_PR" --add-label "review:code" || true
             echo "resumed_stage=code" >> "$GITHUB_OUTPUT"
             exit 0
@@ -327,7 +327,7 @@ jobs:
             ED_SUMMARY=$(jq -r '.[]? | "- **\(.editor // .repo)** (`\(.repo)`): \(.title)"' "$EDITOR_REQ_FILE" 2>/dev/null || true)
             if [ -n "$ED_SUMMARY" ]; then
               gh issue comment "$ISSUE_NUMBER" --body "### Companion Game Editor Updates Scheduled
-          Once this issue merges into \`${GITHUB_REPOSITORY}\`, the pipeline will automatically open \`release\` issues in the affected game editor repositories:
+          Once this issue merges into \`${GITHUB_REPOSITORY}\`, the pipeline will automatically open \`4-release\` issues in the affected game editor repositories:
           ${ED_SUMMARY}"
             fi
           fi
@@ -373,7 +373,7 @@ jobs:
 
           gh label create "blocked:upstream" --force --description "Waiting on an upstream @1pizzateam library release" || true
           gh label create "upstream-escalated:1" --force --description "Escalated once to an upstream @1pizzateam library" || true
-          gh label create "release" --repo "$TARGET_REPO" --force --description "Run the autonomous Think -> Plan -> Code -> Prove pipeline" || true
+          gh label create "4-release" --repo "$TARGET_REPO" --force --description "Run the autonomous Think -> Plan -> Code -> Prove pipeline" || true
           gh label create "upstream-escalated:1" --repo "$TARGET_REPO" --force --description "Triggered by downstream consumer" || true
 
           UP_BODY="## Problem
@@ -393,12 +393,12 @@ jobs:
 
           LIB_ISSUE_URL=$(gh issue create --repo "$TARGET_REPO" \
             --title "$UP_TITLE" \
-            --label "release" \
+            --label "4-release" \
             --label "upstream-escalated:1" \
             --body "$UP_BODY")
           LIB_ISSUE_NUMBER="${LIB_ISSUE_URL##*/}"
 
-          gh issue edit "$ISSUE_NUMBER" --add-label "blocked:upstream,upstream-escalated:1" --remove-label "think,plan,code,release" || true
+          gh issue edit "$ISSUE_NUMBER" --add-label "blocked:upstream,upstream-escalated:1" --remove-label "1-think,2-plan,3-code,4-release" || true
           gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused for Upstream Dependency Escalation**
 
           The Think phase determined that \`${PKG}\` (\`${TARGET_REPO}\`) should be updated first before implementing #${ISSUE_NUMBER}.
@@ -407,7 +407,7 @@ jobs:
           - **Waiting-Repo:** \`${TARGET_REPO}\`
           - **Upstream-Issue:** ${TARGET_REPO}#${LIB_ISSUE_NUMBER} (${LIB_ISSUE_URL})
 
-          Once \`${TARGET_REPO}\` merges and publishes the new release, this issue will automatically be re-labeled \`release\` and resume implementation."
+          Once \`${TARGET_REPO}\` merges and publishes the new release, this issue will automatically be re-labeled \`4-release\` and resume implementation."
 
           echo "escalated=true" >> "$GITHUB_OUTPUT"
 
@@ -436,11 +436,11 @@ jobs:
             [
               .data.repository.issues.nodes[]?
               | select(.number != $current)
-              | select([.labels.nodes[].name] | any(. == "think" or . == "plan" or . == "code" or . == "release"))
+              | select([.labels.nodes[].name] | any(. == "1-think" or . == "2-plan" or . == "3-code" or . == "4-release"))
               | select(([.labels.nodes[].name] | index("needs:developer")) == null)
               | {
                   number: .number,
-                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "think" or .label.name == "plan" or .label.name == "code" or .label.name == "release") | .createdAt] | last) // .createdAt)
+                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "1-think" or .label.name == "2-plan" or .label.name == "3-code" or .label.name == "4-release") | .createdAt] | last) // .createdAt)
                 }
             ]
             | sort_by(.readyAt, .number)
@@ -466,7 +466,7 @@ jobs:
         run: |
           ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --json body,labels)
           PAUSE_THINK=$(echo "$ISSUE_JSON" | jq -r '
-            (([.labels[].name] | any(. == "think" or . == "pause:think")))
+            (([.labels[].name] | any(. == "1-think" or . == "pause:think")))
             or ((.body // "") | test("(\\[pause:think\\]|- \\[[xX]\\] [Pp]ause after [Tt]hink)"))
           ')
 
@@ -477,13 +477,13 @@ jobs:
 
           echo "paused=true" >> "$GITHUB_OUTPUT"
           gh label create "review:think" --color "FBCA04" --force --description "Paused after Think; waiting for manual validation of think.md" || true
-          gh issue edit "$ISSUE_NUMBER" --add-label "review:think" --remove-label "think,plan,code,release,pause:think" || true
+          gh issue edit "$ISSUE_NUMBER" --add-label "review:think" --remove-label "1-think,2-plan,3-code,4-release,pause:think" || true
           gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused after Think for Manual Validation**
 
           Review (and optionally edit) the \`# Think:\` specification comment above.
-          - To generate the **Plan** next and pause again for validation, add the **\`plan\`** label.
-          - To run **\`Plan → Code\`** and stop at the Pull Request without auto-merging, add the **\`code\`** label.
-          - To run **\`Plan → Code → Prove\`** and auto-merge, add the **\`release\`** label."
+          - To generate the **Plan** next and pause again for validation, add the **\`2-plan\`** label.
+          - To run **\`Plan → Code\`** and stop at the Pull Request without auto-merging, add the **\`3-code\`** label.
+          - To run **\`Plan → Code → Prove\`** and auto-merge, add the **\`4-release\`** label."
 
           QUEUE_DATA=$(gh api graphql -f query='
             query($owner: String!, $repo: String!) {
@@ -510,11 +510,11 @@ jobs:
             [
               .data.repository.issues.nodes[]?
               | select(.number != $current)
-              | select([.labels.nodes[].name] | any(. == "think" or . == "plan" or . == "code" or . == "release"))
+              | select([.labels.nodes[].name] | any(. == "1-think" or . == "2-plan" or . == "3-code" or . == "4-release"))
               | select(([.labels.nodes[].name] | index("needs:developer")) == null)
               | {
                   number: .number,
-                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "think" or .label.name == "plan" or .label.name == "code" or .label.name == "release") | .createdAt] | last) // .createdAt)
+                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "1-think" or .label.name == "2-plan" or .label.name == "3-code" or .label.name == "4-release") | .createdAt] | last) // .createdAt)
                 }
             ]
             | sort_by(.readyAt, .number)
@@ -551,7 +551,7 @@ jobs:
           ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
           gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
-          gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "think,plan,code,release" || true
+          gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
 
           QUEUE_DATA=$(gh api graphql -f query='
             query($owner: String!, $repo: String!) {
@@ -578,11 +578,11 @@ jobs:
             [
               .data.repository.issues.nodes[]?
               | select(.number != $current)
-              | select([.labels.nodes[].name] | any(. == "think" or . == "plan" or . == "code" or . == "release"))
+              | select([.labels.nodes[].name] | any(. == "1-think" or . == "2-plan" or . == "3-code" or . == "4-release"))
               | select(([.labels.nodes[].name] | index("needs:developer")) == null)
               | {
                   number: .number,
-                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "think" or .label.name == "plan" or .label.name == "code" or .label.name == "release") | .createdAt] | last) // .createdAt)
+                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "1-think" or .label.name == "2-plan" or .label.name == "3-code" or .label.name == "4-release") | .createdAt] | last) // .createdAt)
                 }
             ]
             | sort_by(.readyAt, .number)

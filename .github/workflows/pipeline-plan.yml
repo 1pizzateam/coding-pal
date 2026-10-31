@@ -245,7 +245,7 @@ jobs:
         run: |
           ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --json body,labels)
           PAUSE_PLAN=$(echo "$ISSUE_JSON" | jq -r '
-            (([.labels[].name] | any(. == "plan" or . == "pause:plan")))
+            (([.labels[].name] | any(. == "2-plan" or . == "pause:plan")))
             or ((.body // "") | test("(\\[pause:plan\\]|- \\[[xX]\\] [Pp]ause after [Pp]lan)"))
           ')
 
@@ -256,12 +256,12 @@ jobs:
 
           echo "paused=true" >> "$GITHUB_OUTPUT"
           gh label create "review:plan" --color "FBCA04" --force --description "Paused after Plan; waiting for manual validation of plan.md" || true
-          gh issue edit "$ISSUE_NUMBER" --add-label "review:plan" --remove-label "think,plan,code,release,pause:plan" || true
+          gh issue edit "$ISSUE_NUMBER" --add-label "review:plan" --remove-label "1-think,2-plan,3-code,4-release,pause:plan" || true
           gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused after Plan for Manual Validation**
 
           Review (and optionally edit) the \`# Plan:\` specification comment above.
-          - To implement the plan (**Code**) and stop at the Pull Request without auto-merging, add the **\`code\`** label.
-          - To run **\`Code → Prove\`** and auto-merge, add the **\`release\`** label."
+          - To implement the plan (**Code**) and stop at the Pull Request without auto-merging, add the **\`3-code\`** label.
+          - To run **\`Code → Prove\`** and auto-merge, add the **\`4-release\`** label."
 
           QUEUE_DATA=$(gh api graphql -f query='
             query($owner: String!, $repo: String!) {
@@ -288,11 +288,11 @@ jobs:
             [
               .data.repository.issues.nodes[]?
               | select(.number != $current)
-              | select([.labels.nodes[].name] | any(. == "think" or . == "plan" or . == "code" or . == "release"))
+              | select([.labels.nodes[].name] | any(. == "1-think" or . == "2-plan" or . == "3-code" or . == "4-release"))
               | select(([.labels.nodes[].name] | index("needs:developer")) == null)
               | {
                   number: .number,
-                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "think" or .label.name == "plan" or .label.name == "code" or .label.name == "release") | .createdAt] | last) // .createdAt)
+                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "1-think" or .label.name == "2-plan" or .label.name == "3-code" or .label.name == "4-release") | .createdAt] | last) // .createdAt)
                 }
             ]
             | sort_by(.readyAt, .number)
@@ -325,7 +325,7 @@ jobs:
         run: |
           if [ -n "${ISSUE_NUMBER:-}" ]; then
             gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
-            gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "think,plan,code,release" || true
+            gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
           fi
 
           QUEUE_DATA=$(gh api graphql -f query='
@@ -353,11 +353,11 @@ jobs:
             [
               .data.repository.issues.nodes[]?
               | select(.number != $current)
-              | select([.labels.nodes[].name] | any(. == "think" or . == "plan" or . == "code" or . == "release"))
+              | select([.labels.nodes[].name] | any(. == "1-think" or . == "2-plan" or . == "3-code" or . == "4-release"))
               | select(([.labels.nodes[].name] | index("needs:developer")) == null)
               | {
                   number: .number,
-                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "think" or .label.name == "plan" or .label.name == "code" or .label.name == "release") | .createdAt] | last) // .createdAt)
+                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "1-think" or .label.name == "2-plan" or .label.name == "3-code" or .label.name == "4-release") | .createdAt] | last) // .createdAt)
                 }
             ]
             | sort_by(.readyAt, .number)
