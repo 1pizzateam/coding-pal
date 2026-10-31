@@ -27,7 +27,8 @@ class WorkflowsTest < Minitest::Test
     File.chmod(0o755, mock)
     @environment = {
       'PATH' => bin, 'HOME' => @directory, 'LC_ALL' => 'C', 'RUBYOPT' => '-EUTF-8',
-      'GH_TOKEN' => 'fake-test-token', 'OWNER' => 'test-owner', 'REPO' => 'test-repo',
+      'GH_TOKEN' => 'fake-test-token', 'GH_REPO' => 'test-owner/test-repo',
+      'OWNER' => 'test-owner', 'REPO' => 'test-repo',
       'RUNNER_TEMP' => @directory,
       'ISSUE_NUMBER' => '42', 'PR_NUMBER' => '99', 'PR_URL' => 'https://example.test/pr/99',
       'PROJECT_TITLE' => 'Test board', 'EVENT_NAME' => 'issues',
@@ -124,10 +125,16 @@ class WorkflowsTest < Minitest::Test
       secrets = triggers.fetch('workflow_call').fetch('secrets')
       assert secrets.key?('PIPELINE_GITHUB_TOKEN'), current.fetch('name')
       current.fetch('jobs').each_value do |job|
-        Array(job['steps']).each do |entry|
+        assert_equal '${{ github.repository }}', job.dig('env', 'GH_REPO'), current.fetch('name')
+        checkout_index = Array(job['steps']).index { |entry| entry['uses'].to_s.start_with?('actions/checkout@') }
+        Array(job['steps']).each_with_index do |entry, index|
           environment = entry.fetch('env', {})
           if environment.key?('GH_TOKEN')
             assert_equal '${{ secrets.PIPELINE_GITHUB_TOKEN }}', environment.fetch('GH_TOKEN'), entry['name']
+            if (checkout_index.nil? || index < checkout_index || entry['if'].to_s.include?('failure()')) &&
+               entry.fetch('run', '').match?(/\bgh\s+(?!api\b)/)
+              assert_equal '${{ github.repository }}', environment.fetch('GH_REPO'), entry['name']
+            end
           end
           if entry.fetch('run', '').match?(/\bcopilot --/)
             assert_equal '${{ secrets.COPILOT_GITHUB_TOKEN }}', environment.fetch('COPILOT_GITHUB_TOKEN'), entry['name']

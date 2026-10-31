@@ -24,6 +24,8 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      GH_REPO: ${{ github.repository }}
     steps:
       - name: Check downstream notification credentials
         if: inputs.dry_run != true

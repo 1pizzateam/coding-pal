@@ -15,6 +15,10 @@ def argument(name)
   index && ARGV[index + 1]
 end
 
+if ARGV.first != 'api' && ENV['GH_REPO'].to_s.empty? && !ARGV.include?('--repo') && !ARGV.include?('-R') && !File.directory?('.git')
+  reject_command("Missing repository context for gh #{ARGV.first(2).join(' ')}: set GH_REPO, pass --repo, or run inside a git checkout")
+end
+
 result = case ARGV.first(2)
          when ['pr', 'view']
            if scenario['pr_sequence']

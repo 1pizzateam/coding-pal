@@ -35,11 +35,14 @@ jobs:
     concurrency:
       group: copilot-plan-${{ github.repository }}-${{ inputs.issue_number || inputs.workflow_run_id || github.run_id }}
       cancel-in-progress: false
+    env:
+      GH_REPO: ${{ github.repository }}
     steps:
       - name: Resolve issue number and restore think.md
         id: resolve
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           RUN_ID: ${{ inputs.workflow_run_id }}
           INPUT_ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
@@ -282,6 +285,7 @@ jobs:
         if: steps.handoff.outcome == 'success'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
         run: gh workflow run code.yml -f workflow_run_id="$RUN_ID"
 
@@ -289,6 +293,7 @@ jobs:
         if: failure() && steps.resolve.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
         run: |

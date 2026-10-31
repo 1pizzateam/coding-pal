@@ -67,12 +67,14 @@ jobs:
       group: copilot-prove-${{ github.repository }}-${{ inputs.pr_number || inputs.issue_number || inputs.workflow_run_id || github.run_id }}
       cancel-in-progress: false
     env:
+      GH_REPO: ${{ github.repository }}
       FIX_LOOP_LIMIT: ${{ inputs.fix_loop_limit }}
     steps:
       - name: Resolve PR, branch, and issue number
         id: resolve
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           RUN_ID: ${{ inputs.workflow_run_id }}
           INPUT_PR_NUMBER: ${{ inputs.pr_number }}
           INPUT_ISSUE_NUMBER: ${{ inputs.issue_number }}
@@ -914,6 +916,7 @@ jobs:
         if: (failure() || cancelled()) && steps.release_stage.outcome == 'success'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
           PROJECT_TITLE: ${{ inputs.project_title }}
@@ -927,6 +930,7 @@ jobs:
         if: (failure() || cancelled()) && steps.resolve.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           if [ -n "${ISSUE_NUMBER:-}" ]; then
             gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true

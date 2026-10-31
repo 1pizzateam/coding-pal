@@ -31,10 +31,13 @@ permissions:
 jobs:
   resume:
     runs-on: ubuntu-latest
+    env:
+      GH_REPO: ${{ github.repository }}
     steps:
       - name: Wait for npm registry propagation and unblock waiting issues
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           PACKAGE: ${{ github.event.client_payload.package || inputs.package }}
           VERSION: ${{ github.event.client_payload.version || inputs.version }}
           UPSTREAM_REPO: ${{ github.event.client_payload.upstream_repo || github.event.client_payload.repo || inputs.upstream_repo }}

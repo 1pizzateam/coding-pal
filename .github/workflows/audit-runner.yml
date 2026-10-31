@@ -38,6 +38,8 @@ jobs:
     concurrency:
       group: copilot-audit-${{ inputs.agent }}-${{ github.ref }}
       cancel-in-progress: true
+    env:
+      GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
         with:

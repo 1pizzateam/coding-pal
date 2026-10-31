@@ -70,6 +70,7 @@ jobs:
       group: release-${{ github.repository }}-${{ inputs.issue_number }}
       cancel-in-progress: false
     env:
+      GH_REPO: ${{ github.repository }}
       ISSUE_NUMBER: ${{ inputs.issue_number }}
       PR_NUMBER: ${{ inputs.pr_number }}
       BASE_REF: ${{ inputs.base_ref }}
@@ -318,6 +319,7 @@ jobs:
         if: failure() || cancelled()
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
           PROJECT_TITLE: ${{ inputs.project_title }}
