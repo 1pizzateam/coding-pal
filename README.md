@@ -86,6 +86,22 @@ Use **`4-release`** for the full autonomous pipeline. With an existing PR, it re
 
 Only the numbered labels trigger delivery. The old `ready*` labels and unprefixed `think`, `plan`, `code`, and `release` labels do not.
 
+**Think and Plan run in parallel across issues.** They do not wait for another issue's implementation or review.
+
+**Code onward is serialized per repository.** Code holds one delivery slot through its dependent Prove job, merge, and configured release preparation. A standalone Prove request joins the same queue. Other repositories have their own queues.
+
+GitHub queues up to **100 pending deliveries** with `queue: max`, without replacing earlier pending runs. FIFO follows entry into the concurrency queue, not issue creation or label time. GitHub does not guarantee dispatch-time ordering; requests beyond the limit are canceled and must be resubmitted.
+
+A Code review pause releases the slot. Adding `4-release` later queues Prove as a new delivery request. Failures also release the slot and leave the issue flagged for attention. Separate npm publication and documentation deployment are outside this queue.
+
+Before validation, Prove merges the latest base into the PR branch and pushes clean updates. Merge conflicts stop with a PR comment and `needs:developer`; resolve them within the approved plan, or revise Think/Plan before retrying. All controls and the independent assessment run on the refreshed branch, including checks for interactions with intervening changes.
+
+If the base or PR head changes during validation, Prove blocks merge and requires a rerun. The merge request is pinned to the validated head commit. Enable branch protection requiring an up-to-date branch (or a merge queue) to cover the final race with merges outside this pipeline.
+
+Think explicitly starts Plan, and Plan starts Code, only after uploading a handoff artifact. Prove is a dependent job inside the Code workflow run, not a separately dispatched run. Queued or paused preparation creates no downstream workflow; a Code review pause skips the Prove job.
+
+Before deploying this change, stop or finish active delivery runs. Deploy the shared workflow changes and all application callers before resuming issues. Do not mix the old dispatch/completion chain with the new dependent Prove job: it can duplicate Prove or leave a handoff unprocessed.
+
 ### Request an extra pause
 
 Use a trigger label and add a checked box to the issue body:
@@ -129,7 +145,7 @@ Prove is different: it sets **Release** before validation and **Done** after com
 
 [`Pipeline - Think`](.github/workflows/pipeline-think.yml) defines the change:
 
-1. Checks the FIFO queue, existing specs, and PRs to start, wait, or resume.
+1. Checks existing specs and PRs to start Think or resume a later phase.
 2. Sets Project Status to **Think**.
 3. Runs the Think agent to define the problem, scope, constraints, and acceptance criteria.
 4. Validates the spec and posts it as a `# Think:` issue comment.
@@ -163,7 +179,7 @@ Prove is different: it sets **Release** before validation and **Done** after com
 
 **Stops at:** an open PR for review or handoff to Prove. Code does not merge.
 
-Failed Think, Plan, or Code runs mark the issue `needs:developer` and advance the queue.
+Failed Think, Plan, or Code runs mark the issue `needs:developer`. They do not restart other issues.
 
 ### Pipeline - Prove
 
@@ -175,7 +191,7 @@ Failed Think, Plan, or Code runs mark the issue `needs:developer` and advance th
 4. Fixes failures and retries, **up to 5 times by default**.
 5. If everything passes, attempts approval and **squash-merges the PR**, deleting its branch.
 6. Dispatches companion editor updates. For eligible libraries with automatic release enabled, prepares the version and creates a GitHub Release.
-7. Sets **Done** and advances the queue.
+7. Sets **Done**. Finishing the delivery run releases the slot for the next queued request.
 
 High/Critical changes require rollback verification evidence. Critical also requires a staged rollout reference. Missing evidence blocks merge; automation does not fabricate human sign-off.
 
@@ -208,9 +224,9 @@ Manual Prove dispatch also permits auto-merge without a `4-release` label. DoomR
 1. Reads the package/version and polls npm for `@1pizzateam/*` availability.
 2. Finds matching `blocked:upstream` issues.
 3. Posts upgrade instructions, removes the block, and adds `4-release`.
-4. Starts Think if the pipeline is idle; otherwise, leaves the issues queued.
+4. The new label triggers Think independently for each unblocked issue.
 
-**Stops at:** unblocked issues queued for work, or no matching issues. Registry polling is best-effort: exhausted retries do not prevent unblocking.
+**Stops at:** unblocked issues ready for Think, or no matching issues. Registry polling is best-effort: exhausted retries do not prevent unblocking.
 
 ## Cross-repository changes
 
@@ -219,7 +235,7 @@ Manual Prove dispatch also permits auto-merge without a `4-release` label. DoomR
 When a capability belongs in an upstream `@1pizzateam/*` library:
 
 1. Think writes `specs/issue-<N>/upstream-request.json`, or an audit writes `upstream-requests.json`.
-2. The workflow opens a `4-release` issue in the library, blocks the consumer with `blocked:upstream` and `upstream-escalated:1`, and advances the queue.
+2. The workflow opens a `4-release` issue in the library and blocks the consumer with `blocked:upstream` and `upstream-escalated:1`. Other issues continue independently.
 3. The library pipeline implements, validates, and merges the change. Public API changes include documentation in the plan's scope.
 4. Release checks verify documented exports, version/lockfile sync, changelog, docs links/build, and tarball contents. Release preparation also checks the previous/new versions and runs an npm publish dry run before creating the tag and GitHub Release.
 5. After npm publication, downstream notifications unblock consumers so they can upgrade.
@@ -253,9 +269,9 @@ Requires Ruby with Minitest, Bash, and `jq`. No real credentials or Copilot inst
 ruby tests/workflows_test.rb
 ```
 
-The suite checks shell syntax, token separation, checkpoints, spec reuse, FIFO queues, and Project Status updates. Shell tests use a strict mock GitHub CLI and temporary directories. No live GitHub writes, agents, merges, or publishing run.
+The suite checks shell syntax, token separation, checkpoints, spec reuse, parallel preparation, delivery queue configuration, and Project Status updates. Shell tests use a strict mock GitHub CLI and temporary directories. No live GitHub writes, agents, merges, or publishing run.
 
-To also check all 11 adjacent application workflow wrappers:
+To also check triggers and handoff inputs in all 11 adjacent application workflow wrappers:
 
 ```sh
 PROJECT_WORKFLOWS_ROOT=.. ruby tests/workflows_test.rb

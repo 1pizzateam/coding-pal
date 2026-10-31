@@ -138,7 +138,7 @@ jobs:
           - **Waiting-Repo:** \`${TARGET_REPO}\`")
             CONSUMER_ISSUE_NUMBER="${CONSUMER_ISSUE_URL##*/}"
 
-            # 2. Create the issue in the upstream library repo and label it '4-release' to trigger its FIFO pipeline
+            # 2. Create the upstream issue and label it '4-release' to start delivery
             gh label create "4-release" --repo "$TARGET_REPO" --force --description "Run the autonomous Think -> Plan -> Code -> Prove pipeline" || true
             gh label create "upstream-escalated:1" --repo "$TARGET_REPO" --force --description "Triggered by downstream consumer audit" || true
 

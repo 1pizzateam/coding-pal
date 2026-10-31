@@ -14,7 +14,7 @@ on:
         type: string
         default: ''
       workflow_run_id:
-        description: 'Code workflow_run ID to download code-spec artifact from'
+        description: 'Code run ID containing code-spec (also supports an earlier job in the same run)'
         required: false
         type: string
         default: ''
@@ -194,6 +194,32 @@ jobs:
           ref: ${{ env.BRANCH_NAME }}
           fetch-depth: 0
           token: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+
+      - name: Refresh PR branch against latest base
+        id: freshness
+        if: steps.resolve.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git check-ref-format "refs/heads/${BASE_REF}"
+          git check-ref-format "refs/heads/${BRANCH_NAME}"
+          git fetch origin "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          BASE_SHA=$(git rev-parse "refs/remotes/origin/${BASE_REF}")
+
+          if ! git merge-base --is-ancestor "$BASE_SHA" HEAD; then
+            if ! git merge --no-edit "$BASE_SHA"; then
+              git merge --abort
+              MESSAGE="PR #${PR_NUMBER} conflicts with the latest ${BASE_REF}. Resolve conflicts within the approved plan, or revise Think/Plan before retrying Prove."
+              echo "::error::${MESSAGE}"
+              gh pr comment "$PR_NUMBER" --body "$MESSAGE"
+              exit 1
+            fi
+            git push origin "HEAD:refs/heads/${BRANCH_NAME}"
+          fi
+
+          echo "PROVE_BASE_SHA=${BASE_SHA}" >> "$GITHUB_ENV"
 
       - name: Configure git identity and restore specs / PR body
         if: steps.resolve.outputs.skip != 'true'
@@ -395,7 +421,7 @@ jobs:
             Follow .github/instructions/prove.instructions.md, .agents/skills/prove/SKILL.md, and .agents/skills/prove/references/prove-contract.md.
             1. Read ${SPEC_DIR}/think.md, ${SPEC_DIR}/plan.md, pr-body.md, gate-output.log, and inspect the diff with git diff origin/${BASE_REF}...HEAD.
             2. Write the Prove record to ${PROVE_FILE} with exact header links (- **Issue:** #${ISSUE_NUMBER}, - **PR:** #${PR_NUMBER}, - **Think:** \`${SPEC_DIR}/think.md\`, - **Plan:** \`${SPEC_DIR}/plan.md\`, - **Branch:** \`${BRANCH_NAME}\`, - **Base:** \`${BASE_REF}\`).
-            3. Record the truthful status of all 13 required deterministic controls from gate-output.log, verify every AC-<n> criterion against the implementation and tests, and evaluate Client Intent, Behavioral Experience, and Safety & Blast Radius.
+            3. Record the truthful status of all 13 required deterministic controls from gate-output.log, verify every AC-<n> criterion against the implementation and tests, and evaluate Client Intent, Behavioral Experience, and Safety & Blast Radius. The branch includes the latest base: check interactions with intervening changes, not just textual conflicts. If the approved Think/Plan is no longer valid, record a blocking finding; do not broaden scope or change the specs.
             4. Validate ${PROVE_FILE} until it exits 0:
                node .agents/skills/prove/scripts/validate-prove.mjs --dir ${SPEC_DIR} --stage draft"
 
@@ -492,7 +518,26 @@ jobs:
 
           gh pr review "$PR_NUMBER" --approve --body-file "$PROVE_FILE" || gh pr comment "$PR_NUMBER" --body-file "$PROVE_FILE"
 
-          gh pr merge "$PR_NUMBER" --squash --delete-branch
+      - name: Verify validated revisions and merge
+        if: steps.resolve.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+        run: |
+          git fetch origin "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          CURRENT_BASE=$(git rev-parse "refs/remotes/origin/${BASE_REF}")
+          VALIDATED_HEAD=$(git rev-parse HEAD)
+          REMOTE_HEAD=$(gh pr view "$PR_NUMBER" --json headRefOid --jq '.headRefOid')
+          if [ "$CURRENT_BASE" != "$PROVE_BASE_SHA" ] || [ "$REMOTE_HEAD" != "$VALIDATED_HEAD" ]; then
+            MESSAGE="PR #${PR_NUMBER} or its base changed during validation. Merge blocked; rerun Prove to refresh the branch and repeat all checks."
+            echo "::error::${MESSAGE}"
+            gh pr comment "$PR_NUMBER" --body "$MESSAGE"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$CURRENT_BASE" "$VALIDATED_HEAD"; then
+            echo "::error::The validated branch no longer includes the checked base. Rerun Prove after refreshing the branch."
+            exit 1
+          fi
+          gh pr merge "$PR_NUMBER" --squash --delete-branch --match-head-commit "$VALIDATED_HEAD"
           gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-release,review:code" || true
 
       - name: Dispatch companion game editor updates after PR merge
@@ -743,54 +788,4 @@ jobs:
           if [ -n "${ISSUE_NUMBER:-}" ]; then
             gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
             gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
-          fi
-
-      - name: Trigger next labeled issue in FIFO queue
-        if: always() && steps.resolve.outputs.skip != 'true'
-        env:
-          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
-          OWNER: ${{ github.repository_owner }}
-          REPO: ${{ github.event.repository.name }}
-        run: |
-          QUEUE_DATA=$(gh api graphql -f query='
-            query($owner: String!, $repo: String!) {
-              repository(owner: $owner, name: $repo) {
-                issues(states: [OPEN], first: 100) {
-                  nodes {
-                    number
-                    createdAt
-                    labels(first: 20) { nodes { name } }
-                    timelineItems(itemTypes: [LABELED_EVENT], last: 20) {
-                      nodes {
-                        ... on LabeledEvent {
-                          createdAt
-                          label { name }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }' -f owner="$OWNER" -f repo="$REPO" 2>/dev/null || true)
-
-          NEXT_ISSUE=$(echo "$QUEUE_DATA" | jq -r --argjson current "${ISSUE_NUMBER:-0}" '
-            [
-              .data.repository.issues.nodes[]?
-              | select(.number != $current)
-              | select([.labels.nodes[].name] | any(. == "1-think" or . == "2-plan" or . == "3-code" or . == "4-release"))
-              | select(([.labels.nodes[].name] | index("needs:developer")) == null)
-              | {
-                  number: .number,
-                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "1-think" or .label.name == "2-plan" or .label.name == "3-code" or .label.name == "4-release") | .createdAt] | last) // .createdAt)
-                }
-            ]
-            | sort_by(.readyAt, .number)
-            | .[0].number // empty
-          ')
-
-          if [ -n "$NEXT_ISSUE" ]; then
-            echo "Advancing FIFO queue to next labeled issue #${NEXT_ISSUE}..."
-            gh workflow run think.yml -f issue_number="$NEXT_ISSUE"
-          else
-            echo "FIFO queue is empty; no more labeled issues waiting."
           fi

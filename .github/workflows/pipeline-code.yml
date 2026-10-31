@@ -2,14 +2,18 @@ name: Pipeline - Code (reusable)
 
 on:
   workflow_call:
+    outputs:
+      continue_to_prove:
+        description: 'Code completed without a review pause and uploaded its handoff'
+        value: ${{ jobs.code.outputs.continue_to_prove }}
     inputs:
       issue_number:
-        description: 'Issue number to implement from plan.md (optional when triggered by workflow_run)'
+        description: 'Issue number to implement (optional when an upstream artifact run ID is provided)'
         required: false
         type: string
         default: ''
       workflow_run_id:
-        description: 'Plan workflow_run ID to download plan-spec artifact from'
+        description: 'Plan run ID to download the plan-spec artifact from'
         required: false
         type: string
         default: ''
@@ -38,6 +42,8 @@ permissions:
 jobs:
   code:
     runs-on: ubuntu-latest
+    outputs:
+      continue_to_prove: ${{ steps.handoff.outcome == 'success' }}
     concurrency:
       group: copilot-code-${{ github.repository }}-${{ inputs.issue_number || inputs.workflow_run_id || github.run_id }}
       cancel-in-progress: false
@@ -417,48 +423,8 @@ jobs:
           - **Manual merge:** Review and merge PR #${PR_NUMBER} directly on GitHub.
           - **Run Prove & auto-merge:** Add the **\`4-release\`** label to this issue (or run \`Pipeline - Prove\` for PR #${PR_NUMBER}) to run the 13 Prove controls and merge automatically."
 
-          QUEUE_DATA=$(gh api graphql -f query='
-            query($owner: String!, $repo: String!) {
-              repository(owner: $owner, name: $repo) {
-                issues(states: [OPEN], first: 100) {
-                  nodes {
-                    number
-                    createdAt
-                    labels(first: 20) { nodes { name } }
-                    timelineItems(itemTypes: [LABELED_EVENT], last: 20) {
-                      nodes {
-                        ... on LabeledEvent {
-                          createdAt
-                          label { name }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }' -f owner="$OWNER" -f repo="$REPO" 2>/dev/null || true)
-
-          NEXT_ISSUE=$(echo "$QUEUE_DATA" | jq -r --argjson current "${ISSUE_NUMBER:-0}" '
-            [
-              .data.repository.issues.nodes[]?
-              | select(.number != $current)
-              | select([.labels.nodes[].name] | any(. == "1-think" or . == "2-plan" or . == "3-code" or . == "4-release"))
-              | select(([.labels.nodes[].name] | index("needs:developer")) == null)
-              | {
-                  number: .number,
-                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "1-think" or .label.name == "2-plan" or .label.name == "3-code" or .label.name == "4-release") | .createdAt] | last) // .createdAt)
-                }
-            ]
-            | sort_by(.readyAt, .number)
-            | .[0].number // empty
-          ')
-
-          if [ -n "$NEXT_ISSUE" ]; then
-            echo "Advancing FIFO queue to next labeled issue #${NEXT_ISSUE} while PR #${PR_NUMBER} (#${ISSUE_NUMBER}) awaits manual review..."
-            gh workflow run think.yml -f issue_number="$NEXT_ISSUE"
-          fi
-
       - name: Upload code-spec artifact for Prove workflow
+        id: handoff
         if: steps.resolve.outputs.skip != 'true' && steps.checkpoint.outputs.paused != 'true'
         uses: actions/upload-artifact@v4
         with:
@@ -471,7 +437,7 @@ jobs:
             specs/issue-${{ env.ISSUE_NUMBER }}/editor-requests.json
           retention-days: 7
 
-      - name: Advance FIFO queue if Code fails
+      - name: Mark issue needs:developer if Code fails
         if: failure() && steps.resolve.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
@@ -481,45 +447,4 @@ jobs:
           if [ -n "${ISSUE_NUMBER:-}" ]; then
             gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
             gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
-          fi
-
-          QUEUE_DATA=$(gh api graphql -f query='
-            query($owner: String!, $repo: String!) {
-              repository(owner: $owner, name: $repo) {
-                issues(states: [OPEN], first: 100) {
-                  nodes {
-                    number
-                    createdAt
-                    labels(first: 20) { nodes { name } }
-                    timelineItems(itemTypes: [LABELED_EVENT], last: 20) {
-                      nodes {
-                        ... on LabeledEvent {
-                          createdAt
-                          label { name }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }' -f owner="$OWNER" -f repo="$REPO" 2>/dev/null || true)
-
-          NEXT_ISSUE=$(echo "$QUEUE_DATA" | jq -r --argjson current "${ISSUE_NUMBER:-0}" '
-            [
-              .data.repository.issues.nodes[]?
-              | select(.number != $current)
-              | select([.labels.nodes[].name] | any(. == "1-think" or . == "2-plan" or . == "3-code" or . == "4-release"))
-              | select(([.labels.nodes[].name] | index("needs:developer")) == null)
-              | {
-                  number: .number,
-                  readyAt: (([.timelineItems.nodes[]? | select(.label.name == "1-think" or .label.name == "2-plan" or .label.name == "3-code" or .label.name == "4-release") | .createdAt] | last) // .createdAt)
-                }
-            ]
-            | sort_by(.readyAt, .number)
-            | .[0].number // empty
-          ')
-
-          if [ -n "$NEXT_ISSUE" ]; then
-            echo "Advancing FIFO queue to next labeled issue #${NEXT_ISSUE}..."
-            gh workflow run think.yml -f issue_number="$NEXT_ISSUE"
           fi

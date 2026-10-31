@@ -16,6 +16,10 @@ def argument(name)
 end
 
 result = case ARGV.first(2)
+         when ['pr', 'view']
+           scenario.fetch('pr')
+         when ['pr', 'merge']
+           nil
          when ['issue', 'view']
            scenario.fetch('issue')
          when ['pr', 'list']
@@ -42,9 +46,9 @@ result = case ARGV.first(2)
              reject_command("Unexpected GraphQL operation: #{query}")
            end
          when ['workflow', 'run']
-           reject_command("Unexpected dispatch: #{ARGV.inspect}") unless %w[think.yml code.yml prove.yml].include?(ARGV[2])
+           reject_command("Unexpected dispatch: #{ARGV.inspect}") unless %w[think.yml plan.yml code.yml prove.yml].include?(ARGV[2])
            nil
-         when ['label', 'create'], ['issue', 'edit'], ['issue', 'comment'], ['pr', 'edit']
+         when ['label', 'create'], ['issue', 'edit'], ['issue', 'comment'], ['pr', 'edit'], ['pr', 'comment']
            nil
          else
            reject_command("Unexpected gh command: #{ARGV.inspect}")

@@ -229,11 +229,62 @@ class WorkflowsTest < Minitest::Test
       assert_includes artifact.fetch('if'), "steps.checkpoint.outputs.paused != 'true'"
     end
     gate = steps('think').find { |entry| entry['uses'].to_s.start_with?('actions/upload-artifact@') }.fetch('if')
-    %w[queued resumed_stage].each { |output| assert_includes gate, "steps.fifo.outputs.#{output}" }
+    assert_includes gate, 'steps.resume.outputs.resumed_stage'
+  end
+
+  def test_downstream_dispatch_requires_a_successful_handoff
+    { 'think' => 'plan', 'plan' => 'code' }.each do |phase, next_phase|
+      entries = steps(phase)
+      artifact = step(phase, 'handoff')
+      assert artifact.fetch('uses').start_with?('actions/upload-artifact@')
+      assert_includes artifact.fetch('if'), "steps.checkpoint.outputs.paused != 'true'"
+      dispatch = entries.find { |entry| entry['name'] == "Start #{next_phase.capitalize}" }
+      assert_equal "steps.handoff.outcome == 'success'", dispatch.fetch('if')
+      assert_operator entries.index(dispatch), :>, entries.index(artifact)
+      run_step(dispatch, scenario, { 'RUN_ID' => '12345' })
+      assert_equal [['workflow', 'run', "#{next_phase}.yml", '-f', 'workflow_run_id=12345']], dispatches
+    end
+  end
+
+  def test_preparation_does_not_wait_for_delivery_or_other_issues
+    LABELS.each do |label|
+      data = scenario([label], queue: [queue_issue(1, ['1-think'])],
+                      runs: [{ 'status' => 'in_progress' }],
+                      prs: [{ 'number' => 100, 'headRefName' => 'feature/issue-7-work', 'labels' => [] }])
+      output = run_step(step('think', 'resume'), data)
+      assert_equal 'none', output.fetch('resumed_stage')
+      assert_empty dispatches
+      refute @calls.any? { |args| args.first(2) == %w[run list] || args.first(2) == %w[api graphql] }
+    end
+    %w[think plan].each do |phase|
+      group = workflow(phase).dig('jobs', phase, 'concurrency', 'group')
+      assert_includes group, '${{ inputs.issue_number'
+    end
+  end
+
+  def test_review_pauses_do_not_restart_other_issues
+    %w[think plan code].each_with_index do |phase, index|
+      output = run_step(step(phase, 'checkpoint'),
+                        scenario([LABELS[index]], queue: [queue_issue(1, ['4-release'])]))
+      assert_equal 'true', output.fetch('paused')
+      assert_empty dispatches
+    end
+  end
+
+  def test_code_exposes_prove_handoff_only_after_artifact_upload
+    current = workflow('code')
+    triggers = current['on'] || current.fetch(true)
+    assert_equal '${{ jobs.code.outputs.continue_to_prove }}',
+                 triggers.dig('workflow_call', 'outputs', 'continue_to_prove', 'value')
+    assert_equal "${{ steps.handoff.outcome == 'success' }}",
+                 current.dig('jobs', 'code', 'outputs', 'continue_to_prove')
+    assert_includes step('code', 'handoff').fetch('if'), "steps.checkpoint.outputs.paused != 'true'"
+    refute steps('code').any? { |entry| entry.fetch('run', '').include?('gh workflow run prove.yml') }
+    refute steps('prove').any? { |entry| entry.fetch('run', '').include?('gh workflow run think.yml') }
   end
 
   def test_smart_resume_reuses_specs
-    fifo = step('think', 'fifo')
+    fifo = step('think', 'resume')
     LABELS.each do |label|
       output = run_step(fifo, scenario([label], comments: ['# Think: scope', '# Plan: steps']))
       expected = { '1-think' => 'none', '2-plan' => 'plan', '3-code' => 'code', '4-release' => 'code' }.fetch(label)
@@ -254,7 +305,7 @@ class WorkflowsTest < Minitest::Test
   def test_existing_pr_is_proven_only_for_release
     prs = [{ 'number' => 99, 'headRefName' => 'feature/issue-42-test', 'labels' => [] }]
     %w[3-code 4-release].each do |label|
-      output = run_step(step('think', 'fifo'), scenario([label], prs: prs))
+      output = run_step(step('think', 'resume'), scenario([label], prs: prs))
       assert_equal label == '4-release' ? 'prove' : 'code', output.fetch('resumed_stage')
       if label == '4-release'
         assert_equal [['workflow', 'run', 'prove.yml', '-f', 'pr_number=99', '-f', 'issue_number=42']], dispatches
@@ -265,47 +316,7 @@ class WorkflowsTest < Minitest::Test
     end
   end
 
-  def test_busy_pipeline_queues_without_dispatching
-    data = scenario(['3-code'], runs: [{ 'status' => 'in_progress' }])
-    assert_equal 'true', run_step(step('think', 'fifo'), data).fetch('queued')
-    assert_empty dispatches
-    refute @calls.any? { |args| args.first(2) == %w[issue edit] }
-  end
-
-  def test_active_pr_blocks_but_review_pr_does_not
-    prs = [{ 'number' => 100, 'headRefName' => 'feature/issue-7-work', 'labels' => [] }]
-    assert_equal 'true', run_step(step('think', 'fifo'), scenario(['3-code'], prs: prs)).fetch('queued')
-    prs.first['labels'] = [{ 'name' => 'review:code' }]
-    assert_equal 'false', run_step(step('think', 'fifo'), scenario(['3-code'], prs: prs)).fetch('queued')
-  end
-
-  def test_all_numbered_labels_participate_in_fifo
-    LABELS.each do |label|
-      data = scenario(['4-release'], queue: [queue_issue(7, [label])])
-      assert_equal 'true', run_step(step('think', 'fifo'), data).fetch('queued')
-    end
-    data = scenario(['4-release'], queue: [queue_issue(7, ['ready']), queue_issue(8, ['3-code', 'needs:developer'])])
-    assert_equal 'false', run_step(step('think', 'fifo'), data).fetch('queued')
-  end
-
-  def test_queue_advancement_orders_by_label_time_then_issue_number
-    queue = [
-      queue_issue(42, ['3-code'], '2026-01-01T00:00:00Z'),
-      queue_issue(2, ['1-think', 'needs:developer'], '2026-01-01T00:00:00Z'),
-      queue_issue(3, ['ready'], '2026-01-01T00:00:00Z'),
-      queue_issue(9, ['2-plan'], '2026-01-03T00:00:00Z'),
-      queue_issue(8, ['4-release']), queue_issue(7, ['3-code'])
-    ]
-    %w[think plan code].each do |phase|
-      run_step(step(phase, 'checkpoint'), scenario([LABELS[%w[think plan code].index(phase)]], queue: queue))
-      assert_equal [['workflow', 'run', 'think.yml', '-f', 'issue_number=7']], dispatches
-    end
-    entry = steps('prove').find { |item| item['name'] == 'Trigger next labeled issue in FIFO queue' }
-    run_step(entry, scenario([], queue: queue))
-    assert_equal [['workflow', 'run', 'think.yml', '-f', 'issue_number=7']], dispatches
-  end
-
-  def test_failures_remove_trigger_labels_and_advance_queue
+  def test_failures_remove_trigger_labels_without_restarting_other_issues
     PHASES.each do |phase|
       entry = steps(phase).find { |item| item['name'].to_s.match?(/(?:if #{phase.capitalize} fail|if #{phase.capitalize} failed)/) }
       refute_nil entry, phase
@@ -313,7 +324,7 @@ class WorkflowsTest < Minitest::Test
       edit = @calls.find { |args| args.first(2) == %w[issue edit] }
       assert_equal 'needs:developer', edit[edit.index('--add-label') + 1]
       assert_equal LABELS, edit[edit.index('--remove-label') + 1].split(',')
-      assert_equal phase == 'prove' ? [] : [['workflow', 'run', 'think.yml', '-f', 'issue_number=7']], dispatches
+      assert_empty dispatches
     end
   end
 
@@ -338,7 +349,7 @@ class WorkflowsTest < Minitest::Test
       update = @calls.find { |args| args.any? { |arg| arg.start_with?('query=') && arg.include?('updateProjectV2ItemFieldValue') } }
       refute_nil update
       %W[projectId=PROJECT itemId=ITEM fieldId=STATUS optionId=#{status.downcase}].each { |arg| assert_includes update, arg }
-      assert_includes entry.fetch('if'), phase == 'think' ? "steps.fifo.outputs.resumed_stage == 'none'" : "steps.resolve.outputs.skip != 'true'"
+      assert_includes entry.fetch('if'), phase == 'think' ? "steps.resume.outputs.resumed_stage == 'none'" : "steps.resolve.outputs.skip != 'true'"
     end
   end
 
@@ -402,7 +413,109 @@ class WorkflowsTest < Minitest::Test
     assert_includes script, "leave the affected field Pending"
     assert_operator script.index('--stage pass'), :<, script.index('copilot --model="auto" --agent="prove"')
     assert_operator script.index('copilot --model="auto" --agent="prove"'), :<, script.index('--stage prove')
-    assert_operator script.index('--stage prove'), :<, script.index('gh pr merge')
+    entries = steps('prove')
+    merge = entries.find { |entry| entry['name'] == 'Verify validated revisions and merge' }
+    assert_operator entries.index(merge), :>, entries.index { |entry| entry['name'] == 'Record automated validation, approve PR, and auto-merge' }
+  end
+
+  def git_command(*arguments, directory: @repository)
+    output, error, status = Open3.capture3(
+      { 'HOME' => @directory, 'GIT_CONFIG_NOSYSTEM' => '1' },
+      'git', *arguments, chdir: directory
+    )
+    assert status.success?, "#{arguments.inspect}\n#{output}\n#{error}"
+    output.strip
+  end
+
+  def prepare_stale_pr(conflict: false)
+    @repository = File.join(@directory, 'repository')
+    remote = File.join(@directory, 'remote.git')
+    Dir.mkdir(@repository)
+    git_command('init', '--bare', remote)
+    git_command('init', '-b', 'main')
+    git_command('config', 'user.name', 'Test')
+    git_command('config', 'user.email', 'test@example.test')
+    File.write(File.join(@repository, 'shared.txt'), "original\n")
+    git_command('add', '.')
+    git_command('commit', '-m', 'Initial')
+    git_command('remote', 'add', 'origin', remote)
+    git_command('push', 'origin', 'main')
+    git_command('checkout', '-b', 'feature/issue-42-test')
+    File.write(File.join(@repository, conflict ? 'shared.txt' : 'feature.txt'), "feature\n")
+    git_command('add', '.')
+    git_command('commit', '-m', 'Feature')
+    git_command('push', 'origin', 'HEAD')
+    git_command('checkout', 'main')
+    File.write(File.join(@repository, 'shared.txt'), "updated base\n")
+    git_command('add', '.')
+    git_command('commit', '-m', 'Intervening change')
+    git_command('push', 'origin', 'main')
+    @base_sha = git_command('rev-parse', 'HEAD')
+    git_command('checkout', 'feature/issue-42-test')
+  end
+
+  def run_freshness_script(name, data: scenario, success: true, **environment)
+    entry = steps('prove').find { |item| item['name'] == name }
+    File.write(@environment.fetch('TEST_SCENARIO'), JSON.generate(data))
+    File.write(@environment.fetch('TEST_CALLS'), '')
+    File.write(@environment.fetch('TEST_VIOLATIONS'), '')
+    env = @environment.merge(
+      'PATH' => "#{@environment.fetch('PATH')}#{File::PATH_SEPARATOR}#{ENV.fetch('PATH')}",
+      'BASE_REF' => 'main', 'BRANCH_NAME' => 'feature/issue-42-test'
+    ).merge(environment.transform_keys(&:to_s))
+    output, error, status = Open3.capture3(
+      env, 'bash', '--noprofile', '--norc', '-eo', 'pipefail',
+      stdin_data: entry.fetch('run'), chdir: @repository, unsetenv_others: true
+    )
+    assert_equal success, status.success?, "#{output}\n#{error}"
+    assert_equal '', File.read(@environment.fetch('TEST_VIOLATIONS'))
+    @calls = File.readlines(@environment.fetch('TEST_CALLS')).map { |line| JSON.parse(line) }
+    output
+  end
+
+  def test_prove_refreshes_and_pushes_a_stale_branch_before_checks
+    prepare_stale_pr
+    run_freshness_script('Refresh PR branch against latest base')
+    assert_equal "updated base\n", File.read(File.join(@repository, 'shared.txt'))
+    assert_equal git_command('rev-parse', 'HEAD'),
+                 git_command('rev-parse', 'refs/remotes/origin/feature/issue-42-test')
+    assert_includes File.read(@environment.fetch('GITHUB_ENV')), "PROVE_BASE_SHA=#{@base_sha}"
+    head = git_command('rev-parse', 'HEAD')
+    run_freshness_script('Refresh PR branch against latest base')
+    assert_equal head, git_command('rev-parse', 'HEAD'), 'Already-current branches must not get extra commits'
+    entries = steps('prove')
+    assert_operator entries.index { |entry| entry['id'] == 'freshness' }, :<,
+                    entries.index { |entry| entry['name'] == 'Run Prove validation and auto-remediation loop' }
+  end
+
+  def test_conflicts_abort_without_pushing_or_merging
+    prepare_stale_pr(conflict: true)
+    head = git_command('rev-parse', 'HEAD')
+    output = run_freshness_script('Refresh PR branch against latest base', success: false)
+    assert_includes output, '::error::'
+    assert_equal head, git_command('rev-parse', 'HEAD')
+    assert_equal head, git_command('rev-parse', 'refs/remotes/origin/feature/issue-42-test')
+    assert_equal '', git_command('status', '--porcelain')
+    assert @calls.any? { |args| args.first(2) == %w[pr comment] }
+    refute @calls.any? { |args| args.first(2) == %w[pr merge] }
+  end
+
+  def test_merge_requires_unchanged_base_and_exact_validated_head
+    prepare_stale_pr
+    run_freshness_script('Refresh PR branch against latest base')
+    head = git_command('rev-parse', 'HEAD')
+    name = 'Verify validated revisions and merge'
+    run_freshness_script(name, data: scenario(pr: { 'headRefOid' => head }), PROVE_BASE_SHA: @base_sha)
+    assert_includes @calls, ['pr', 'merge', '99', '--squash', '--delete-branch', '--match-head-commit', head]
+    [
+      [@base_sha, 'a' * 40],
+      ['b' * 40, head]
+    ].each do |base, remote_head|
+      output = run_freshness_script(name, data: scenario(pr: { 'headRefOid' => remote_head }),
+                                   PROVE_BASE_SHA: base, success: false)
+      assert_includes output, '::error::'
+      refute @calls.any? { |args| args.first(2) == %w[pr merge] }
+    end
   end
 
   if ENV['PROJECT_WORKFLOWS_ROOT']
@@ -430,18 +543,35 @@ class WorkflowsTest < Minitest::Test
         assert_equal expected, job.fetch('if').split.join(' '), repository
         assert_equal title, job.fetch('with').fetch('project_title')
         assert_equal '1pizzateam/coding-pal/.github/workflows/pipeline-think.yml@main', job.fetch('uses')
-        plan = YAML.load_file(File.join(directory, 'plan.yml'))
-        plan_triggers = plan['on'] || plan.fetch(true)
-        assert_equal [wrapper.fetch('name')], plan_triggers.fetch('workflow_run').fetch('workflows')
         %w[plan code prove].each do |phase|
           current = YAML.load_file(File.join(directory, "#{phase}.yml"))
-          assert_equal 'inherit', current.fetch('jobs').fetch(phase).fetch('secrets'), repository
-          upstream_phase = { 'plan' => 'think', 'code' => 'plan', 'prove' => 'code' }.fetch(phase)
-          upstream = YAML.load_file(File.join(directory, "#{upstream_phase}.yml"))
+          job = current.fetch('jobs').fetch(phase)
+          assert_equal 'inherit', job.fetch('secrets'), repository
           events = current['on'] || current.fetch(true)
-          assert_equal [upstream.fetch('name')], events.fetch('workflow_run').fetch('workflows')
+          assert_equal ['workflow_dispatch'], events.keys, repository
+          inputs = events.fetch('workflow_dispatch').fetch('inputs')
+          assert_equal false, inputs.fetch('workflow_run_id').fetch('required')
+          assert_equal false, inputs.fetch('issue_number').fetch('required')
+          assert_equal "${{ inputs.workflow_run_id || '' }}", job.fetch('with').fetch('workflow_run_id')
+          refute job.key?('if'), repository
           assert_equal "Pipeline - #{phase.capitalize}", current.fetch('name')
+          if %w[code prove].include?(phase)
+            assert_equal 'delivery-${{ github.repository }}', current.dig('concurrency', 'group')
+            assert_equal false, current.dig('concurrency', 'cancel-in-progress')
+            assert_equal 'max', current.dig('concurrency', 'queue')
+          else
+            refute current.key?('concurrency')
+          end
         end
+        code = YAML.load_file(File.join(directory, 'code.yml'))
+        prove = code.fetch('jobs').fetch('prove')
+        assert_equal 'code', prove.fetch('needs')
+        assert_equal "needs.code.outputs.continue_to_prove == 'true'", prove.fetch('if')
+        assert_equal '1pizzateam/coding-pal/.github/workflows/pipeline-prove.yml@main', prove.fetch('uses')
+        assert_equal '${{ github.run_id }}', prove.dig('with', 'workflow_run_id')
+        assert_equal title, prove.dig('with', 'project_title')
+        assert_equal 'inherit', prove.fetch('secrets')
+        assert_equal false, prove.dig('with', 'auto_release_npm') if repository == 'DoomR.js'
         audits = YAML.load_file(File.join(directory, 'audits.yml'))
         assert_equal 'Audit - Run audit', audits.fetch('name')
       end
