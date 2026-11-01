@@ -319,6 +319,7 @@ jobs:
         if: failure() || cancelled()
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
@@ -330,5 +331,5 @@ jobs:
           MESSAGE="Release failed or did not finish. Issue stays in Release and needs developer attention. Inspect ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}; any detailed Release report is posted above. A merged PR is not rolled back automatically."
           gh issue comment "$ISSUE_NUMBER" --body "$MESSAGE"
           gh pr comment "$PR_NUMBER" --body "$MESSAGE"
-          gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
-          gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
+          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
+          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true

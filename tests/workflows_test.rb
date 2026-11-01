@@ -42,6 +42,7 @@ class WorkflowsTest < Minitest::Test
     @actions_context = {
       'secrets.PIPELINE_GITHUB_TOKEN' => 'fake-test-token',
       'secrets.COPILOT_GITHUB_TOKEN' => 'fake-copilot-token',
+      'github.token' => 'fake-github-token',
       'github.repository' => 'test-owner/test-repo',
       'github.repository_owner' => 'test-owner',
       'github.event.repository.name' => 'test-repo',
@@ -359,7 +360,7 @@ class WorkflowsTest < Minitest::Test
     assert_equal "${{ steps.handoff.outcome == 'success' }}",
                  current.dig('jobs', 'code', 'outputs', 'continue_to_prove')
     assert_includes step('code', 'handoff').fetch('if'), "steps.checkpoint.outputs.paused != 'true'"
-    refute steps('code').any? { |entry| entry.fetch('run', '').include?('gh workflow run prove.yml') }
+    refute steps('code').reject { |entry| entry['id'] == 'resolve' }.any? { |entry| entry.fetch('run', '').include?('gh workflow run prove.yml') }
     refute steps('prove').any? { |entry| entry.fetch('run', '').include?('gh workflow run think.yml') }
   end
 
@@ -382,8 +383,17 @@ class WorkflowsTest < Minitest::Test
     assert_equal 'none', run_step(fifo, scenario(['4-release'])).fetch('resumed_stage')
     plan_resolve = run_step(step('plan', 'resolve'), scenario(['2-plan'], comments: ['# Think: scope']), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
     assert_equal 'false', plan_resolve.fetch('skip')
+    plan_missing = run_step(step('plan', 'resolve'), scenario(['2-plan'], comments: []), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
+    assert_equal 'true', plan_missing.fetch('skip')
+    assert_equal [['workflow', 'run', 'think.yml', '-f', 'issue_number=42']], dispatches
     code_resolve = run_step(step('code', 'resolve'), scenario(['3-code'], comments: ['# Think: scope', '# Plan: steps']), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
     assert_equal 'false', code_resolve.fetch('skip')
+    code_missing_plan = run_step(step('code', 'resolve'), scenario(['3-code'], comments: ['# Think: scope']), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
+    assert_equal 'true', code_missing_plan.fetch('skip')
+    assert_equal [['workflow', 'run', 'plan.yml', '-f', 'issue_number=42']], dispatches
+    code_missing_think = run_step(step('code', 'resolve'), scenario(['4-release'], comments: []), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
+    assert_equal 'true', code_missing_think.fetch('skip')
+    assert_equal [['workflow', 'run', 'think.yml', '-f', 'issue_number=42']], dispatches
     prove_resolve = run_step(step('prove', 'resolve'), scenario(['4-release'], prs: [{ 'number' => 99, 'headRefName' => 'feature/issue-42-test', 'labels' => [] }], pr: { 'number' => 99, 'state' => 'OPEN', 'headRefName' => 'feature/issue-42-test', 'baseRefName' => 'main', 'body' => '- **Closes:** #42', 'title' => 'feat: test' }), { 'INPUT_ISSUE_NUMBER' => '42', 'INPUT_PR_NUMBER' => '', 'RUN_ID' => '' })
     assert_equal 'false', prove_resolve.fetch('skip')
   end
@@ -393,6 +403,16 @@ class WorkflowsTest < Minitest::Test
     %w[3-code 4-release].each do |label|
       output = run_step(step('think', 'resume'), scenario([label], prs: prs))
       assert_equal label == '4-release' ? 'prove' : 'code', output.fetch('resumed_stage')
+      if label == '4-release'
+        assert_equal [['workflow', 'run', 'prove.yml', '-f', 'pr_number=99', '-f', 'issue_number=42']], dispatches
+      else
+        assert_empty dispatches
+        assert @calls.any? { |args| args.first(3) == ['issue', 'edit', '42'] && args.include?('--add-assignee') && args.include?('@me') }
+        assert @calls.any? { |args| args.first(3) == ['pr', 'edit', '99'] && args.include?('--add-assignee') && args.include?('@me') }
+      end
+
+      code_out = run_step(step('code', 'resolve'), scenario([label], prs: prs), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
+      assert_equal 'true', code_out.fetch('skip')
       if label == '4-release'
         assert_equal [['workflow', 'run', 'prove.yml', '-f', 'pr_number=99', '-f', 'issue_number=42']], dispatches
       else
@@ -1042,11 +1062,10 @@ class WorkflowsTest < Minitest::Test
         job = wrapper.fetch('jobs').fetch('think')
         assert_equal 'inherit', job.fetch('secrets'), repository
         labels = job.fetch('if').scan(/github.event.label.name == '([^']+)'/).flatten
-        assert_equal LABELS, labels, repository
+        assert_equal ['1-think'], labels, repository
         expected = "github.event_name == 'workflow_dispatch' || " \
                    "(github.event_name == 'issues' && github.event.issue.state == 'open' && " \
-                   "github.event.label.name != '' && (" \
-                   "#{LABELS.map { |label| "github.event.label.name == '#{label}'" }.join(' || ')}))"
+                   "github.event.label.name == '1-think')"
         assert_equal expected, job.fetch('if').split.join(' '), repository
         assert_equal title, job.fetch('with').fetch('project_title')
         assert_equal '1pizzateam/coding-pal/.github/workflows/pipeline-think.yml@main', job.fetch('uses')
@@ -1055,12 +1074,20 @@ class WorkflowsTest < Minitest::Test
           job = current.fetch('jobs').fetch(phase)
           assert_equal 'inherit', job.fetch('secrets'), repository
           events = current['on'] || current.fetch(true)
-          assert_equal ['workflow_dispatch'], events.keys, repository
+          if %w[plan code].include?(phase)
+            assert_equal %w[issues workflow_dispatch], events.keys, "#{repository} #{phase}.yml"
+            assert_equal ['labeled'], events.fetch('issues').fetch('types'), "#{repository} #{phase}.yml"
+            assert_equal "${{ inputs.issue_number || github.event.issue.number || '' }}", job.fetch('with').fetch('issue_number')
+            phase_labels = job.fetch('if').scan(/github.event.label.name == '([^']+)'/).flatten
+            assert_equal phase == 'plan' ? ['2-plan'] : %w[3-code 4-release], phase_labels, "#{repository} #{phase}.yml"
+          else
+            assert_equal ['workflow_dispatch'], events.keys, repository
+            refute job.key?('if'), repository
+          end
           inputs = events.fetch('workflow_dispatch').fetch('inputs')
           assert_equal false, inputs.fetch('workflow_run_id').fetch('required')
           assert_equal false, inputs.fetch('issue_number').fetch('required')
           assert_equal "${{ inputs.workflow_run_id || '' }}", job.fetch('with').fetch('workflow_run_id')
-          refute job.key?('if'), repository
           assert_equal "Pipeline - #{phase.capitalize}", current.fetch('name')
           if %w[code prove].include?(phase)
             assert_equal 'delivery-${{ github.repository }}', current.dig('concurrency', 'group')

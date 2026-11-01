@@ -377,6 +377,7 @@ jobs:
         if: steps.resolve.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
@@ -585,9 +586,9 @@ jobs:
               --jq '[.labels[].name | select(startswith("fix-loop:")) | ltrimstr("fix-loop:") | tonumber] | max // 0')
 
             if [ "$ATTEMPTS" -ge "$FIX_LOOP_LIMIT" ]; then
-              gh label create needs:developer --force --description "Fix-loop limit reached" || true
-              gh pr edit "$PR_NUMBER" --add-assignee "@me" --add-label needs:developer
-              gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
+              GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh label create needs:developer --force --description "Fix-loop limit reached" || true
+              GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh pr edit "$PR_NUMBER" --add-assignee "@me" --add-label needs:developer
+              GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
               if [ "$CONTROLS_OK" -eq 1 ] && [ -f "$PROVE_FILE" ]; then
                 gh pr review "$PR_NUMBER" --request-changes --body-file "$PROVE_FILE" || gh pr comment "$PR_NUMBER" --body-file "$PROVE_FILE"
               fi
@@ -596,10 +597,10 @@ jobs:
             fi
 
             NEXT=$((ATTEMPTS + 1))
-            gh label create "fix-loop:${NEXT}" --force --description "Auto-remediation attempt ${NEXT}" || true
-            gh pr edit "$PR_NUMBER" --add-label "fix-loop:${NEXT}"
+            GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh label create "fix-loop:${NEXT}" --force --description "Auto-remediation attempt ${NEXT}" || true
+            GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh pr edit "$PR_NUMBER" --add-label "fix-loop:${NEXT}"
             if [ "$ATTEMPTS" -gt 0 ]; then
-              gh pr edit "$PR_NUMBER" --remove-label "fix-loop:${ATTEMPTS}" || true
+              GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh pr edit "$PR_NUMBER" --remove-label "fix-loop:${ATTEMPTS}" || true
             fi
 
             BEFORE=$(git rev-parse HEAD)
@@ -649,6 +650,7 @@ jobs:
         if: steps.resolve.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           git fetch origin "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
           CURRENT_BASE=$(git rev-parse "refs/remotes/origin/${BASE_REF}")
@@ -672,7 +674,7 @@ jobs:
             exit 1
           fi
           echo "RELEASE_MERGE_SHA=${MERGE_SHA}" >> "$GITHUB_ENV"
-          gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-release" || true
+          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-release" || true
 
       - name: Dispatch companion game editor updates after PR merge
         if: steps.resolve.outputs.skip != 'true'
@@ -935,9 +937,10 @@ jobs:
         if: (failure() || cancelled()) && steps.resolve.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           if [ -n "${ISSUE_NUMBER:-}" ]; then
-            gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
-            gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
+            GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
+            GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
           fi

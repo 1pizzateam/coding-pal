@@ -42,6 +42,7 @@ jobs:
         id: resolve
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RUN_ID: ${{ inputs.workflow_run_id }}
           INPUT_ISSUE_NUMBER: ${{ inputs.issue_number }}
@@ -66,6 +67,8 @@ jobs:
             exit 1
           fi
 
+          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --remove-assignee "@me" 2>/dev/null || true
+
           echo "skip=false" >> "$GITHUB_OUTPUT"
           echo "ISSUE_NUMBER=${ISSUE_NUMBER}" >> "$GITHUB_ENV"
           SPEC_DIR="/tmp/specs/issue-${ISSUE_NUMBER}"
@@ -74,8 +77,17 @@ jobs:
 
           if [ ! -s "$THINK_FILE" ]; then
             echo "Fetching latest think.md from issue #${ISSUE_NUMBER} comments..."
-            gh issue view "$ISSUE_NUMBER" --json comments \
-              --jq '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty' > "$THINK_FILE"
+            ISSUE_VIEW=$(gh issue view "$ISSUE_NUMBER" --json labels,comments)
+            echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty' > "$THINK_FILE"
+            if [ ! -s "$THINK_FILE" ] && [ -z "$RUN_ID" ]; then
+              HAS_STAGE_LABEL=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | any(. == "2-plan" or . == "3-code" or . == "4-release")')
+              if [ "$HAS_STAGE_LABEL" = "true" ]; then
+                echo "No think.md found on issue #${ISSUE_NUMBER}; dispatching Pipeline - Think first."
+                gh workflow run think.yml -f issue_number="$ISSUE_NUMBER"
+                echo "skip=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            fi
           fi
 
           if [ ! -s "$THINK_FILE" ]; then
@@ -220,7 +232,7 @@ jobs:
 
           Follow .github/instructions/plan.instructions.md and .agents/skills/plan/SKILL.md (and its references/plan-contract.md).
           Read ${THINK_FILE} first and ground all file scopes, acceptance criteria, atomic implementation steps (with New Code, Verification, Bootable Check, and Serves), test plan rows, and blast radius checks in ${THINK_FILE} and the existing repository conventions.
-          Order ## Implementation Checklist steps strictly so every step passes its Verification, Bootable Check, and full test suite immediately when executed in sequence: always place core implementation steps BEFORE the test steps that assert on their new behavior (never place a test step before the implementation step it depends on).
+          Order ## Implementation Checklist steps strictly so every step passes its Verification, Bootable Check, and full test suite immediately when executed in sequence: always place core implementation steps BEFORE the test steps that assert on their new behavior (never place a test step before the implementation step it depends on), and if an implementation step changes existing behavior asserted by an existing test file, update that existing assertion in the same implementation step (listing both files in Files) while reserving subsequent test steps for adding new AC-<n> tests.
           Keep the exact required headings and bullet labels, but make every prose description short and straight to the point (1 concise sentence per bullet; no filler or repetition).
           ${LIBRARY_DOCS_HINT}
           Every test in ## Test Plan and in test steps' New Code must include its acceptance criterion ID (`AC-1`, `AC-2`, etc.) in the test name (for example `test('AC-1: ...', ...)` or `it('AC-1: ...', ...)`) and start the Test Plan `Test` cell with the relative test file path (`tests/<file>: AC-1 ...` or `scripts/<file>: AC-1 ...`) so `criteria-verify` can verify every criterion with `--require-test-files`.
@@ -249,6 +261,7 @@ jobs:
         if: steps.resolve.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
         run: |
@@ -264,7 +277,7 @@ jobs:
           fi
 
           echo "paused=true" >> "$GITHUB_OUTPUT"
-          gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" --remove-label "1-think,2-plan,3-code,4-release,pause:plan" || true
+          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" --remove-label "1-think,2-plan,3-code,4-release,pause:plan" || true
           gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused after Plan for Manual Validation**
 
           Review (and optionally edit) the \`# Plan:\` specification comment above.
@@ -296,11 +309,12 @@ jobs:
         if: failure() && steps.resolve.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
         run: |
           if [ -n "${ISSUE_NUMBER:-}" ]; then
-            gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
-            gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
+            GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
+            GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
           fi

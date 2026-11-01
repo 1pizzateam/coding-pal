@@ -54,6 +54,7 @@ jobs:
         id: resolve
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RUN_ID: ${{ inputs.workflow_run_id }}
           INPUT_ISSUE_NUMBER: ${{ inputs.issue_number }}
@@ -78,6 +79,32 @@ jobs:
             exit 1
           fi
 
+          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --remove-assignee "@me" 2>/dev/null || true
+
+          if [ -z "$RUN_ID" ]; then
+            ISSUE_VIEW=$(gh issue view "$ISSUE_NUMBER" --json labels,comments)
+            HAS_CODE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("3-code") != null')
+            HAS_RELEASE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("4-release") != null')
+            EXISTING_PR=$(gh pr list --state open --json number,headRefName \
+              --jq "[.[] | select(.headRefName | test(\"^(feature|fix|chore)/issue-${ISSUE_NUMBER}-\"))][0].number // empty" 2>/dev/null || true)
+
+            if [ -n "$EXISTING_PR" ] && [ "$HAS_RELEASE_TRIGGER" = "true" ]; then
+              echo "Found open PR #${EXISTING_PR} for issue #${ISSUE_NUMBER}; dispatching Pipeline - Prove directly."
+              GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh pr edit "$EXISTING_PR" --remove-assignee "@me" 2>/dev/null || true
+              gh workflow run prove.yml -f pr_number="$EXISTING_PR" -f issue_number="$ISSUE_NUMBER"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            if [ -n "$EXISTING_PR" ] && [ "$HAS_CODE_TRIGGER" = "true" ]; then
+              echo "Issue #${ISSUE_NUMBER} already has open PR #${EXISTING_PR}; leaving it at the manual review checkpoint."
+              GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" --remove-label "3-code" || true
+              GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh pr edit "$EXISTING_PR" --add-assignee "@me" || true
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
           BASE_REF=$(gh repo view "$GH_REPO" --json defaultBranchRef --jq '.defaultBranchRef.name // "main"')
 
           echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -90,14 +117,37 @@ jobs:
 
           if [ ! -s "$THINK_FILE" ]; then
             echo "Fetching latest think.md from issue #${ISSUE_NUMBER} comments..."
-            gh issue view "$ISSUE_NUMBER" --json comments \
-              --jq '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty' > "$THINK_FILE"
+            if [ -n "${ISSUE_VIEW:-}" ]; then
+              echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty' > "$THINK_FILE"
+            else
+              gh issue view "$ISSUE_NUMBER" --json comments \
+                --jq '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty' > "$THINK_FILE"
+            fi
           fi
 
           if [ ! -s "$PLAN_FILE" ]; then
             echo "Fetching latest plan.md from issue #${ISSUE_NUMBER} comments..."
-            gh issue view "$ISSUE_NUMBER" --json comments \
-              --jq '[.comments[].body | select(test("^# Plan:"; "m"))] | last // empty' > "$PLAN_FILE"
+            if [ -n "${ISSUE_VIEW:-}" ]; then
+              echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Plan:"; "m"))] | last // empty' > "$PLAN_FILE"
+            else
+              gh issue view "$ISSUE_NUMBER" --json comments \
+                --jq '[.comments[].body | select(test("^# Plan:"; "m"))] | last // empty' > "$PLAN_FILE"
+            fi
+          fi
+
+          if [ -z "$RUN_ID" ] && { [ "${HAS_CODE_TRIGGER:-false}" = "true" ] || [ "${HAS_RELEASE_TRIGGER:-false}" = "true" ]; }; then
+            if [ ! -s "$THINK_FILE" ]; then
+              echo "No think.md found on issue #${ISSUE_NUMBER}; dispatching Pipeline - Think first."
+              gh workflow run think.yml -f issue_number="$ISSUE_NUMBER"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [ ! -s "$PLAN_FILE" ]; then
+              echo "No plan.md found on issue #${ISSUE_NUMBER}; dispatching Pipeline - Plan first."
+              gh workflow run plan.yml -f issue_number="$ISSUE_NUMBER"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           fi
 
           if [ ! -s "$THINK_FILE" ] || [ ! -s "$PLAN_FILE" ]; then
@@ -282,7 +332,7 @@ jobs:
           3. Drive the implementation loop one step at a time using code-loop:
              - node .agents/skills/code-loop/scripts/code-loop.mjs next --dir ${SPEC_DIR} --allow-pending-approval
              - node .agents/skills/code-loop/scripts/code-loop.mjs start <n> --dir ${SPEC_DIR} --allow-pending-approval
-             - Apply Step <n>'s New Code (writing only files in Step <n>'s Files and within In Scope).
+             - Apply Step <n>'s New Code (writing only files in Step <n>'s Files and within In Scope; if an in-scope test file has an existing assertion superseded by Step <n>'s behavior change, update that assertion so the test suite passes).
              - Run Step <n>'s Verification and Bootable Check commands, plus:
                - node .agents/skills/task-gate/scripts/task-gate.mjs --stage 'test:npm test' --stage 'build:npm run build' (if Step <n> is a test-only step placed before the implementation step it tests, verify syntax with 'node --check <file>' and 'npm run build' on Step <n>, and run the test suite once the corresponding implementation step is applied)
                - node .agents/skills/scope-guard/scripts/scope-guard.mjs --git --base origin/${BASE_REF} --scope '${SPEC_DIR}/**' (plus a --scope flag for each In Scope path in ${PLAN_FILE})
@@ -397,6 +447,7 @@ jobs:
         if: steps.resolve.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           PROJECT_TITLE: ${{ inputs.project_title }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
@@ -414,8 +465,8 @@ jobs:
 
           echo "paused=true" >> "$GITHUB_OUTPUT"
           TARGET_STATUS=Code bash -eo pipefail "$RUNNER_TEMP/code-project-status.sh"
-          gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" --remove-label "1-think,2-plan,3-code,4-release,pause:code" || true
-          gh pr edit "$PR_NUMBER" --add-assignee "@me" || true
+          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" --remove-label "1-think,2-plan,3-code,4-release,pause:code" || true
+          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh pr edit "$PR_NUMBER" --add-assignee "@me" || true
           gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused after Code for Manual PR Validation**
 
           Pull Request #${PR_NUMBER} (${PR_URL}) is open and ready for your review.
@@ -440,11 +491,12 @@ jobs:
         if: failure() && steps.resolve.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
         run: |
           if [ -n "${ISSUE_NUMBER:-}" ]; then
-            gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
-            gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
+            GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
+            GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
           fi
