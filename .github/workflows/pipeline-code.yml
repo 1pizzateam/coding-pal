@@ -78,7 +78,7 @@ jobs:
             exit 1
           fi
 
-          BASE_REF=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name // "main"')
+          BASE_REF=$(gh repo view "$GH_REPO" --json defaultBranchRef --jq '.defaultBranchRef.name // "main"')
 
           echo "skip=false" >> "$GITHUB_OUTPUT"
           echo "ISSUE_NUMBER=${ISSUE_NUMBER}" >> "$GITHUB_ENV"

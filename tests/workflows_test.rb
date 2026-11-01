@@ -15,7 +15,7 @@ class WorkflowsTest < Minitest::Test
     @directory = Dir.mktmpdir('coding-pal-workflows-')
     bin = File.join(@directory, 'bin')
     Dir.mkdir(bin)
-    %w[bash jq mkdir head uname cat].each do |command|
+    %w[bash jq mkdir head uname cat rm tr sed].each do |command|
       executable = ENV.fetch('PATH').split(File::PATH_SEPARATOR)
                       .map { |path| File.join(path, command) }
                       .find { |path| File.executable?(path) && !File.directory?(path) }
@@ -380,6 +380,12 @@ class WorkflowsTest < Minitest::Test
     end
     assert_equal 'plan', run_step(fifo, scenario(['3-code'], comments: ['# Think: scope'])).fetch('resumed_stage')
     assert_equal 'none', run_step(fifo, scenario(['4-release'])).fetch('resumed_stage')
+    plan_resolve = run_step(step('plan', 'resolve'), scenario(['2-plan'], comments: ['# Think: scope']), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
+    assert_equal 'false', plan_resolve.fetch('skip')
+    code_resolve = run_step(step('code', 'resolve'), scenario(['3-code'], comments: ['# Think: scope', '# Plan: steps']), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
+    assert_equal 'false', code_resolve.fetch('skip')
+    prove_resolve = run_step(step('prove', 'resolve'), scenario(['4-release'], prs: [{ 'number' => 99, 'headRefName' => 'feature/issue-42-test', 'labels' => [] }], pr: { 'number' => 99, 'state' => 'OPEN', 'headRefName' => 'feature/issue-42-test', 'baseRefName' => 'main', 'body' => '- **Closes:** #42', 'title' => 'feat: test' }), { 'INPUT_ISSUE_NUMBER' => '42', 'INPUT_PR_NUMBER' => '', 'RUN_ID' => '' })
+    assert_equal 'false', prove_resolve.fetch('skip')
   end
 
   def test_existing_pr_is_proven_only_for_release

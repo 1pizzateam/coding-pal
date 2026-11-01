@@ -31,6 +31,10 @@ if ARGV.first != 'api' && ENV['GH_REPO'].to_s.empty? && !ARGV.include?('--repo')
   reject_command("Missing repository context for gh #{ARGV.first(2).join(' ')}: set GH_REPO, pass --repo, or run inside a git checkout")
 end
 
+if ARGV.first(2) == ['repo', 'view'] && (ARGV[2].to_s.empty? || ARGV[2].to_s.start_with?('-')) && !File.directory?('.git')
+  reject_command("gh repo view ignores GH_REPO outside a git checkout; pass explicit repository argument: #{ARGV.inspect}")
+end
+
 if %w[issue pr].include?(ARGV[0]) && %w[view edit comment merge].include?(ARGV[1]) && ARGV[2].to_s.empty?
   reject_command("Missing target number/branch for gh #{ARGV.first(2).join(' ')}")
 end
@@ -47,6 +51,8 @@ result = case ARGV.first(2)
            end
          when ['pr', 'merge']
            nil
+         when ['repo', 'view']
+           { 'defaultBranchRef' => { 'name' => 'main' } }
          when ['issue', 'view']
            scenario.fetch('issue')
          when ['pr', 'list']
