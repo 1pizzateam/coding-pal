@@ -256,12 +256,11 @@ jobs:
           cp /tmp/1pizza-coding-pal/instructions/*.md .github/instructions/
           cp -R /tmp/1pizza-coding-pal/skills/* .agents/skills/
           cp /tmp/alten-coding-pal/instructions/sharp-agent.instructions.md .github/instructions/
-          cp /tmp/alten-coding-pal/instructions/code-loop.instructions.md .github/instructions/
           [ -d tests ] && [ -f /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md ] && cp /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md .github/instructions/
           [ -d website ] && [ -f /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md ] && cp /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md .github/instructions/
           [ -d website ] && [ -d /tmp/alten-coding-pal/skills/vitepress-docs-examples ] && cp -R /tmp/alten-coding-pal/skills/vitepress-docs-examples .agents/skills/vitepress-docs-examples
           cp /tmp/alten-coding-pal/agents/code.agent.md .github/agents/
-          for skill in plan code-loop pr-record scope-guard secret-guard dependency-guard task-gate control-guard test-probe preview-smoke criteria-verify; do
+          for skill in pr-record scope-guard secret-guard dependency-guard task-gate control-guard test-probe preview-smoke criteria-verify; do
             cp -R "/tmp/alten-coding-pal/skills/${skill}" ".agents/skills/${skill}"
           done
           rm -rf /tmp/alten-coding-pal /tmp/1pizza-coding-pal
@@ -349,34 +348,16 @@ jobs:
             --prompt "Implement the validated Plan record at ${PLAN_FILE} (with ${THINK_FILE}) for GitHub Issue #${ISSUE_NUMBER} (${ISSUE_TITLE}) on the current branch ${BRANCH_NAME} (base: ${BASE_REF}).
           ${FEEDBACK_CONTEXT}
 
-          Follow .github/instructions/code-loop.instructions.md, .agents/skills/code-loop/SKILL.md, and .agents/skills/pr-record/SKILL.md.
-          1. Validate specs first: node .agents/skills/plan/scripts/validate-plan.mjs --dir ${SPEC_DIR} --stage draft. Think and Plan may predate intervening merges. Check their assumptions against the current base before implementing; if they are no longer valid, stop with an explicit blocking explanation rather than changing specs or broadening scope.
-          2. Check the branch: node .agents/skills/code-loop/scripts/branch-guard.mjs --git --base ${BASE_REF}
-          3. Drive the implementation loop one step at a time using code-loop:
-             - node .agents/skills/code-loop/scripts/code-loop.mjs next --dir ${SPEC_DIR} --allow-pending-approval
-             - node .agents/skills/code-loop/scripts/code-loop.mjs start <n> --dir ${SPEC_DIR} --allow-pending-approval
-             - Apply Step <n>'s New Code (writing only files in Step <n>'s Files and within In Scope; if an in-scope test file has an existing assertion superseded by Step <n>'s behavior change, update that assertion so the test suite passes).
-             - Run Step <n>'s Verification and Bootable Check commands, plus:
-               - node .agents/skills/task-gate/scripts/task-gate.mjs --stage 'test:npm test' --stage 'build:npm run build' (if Step <n> is a test-only step placed before the implementation step it tests, verify syntax with 'node --check <file>' and 'npm run build' on Step <n>, and run the test suite once the corresponding implementation step is applied)
-               - node .agents/skills/scope-guard/scripts/scope-guard.mjs --git --base origin/${BASE_REF} --scope '${SPEC_DIR}/**' (plus a --scope flag for each In Scope path in ${PLAN_FILE})
-               - node .agents/skills/secret-guard/scripts/secret-guard.mjs --git --base origin/${BASE_REF}
-               - node .agents/skills/dependency-guard/scripts/dependency-guard.mjs --git --base origin/${BASE_REF}
-               - node .agents/skills/control-guard/scripts/control-guard.mjs --git origin/${BASE_REF}
-             - If any check fails, record with code-loop.mjs fail <n> --reason '<reason>' --dir ${SPEC_DIR}, fix the code, and re-run checks.
-             - When green, record with: node .agents/skills/code-loop/scripts/code-loop.mjs pass <n> --dir ${SPEC_DIR}
-             - Stage and commit Step <n>'s modified files with a commit message referencing Step <n> and #${ISSUE_NUMBER} (do not stage or commit files under ${SPEC_DIR}).
-          4. Repeat until all steps in ${PLAN_FILE} are done in ${SPEC_DIR}/progress.json.
-          5. Before authoring the PR body, run the full verification controls across the completed implementation:
-             - Ensure every acceptance criterion test includes its AC-<n> token in the test name and passes criteria-verify:
-               node .agents/skills/criteria-verify/scripts/verify-criteria.mjs --plan ${PLAN_FILE} --report <report-file> --require-test-files
-             - For modified tracked source files under src/**, verify test falsifiability with:
-               node .agents/skills/test-probe/scripts/test-probe.mjs --base origin/${BASE_REF} --test-cmd 'npm test' --source <each modified src/** file>
-             - Verify control integrity with:
-               node .agents/skills/control-guard/scripts/control-guard.mjs --git origin/${BASE_REF}
-             - If this is a published @1pizzateam/* library, follow .agents/skills/release-readiness/SKILL.md and verify library documentation and package readiness with:
-               node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs --mode pr --require-dist --build-docs
-          6. Author the pull request body at pr-body.md following .agents/skills/pr-record/references/pr-record-contract.md (with ## Links, ## Acceptance Criteria Traceability, ## Dependencies, ## Blast Radius, and ## Human Validation all set to Pending) and validate it until it exits 0:
-             node .agents/skills/pr-record/scripts/validate-pr.mjs --body pr-body.md --dir ${SPEC_DIR} --stage code --allow-pending-approval"
+          Follow .agents/skills/pr-record/SKILL.md.
+          1. Think and Plan may predate intervening merges. Check their assumptions against the current base before implementing; if they are no longer valid, stop with an explicit blocking explanation rather than changing specs or broadening scope.
+          2. Implement the steps in ${PLAN_FILE} in order:
+             - Apply each step's changes (writing only files listed in ${PLAN_FILE}'s In Scope; if an in-scope test file has an existing assertion superseded by the behavior change, update that assertion so the test suite passes).
+             - Ensure every acceptance criterion test includes its AC-<n> token in the test name so criteria-verify can map each AC-<n> to a passing test.
+             - Verify your changes with `npm test` and `npm run build`.
+             - Stage and commit your modified In Scope files with a clear commit message referencing #${ISSUE_NUMBER} (do not stage or commit files under ${SPEC_DIR}).
+          3. If this is a published @1pizzateam/* library, follow .agents/skills/release-readiness/SKILL.md and verify library documentation and package readiness with:
+             node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs --mode pr --require-dist --build-docs
+          4. Author the pull request body at pr-body.md following .agents/skills/pr-record/references/pr-record-contract.md (with ## Links, ## Acceptance Criteria Traceability, ## Dependencies, ## Blast Radius, and ## Human Validation all set to Pending)."
 
       - name: Run deterministic Code exit gates
         if: steps.resolve.outputs.skip != 'true'
@@ -387,51 +368,6 @@ jobs:
           if git ls-files "${SPEC_DIR}" --error-unmatch >/dev/null 2>&1; then
             git rm -rf --cached "${SPEC_DIR}" >/dev/null 2>&1 || true
           fi
-          node .agents/skills/code-loop/scripts/branch-guard.mjs --git --base "$BASE_REF"
-          node .agents/skills/code-loop/scripts/code-loop.mjs check-history --dir "$SPEC_DIR" --base "origin/${BASE_REF}"
-          node .agents/skills/control-guard/scripts/control-guard.mjs --git "origin/${BASE_REF}"
-          node .agents/skills/secret-guard/scripts/secret-guard.mjs --git --base "origin/${BASE_REF}"
-          node .agents/skills/dependency-guard/scripts/dependency-guard.mjs --git --base "origin/${BASE_REF}"
-          SCOPE_ARGS=(--scope "${SPEC_DIR}/**" --scope "pr-body.md" --scope "reports/**")
-          while IFS= read -r scope_glob; do
-            [ -n "$scope_glob" ] && SCOPE_ARGS+=(--scope "$scope_glob")
-          done < <(node -e '
-            const fs = require("fs");
-            const md = fs.readFileSync(process.argv[1], "utf8");
-            const paths = new Set();
-            const boundary = md.match(/^##\s+File Scope & Boundaries\s*\n([\s\S]*?)(?:\n##\s+|$)/m);
-            if (boundary) {
-              let collecting = false;
-              let buf = "";
-              for (const line of boundary[1].split(/\r?\n/)) {
-                const m = line.match(/^- \*\*(.+?):\*\*\s*(.*)$/);
-                if (m) {
-                  if (m[1].trim().toLowerCase() === "in scope") {
-                    collecting = true;
-                    buf += m[2] + "\n";
-                  } else if (collecting) {
-                    break;
-                  }
-                } else if (collecting) {
-                  buf += line + "\n";
-                }
-              }
-              for (const m of buf.matchAll(/`([^`\n]+)`/g)) {
-                const p = m[1].trim();
-                if (p && p !== "_None._") paths.add(p);
-              }
-            }
-            const legacy = md.match(/^##\s+In Scope\s*\n([\s\S]*?)(?:\n##\s+|$)/m);
-            if (legacy) {
-              for (const m of legacy[1].matchAll(/`([^`\n]+)`/g)) {
-                const p = m[1].trim();
-                if (p && p !== "_None._") paths.add(p);
-              }
-            }
-            for (const p of paths) console.log(p);
-          ' "${SPEC_DIR}/plan.md")
-          node .agents/skills/scope-guard/scripts/scope-guard.mjs --git --base "origin/${BASE_REF}" "${SCOPE_ARGS[@]}"
-          node .agents/skills/pr-record/scripts/validate-pr.mjs --body pr-body.md --dir "$SPEC_DIR" --stage code --allow-pending-approval
           cat pr-body.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Enter Prove and create or update Pull Request

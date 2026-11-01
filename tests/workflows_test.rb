@@ -1134,7 +1134,6 @@ class WorkflowsTest < Minitest::Test
     plan_file = File.join(@directory, 'plan.md')
     File.write(plan_file, plan_md)
     [
-      steps('code').find { |item| item['name'] == 'Run deterministic Code exit gates' }.fetch('run'),
       steps('prove').find { |item| item['name'] == 'Run Prove validation and auto-remediation loop' }.fetch('run')
     ].each do |script|
       snippet = script[/node -e '\s*(const fs = require\("fs"\);.*?)' "\$\{SPEC_DIR\}\/plan\.md"/m, 1]

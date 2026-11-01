@@ -181,10 +181,9 @@ In the GitHub Project's **Workflows** settings, disable any built-in automation 
 
 1. Restores both specs and prepares the implementation branch.
 2. Sets Project Status to **Code**.
-3. Runs the Code agent to implement the plan and prepare the PR record.
-4. Checks branch/history, scope, control integrity, secrets, dependencies, and the PR record before publishing the branch. Full test/build verification belongs to Prove so failures enter its repair loop.
-5. Enters **Prove**, pushes the branch, and creates or updates the PR.
-6. If requested, returns to Code for manual PR review; otherwise, passes the specs and PR number to Prove.
+3. Runs the Code agent to implement the plan, verify tests/builds, and prepare the PR record (`pr-body.md`).
+4. Enters **Prove**, pushes the branch, and creates or updates the PR (deterministic exit gates run once in Prove rather than being duplicated in Code).
+5. If requested, returns to Code for manual PR review; otherwise, passes the specs and PR number to Prove.
 
 **Stops at:** an open PR for review or handoff to Prove. Code does not merge.
 
@@ -195,7 +194,7 @@ Failed Think, Plan, or Code runs mark the issue `needs:developer`. They do not r
 [`Pipeline - Prove`](.github/workflows/pipeline-prove.yml) validates and merges the PR:
 
 1. Sets Project Status to **Prove**.
-2. Checks specs, scope, secrets, dependencies, tests, builds, acceptance criteria, and PR metadata. Waits for GitHub PR checks too (up to 20 minutes, excluding the current delivery run).
+2. Runs the 8 deterministic controls (`control-guard`, `secret-guard`, `dependency-guard`, `scope-guard`, `task-gate`, `criteria-verify`, `test-probe`, `preview-smoke`) and waits once for GitHub PR checks (up to 20 minutes, excluding the current delivery run).
 3. Only when checks pass, runs the Prove agent for independent code review and a validation record.
 4. On failed checks or review, returns to **Code**. The Code agent receives the exact check output, review findings, commit/base, and validated Think/Plan specs. It fixes within scope, then returns to Prove and reruns checks and review, **up to 5 repair attempts by default**.
 5. If everything passes, enters **Release**, then **squash-merges the PR**, deleting its branch. Approval is attempted after the review passes.
