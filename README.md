@@ -80,11 +80,12 @@ Create these labels in each application repository. Add one to an open issue:
 | `1-think` | `think.yml` | Think | Specification comment |
 | `2-plan` | `plan.yml` | Plan (falls back to Think if `# Think:` is missing) | Plan comment |
 | `3-code` | `code.yml` | Code (falls back to Think/Plan if specs are missing) | Open or updated PR |
-| `4-release` | `think.yml` | Think -> Plan -> Code -> Prove -> Release (resumes from existing specs/PR) | Merge, configured publication/deployment, then Done |
+| `4-prove` | `code.yml` | Prove (resumes from existing specs/PR or falls back to Think/Plan/Code) | Approved PR and `# Prove:` validation comment (before merge) |
+| `5-release` | `code.yml` | Think -> Plan -> Code -> Prove -> Release (resumes from existing specs/PR) | Merge, configured publication/deployment, then Done |
 
-Each stage label (`1-think`, `2-plan`, `3-code`) directly triggers its own workflow (`think.yml`, `plan.yml`, `code.yml`) without launching intermediate workflows. Use **`4-release`** for the full autonomous pipeline; with an existing PR, it resumes directly at Prove.
+Each stage label (`1-think`, `2-plan`, `3-code`, `4-prove`, `5-release`) triggers only the entry workflow needed (`think.yml`, `plan.yml`, or `code.yml`) without launching duplicate intermediate runs. Use **`4-prove`** to validate and approve the PR without merging, or **`5-release`** for the full autonomous pipeline through merge and release; when an open PR already exists, both `4-prove` and `5-release` resume directly at Prove.
 
-Only the numbered labels trigger delivery. The old `ready*` labels and unprefixed `think`, `plan`, `code`, and `release` labels do not.
+Only the numbered labels trigger delivery. The old `ready*` labels, `4-release`, and unprefixed `think`, `plan`, `code`, `prove`, and `release` labels do not.
 
 **Think and Plan run in parallel across issues.** They do not wait for another issue's implementation or review.
 
@@ -94,7 +95,7 @@ After obtaining the slot, Code fetches the latest default branch and creates the
 
 GitHub queues up to **100 pending deliveries** with `queue: max`, without replacing earlier pending runs. FIFO follows entry into the concurrency queue, not issue creation or label time. GitHub does not guarantee dispatch-time ordering; requests beyond the limit are canceled and must be resubmitted.
 
-A Code review pause releases the slot. Adding `4-release` later queues Prove as a new delivery request. Failures also release the slot and leave the issue flagged for attention. Publication/deployment run as separate workflows without acquiring the delivery slot; the delivery run waits for their results before releasing its slot.
+A Code or Prove review pause releases the slot. Adding `4-prove` or `5-release` later queues Prove as a new delivery request. Failures also release the slot and leave the issue flagged for attention. Publication/deployment run as separate workflows without acquiring the delivery slot; the delivery run waits for their results before releasing its slot.
 
 Before validation, Prove merges the latest base into the PR branch and pushes clean updates. Merge conflicts stop with a PR comment and `needs:developer`; resolve them within the approved plan, or revise Think/Plan before retrying. All controls and the independent assessment run on the refreshed branch, including checks for interactions with intervening changes.
 
@@ -106,15 +107,16 @@ Before deploying this change, stop or finish active delivery runs. Deploy the sh
 
 ### Request an extra pause
 
-Use a trigger label and add a checked box to the issue body:
+Use a trigger label and add a checked box to the issue body (or add a `pause:think`, `pause:plan`, `pause:code`, or `pause:prove` label while a run is in flight):
 
 ```markdown
 - [x] Pause after Think
 - [ ] Pause after Plan
 - [ ] Pause after Code
+- [ ] Pause after Prove
 ```
 
-Inline `[pause:think]`, `[pause:plan]`, and `[pause:code]` directives also work.
+Inline `[pause:think]`, `[pause:plan]`, `[pause:code]`, and `[pause:prove]` directives also work.
 
 ### Review, comment, and resume or re-run
 
@@ -124,7 +126,8 @@ Inline `[pause:think]`, `[pause:plan]`, and `[pause:code]` directives also work.
    - **`1-think`**: Re-runs **Think**, incorporating all non-bot developer comments on the issue and revising the previous `# Think:` specification.
    - **`2-plan`**: Runs (or re-runs) **Plan**, incorporating the latest `# Think:`, any previous `# Plan:`, and all developer comments on the issue.
    - **`3-code`**: Runs (or re-runs) **Code** from the latest default branch using the latest `# Think:`, `# Plan:`, and developer comments on the issue/PR, opening a new PR or force-updating the existing open PR in place.
-   - **`4-release`**: Continues from the furthest completed artifact (`# Think:`, `# Plan:`, or open PR) through **Prove**, merge, and release.
+   - **`4-prove`**: Continues from the furthest completed artifact (`# Think:`, `# Plan:`, or open PR) through **Prove** (8 deterministic gates, up to 5 auto-remediation fix loops, independent `# Prove:` review, and PR approval) and pauses before merging.
+   - **`5-release`**: Continues from the furthest completed artifact (`# Think:`, `# Plan:`, or open PR) through **Prove**, merge, and release.
 
 Temporary specification and progress files (`specs/issue-<N>/`) exist only on the runner during the job and are excluded from Git commits and PR diffs via `.git/info/exclude`; the `# Think:` and `# Plan:` issue comments remain the single source of truth.
 
@@ -160,7 +163,7 @@ In the GitHub Project's **Workflows** settings, disable any built-in automation 
 2. Sets Project Status to **Think**.
 3. Runs the Think agent to define the problem, scope, constraints, and acceptance criteria.
 4. Validates the spec and posts it as a `# Think:` issue comment.
-5. If an upstream library must change first, opens a `4-release` issue there and marks this issue `blocked:upstream`.
+5. If an upstream library must change first, opens a `5-release` issue there and marks this issue `blocked:upstream`.
 6. Otherwise, pauses if requested or passes the spec to Plan.
 
 **Stops at:** review, an upstream dependency, or handoff to Plan.
@@ -199,7 +202,7 @@ Failed Think, Plan, or Code runs mark the issue `needs:developer`. They do not r
 2. Runs the 8 deterministic controls (`control-guard`, `secret-guard`, `dependency-guard`, `scope-guard`, `task-gate`, `criteria-verify`, `test-probe`, `preview-smoke`) and waits once for GitHub PR checks (up to 20 minutes, excluding the current delivery run).
 3. Only when checks pass, runs the Prove agent for independent code review and a validation record.
 4. On failed checks or review, returns to **Code**. The Code agent receives the exact check output, review findings, commit/base, and validated Think/Plan specs. It fixes within scope, then returns to Prove and reruns checks and review, **up to 5 repair attempts by default**.
-5. If everything passes, enters **Release**, then **squash-merges the PR**, deleting its branch. Approval is attempted after the review passes.
+5. If everything passes, approves the PR and posts `# Prove:`. If `4-prove`, `pause:prove`, or a Prove pause directive is set, pauses here before merging; otherwise enters **Release**, **squash-merges the PR**, and deletes its branch.
 6. Dispatches companion editor updates. For eligible libraries with automatic release enabled, prepares the version and creates a GitHub Release.
 7. Waits for the existing publication/deployment runs for the exact delivered commit, then sets **Done**. Finishing the delivery run releases the slot for the next queued request.
 
@@ -211,9 +214,9 @@ Release completion does not launch duplicate workflows. It observes `publish-npm
 
 Each required workflow has a 30-minute completion timeout, including time queued or awaiting environment approval. A failed, cancelled, skipped, missing, or timed-out run prevents Done, leaves the issue in **Release**, and adds `needs:developer`. A **Release report** is posted on the issue and PR with run links and outcomes and included in `prove-spec`. Release failures before the wait step also post the delivery-run link. Fix/retry the failed release workflow and verify its result before manually moving the issue to Done; retrying publication alone does not automatically rerun the completion gate.
 
-**Stops at:** successful merge and required publication/deployment completion, or a failure needing attention. There is no routine human approval pause. At the fix limit, the PR stays open and the issue/PR get `needs:developer`. A failure after merge does not undo it.
+**Stops at:** a requested Prove review pause (`4-prove` / `pause:prove`), successful merge and required publication/deployment completion, or a failure needing attention. At the fix limit, the PR stays open and the issue/PR get `needs:developer`. A failure after merge does not undo it.
 
-Manual Prove dispatch also permits auto-merge without a `4-release` label. DoomR disables automatic npm release. Library npm publication runs separately.
+Manual Prove dispatch also permits auto-merge without a `5-release` label (unless `4-prove` or `pause:prove` is set on the issue). DoomR disables automatic npm release. Library npm publication runs separately.
 
 ### Release - Publish npm
 
@@ -239,10 +242,10 @@ Manual Prove dispatch also permits auto-merge without a `4-release` label. DoomR
 
 1. Reads the package/version and polls npm for `@1pizzateam/*` availability.
 2. Finds matching `blocked:upstream` issues.
-3. Posts upgrade instructions, removes the block, and adds `4-release`.
-4. The new label triggers Think independently for each unblocked issue.
+3. Posts upgrade instructions, removes the block, and adds `5-release`.
+4. The new label triggers delivery independently for each unblocked issue.
 
-**Stops at:** unblocked issues ready for Think, or no matching issues. Registry polling is best-effort: exhausted retries do not prevent unblocking.
+**Stops at:** unblocked issues ready for delivery, or no matching issues. Registry polling is best-effort: exhausted retries do not prevent unblocking.
 
 ## Cross-repository changes
 
@@ -251,7 +254,7 @@ Manual Prove dispatch also permits auto-merge without a `4-release` label. DoomR
 When a capability belongs in an upstream `@1pizzateam/*` library:
 
 1. Think writes `specs/issue-<N>/upstream-request.json`, or an audit writes `upstream-requests.json`.
-2. The workflow opens a `4-release` issue in the library and blocks the consumer with `blocked:upstream` and `upstream-escalated:1`. Other issues continue independently.
+2. The workflow opens a `5-release` issue in the library and blocks the consumer with `blocked:upstream` and `upstream-escalated:1`. Other issues continue independently.
 3. The library pipeline implements, validates, and merges the change. Public API changes include documentation in the plan's scope.
 4. Release checks verify documented exports, version/lockfile sync, changelog, docs links/build, and tarball contents. Release preparation also checks the previous/new versions and runs an npm publish dry run before creating the tag and GitHub Release.
 5. After npm publication, downstream notifications unblock consumers so they can upgrade.
@@ -263,7 +266,7 @@ The [release-readiness skill](skills/release-readiness/SKILL.md) runs in Code/Pr
 DoomR changes can require updates to Cadenza, FaceGun, MappR, PixelGun, PolyGun, or ShaderGun:
 
 1. Think or an audit writes `editor-requests.json`.
-2. After DoomR merges, Prove opens `4-release,upstream:doomr` issues in the affected editor repositories.
+2. After DoomR merges, Prove opens `5-release,upstream:doomr` issues in the affected editor repositories.
 3. Each editor runs its own pipeline with a sibling `../DoomR.js` checkout (and `../FaceR.js` for FaceGun) for imports, tests, and builds.
 
 ## Audits and repository contents

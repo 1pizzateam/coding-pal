@@ -56,7 +56,8 @@ jobs:
           HAS_THINK_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("1-think") != null')
           HAS_PLAN_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("2-plan") != null')
           HAS_CODE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("3-code") != null')
-          HAS_RELEASE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("4-release") != null')
+          HAS_PROVE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("4-prove") != null')
+          HAS_RELEASE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("5-release") != null')
           EXISTING_THINK=$(echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")')
           EXISTING_PLAN=$(echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Plan:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")')
           EXISTING_PR_JSON=$(gh pr list --state open --json number,headRefName,mergeable,labels \
@@ -64,8 +65,8 @@ jobs:
           EXISTING_PR=$(echo "$EXISTING_PR_JSON" | jq -r '.number // empty')
           EXISTING_PR_CONFLICT=$(echo "$EXISTING_PR_JSON" | jq -r '(.mergeable // "") == "CONFLICTING" or ([.labels[]?.name] | index("needs:rebase") != null)')
 
-          # Smart Resume 0: An open PR already exists and the issue was explicitly marked for release.
-          if [ -n "$EXISTING_PR" ] && [ "$HAS_RELEASE_TRIGGER" = "true" ] && [ "$EXISTING_PR_CONFLICT" != "true" ]; then
+          # Smart Resume 0: An open PR already exists and the issue was explicitly marked for prove or release.
+          if [ -n "$EXISTING_PR" ] && { [ "$HAS_PROVE_TRIGGER" = "true" ] || [ "$HAS_RELEASE_TRIGGER" = "true" ]; } && [ "$EXISTING_PR_CONFLICT" != "true" ]; then
             echo "Found open PR #${EXISTING_PR} for issue #${ISSUE_NUMBER}; dispatching Pipeline - Prove directly."
             gh pr edit "$EXISTING_PR" --remove-assignee "@me" 2>/dev/null || true
             gh workflow run prove.yml -f pr_number="$EXISTING_PR" -f issue_number="$ISSUE_NUMBER"
@@ -473,7 +474,7 @@ jobs:
             ED_SUMMARY=$(jq -r '.[]? | "- **\(.editor // .repo)** (`\(.repo)`): \(.title)"' "$EDITOR_REQ_FILE" 2>/dev/null || true)
             if [ -n "$ED_SUMMARY" ]; then
               gh issue comment "$ISSUE_NUMBER" --body "### Companion Game Editor Updates Scheduled
-          Once this issue merges into \`${GITHUB_REPOSITORY}\`, the pipeline will automatically open \`4-release\` issues in the affected game editor repositories:
+          Once this issue merges into \`${GITHUB_REPOSITORY}\`, the pipeline will automatically open \`5-release\` issues in the affected game editor repositories:
           ${ED_SUMMARY}"
             fi
           fi
@@ -520,7 +521,7 @@ jobs:
 
           GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh label create "blocked:upstream" --force --description "Waiting on an upstream @1pizzateam library release" || true
           GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh label create "upstream-escalated:1" --force --description "Escalated once to an upstream @1pizzateam library" || true
-          gh label create "4-release" --repo "$TARGET_REPO" --force --description "Run the autonomous Think -> Plan -> Code -> Prove pipeline" || true
+          gh label create "5-release" --repo "$TARGET_REPO" --force --description "Run the autonomous Think -> Plan -> Code -> Prove -> Release pipeline" || true
           gh label create "upstream-escalated:1" --repo "$TARGET_REPO" --force --description "Triggered by downstream consumer" || true
 
           UP_BODY="## Problem
@@ -540,12 +541,12 @@ jobs:
 
           LIB_ISSUE_URL=$(gh issue create --repo "$TARGET_REPO" \
             --title "$UP_TITLE" \
-            --label "4-release" \
+            --label "5-release" \
             --label "upstream-escalated:1" \
             --body "$UP_BODY")
           LIB_ISSUE_NUMBER="${LIB_ISSUE_URL##*/}"
 
-          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-label "blocked:upstream,upstream-escalated:1" --remove-label "1-think,2-plan,3-code,4-release" || true
+          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-label "blocked:upstream,upstream-escalated:1" --remove-label "1-think,2-plan,3-code,4-prove,5-release" || true
           gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused for Upstream Dependency Escalation**
 
           The Think phase determined that \`${PKG}\` (\`${TARGET_REPO}\`) should be updated first before implementing #${ISSUE_NUMBER}.
@@ -554,7 +555,7 @@ jobs:
           - **Waiting-Repo:** \`${TARGET_REPO}\`
           - **Upstream-Issue:** ${TARGET_REPO}#${LIB_ISSUE_NUMBER} (${LIB_ISSUE_URL})
 
-          Once \`${TARGET_REPO}\` merges and publishes the new release, this issue will automatically be re-labeled \`4-release\` and resume implementation."
+          Once \`${TARGET_REPO}\` merges and publishes the new release, this issue will automatically be re-labeled \`5-release\` and resume implementation."
 
           echo "escalated=true" >> "$GITHUB_OUTPUT"
 
@@ -582,13 +583,14 @@ jobs:
           fi
 
           echo "paused=true" >> "$GITHUB_OUTPUT"
-          gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-release,pause:think" --add-assignee "@me" || true
+          gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-prove,5-release,pause:think" --add-assignee "@me" || true
           gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused after Think for Manual Validation**
 
           Review (and optionally edit) the \`# Think:\` specification comment above.
           - To generate the **Plan** next and pause again for validation, add the **\`2-plan\`** label.
-          - To run **\`Plan → Code\`** and stop at the Pull Request without auto-merging, add the **\`3-code\`** label.
-          - To run **\`Plan → Code → Prove\`** and auto-merge, add the **\`4-release\`** label."
+          - To run **\`Plan → Code\`** and stop at the Pull Request without running Prove, add the **\`3-code\`** label.
+          - To run **\`Plan → Code → Prove\`** and pause after Prove validation without merging, add the **\`4-prove\`** label.
+          - To run **\`Plan → Code → Prove → Release\`** and auto-merge, add the **\`5-release\`** label."
 
       - name: Upload think.md artifact for Plan workflow
         id: handoff
@@ -625,5 +627,5 @@ jobs:
           ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
           GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
-          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
+          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-prove,5-release" || true
           gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" || true

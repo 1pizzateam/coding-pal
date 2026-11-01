@@ -80,7 +80,7 @@ jobs:
             ISSUE_VIEW=$(gh issue view "$ISSUE_NUMBER" --json labels,comments)
             echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")' > "$THINK_FILE"
             if [ ! -s "$THINK_FILE" ] && [ -z "$RUN_ID" ]; then
-              HAS_STAGE_LABEL=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | any(. == "2-plan" or . == "3-code" or . == "4-release")')
+              HAS_STAGE_LABEL=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | any(. == "2-plan" or . == "3-code" or . == "4-prove" or . == "5-release")')
               if [ "$HAS_STAGE_LABEL" = "true" ]; then
                 echo "No think.md found on issue #${ISSUE_NUMBER}; dispatching Pipeline - Think first."
                 gh workflow run think.yml -f issue_number="$ISSUE_NUMBER"
@@ -473,12 +473,13 @@ jobs:
           fi
 
           echo "paused=true" >> "$GITHUB_OUTPUT"
-          gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-release,pause:plan" --add-assignee "@me" || true
+          gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-prove,5-release,pause:plan" --add-assignee "@me" || true
           gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused after Plan for Manual Validation**
 
           Review (and optionally edit) the \`# Plan:\` specification comment above.
-          - To implement the plan (**Code**) and stop at the Pull Request without auto-merging, add the **\`3-code\`** label.
-          - To run **\`Code → Prove\`** and auto-merge, add the **\`4-release\`** label."
+          - To implement the plan (**Code**) and stop at the Pull Request without running Prove, add the **\`3-code\`** label.
+          - To run **\`Code → Prove\`** and pause after Prove validation without merging, add the **\`4-prove\`** label.
+          - To run **\`Code → Prove → Release\`** and auto-merge, add the **\`5-release\`** label."
 
       - name: Upload plan.md and think.md artifact
         id: handoff
@@ -512,6 +513,6 @@ jobs:
         run: |
           if [ -n "${ISSUE_NUMBER:-}" ]; then
             GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
-            GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
+            GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-prove,5-release" || true
             gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" || true
           fi

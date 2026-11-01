@@ -795,7 +795,7 @@ jobs:
               GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh label create needs:developer --force --description "Fix-loop limit reached" || true
               GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh pr edit "$PR_NUMBER" --add-label needs:developer
               gh pr edit "$PR_NUMBER" --add-assignee "@me" || true
-              GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
+              GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-prove,5-release" || true
               gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" || true
               if [ "$CONTROLS_OK" -eq 1 ] && [ -f "$PROVE_FILE" ]; then
                 gh pr review "$PR_NUMBER" --request-changes --body-file "$PROVE_FILE" || gh pr comment "$PR_NUMBER" --body-file "$PROVE_FILE"
@@ -825,6 +825,57 @@ jobs:
 
             record_ai_cost "Prove Repair #${NEXT}"
 
+            if [ "$(git rev-parse HEAD)" = "$BEFORE" ]; then
+              IN_SCOPE_PATHS=()
+              while IFS= read -r scope_glob; do
+                [ -n "$scope_glob" ] && IN_SCOPE_PATHS+=("$scope_glob")
+              done < <(node -e '
+                const fs = require("fs");
+                const md = fs.readFileSync(process.argv[1], "utf8");
+                const paths = new Set();
+                const boundary = md.match(/^##\s+File Scope & Boundaries\s*\n([\s\S]*?)(?:\n##\s+|$)/m);
+                if (boundary) {
+                  let collecting = false;
+                  let buf = "";
+                  for (const line of boundary[1].split(/\r?\n/)) {
+                    const m = line.match(/^- \*\*(.+?):\*\*\s*(.*)$/);
+                    if (m) {
+                      if (m[1].trim().toLowerCase() === "in scope") {
+                        collecting = true;
+                        buf += m[2] + "\n";
+                      } else if (collecting) {
+                        break;
+                      }
+                    } else if (collecting) {
+                      buf += line + "\n";
+                    }
+                  }
+                  for (const m of buf.matchAll(/`([^`\n]+)`/g)) {
+                    const p = m[1].trim();
+                    if (p && p !== "_None._") paths.add(p);
+                  }
+                }
+                const legacy = md.match(/^##\s+In Scope\s*\n([\s\S]*?)(?:\n##\s+|$)/m);
+                if (legacy) {
+                  for (const m of legacy[1].matchAll(/`([^`\n]+)`/g)) {
+                    const p = m[1].trim();
+                    if (p && p !== "_None._") paths.add(p);
+                  }
+                }
+                for (const p of paths) console.log(p);
+              ' "${SPEC_DIR}/plan.md")
+              for scope_glob in "${IN_SCOPE_PATHS[@]}"; do
+                git add -- "$scope_glob" 2>/dev/null || true
+              done
+              if git ls-files "${SPEC_DIR}" --error-unmatch >/dev/null 2>&1; then
+                git rm -rf --cached "${SPEC_DIR}" >/dev/null 2>&1 || true
+              fi
+              git rm -f --cached pr.md pr-body.md gate-output.log failed-gates.log >/dev/null 2>&1 || true
+              if ! git diff --cached --quiet; then
+                git commit -m "fix(issue-${ISSUE_NUMBER}): remediate Prove findings (#${ISSUE_NUMBER})"
+              fi
+            fi
+
             if [ "$(git rev-parse HEAD)" != "$BEFORE" ]; then
               node .agents/skills/control-guard/scripts/control-guard.mjs --git "origin/${BASE_REF}"
               git push origin "$BRANCH_NAME"
@@ -852,9 +903,38 @@ jobs:
           gh issue comment "$ISSUE_NUMBER" --body-file "$PROVE_COMMENT"
           rm -f "${SPEC_DIR}/ai-cost-pending.jsonl" "${SPEC_DIR}/ai-cost-step.md"
 
+      - name: Check for manual validation checkpoint after Prove
+        id: checkpoint
+        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --json body,labels)
+          PAUSE_PROVE=$(echo "$ISSUE_JSON" | jq -r '
+            (([.labels[].name] | any(. == "4-prove" or . == "pause:prove")))
+            or ((.body // "") | test("(\\[pause:prove\\]|- \\[[xX]\\] [Pp]ause after [Pp]rove)"))
+          ')
+
+          if [ "$PAUSE_PROVE" != "true" ]; then
+            echo "paused=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "paused=true" >> "$GITHUB_OUTPUT"
+          gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-prove,5-release,pause:prove" --add-assignee "@me" || true
+          gh pr edit "$PR_NUMBER" --add-assignee "@me" || true
+          gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused after Prove for Manual Validation**
+
+          Pull Request #${PR_NUMBER} passed all 8 Prove controls and the independent review (\`# Prove:\` comment above).
+          - **Auto-merge & release:** Add the **\`5-release\`** label to this issue to merge PR #${PR_NUMBER} and run any configured release/deployment workflows.
+          - **Manual merge:** Merge PR #${PR_NUMBER} directly on GitHub."
+
       - name: Sync issue to Release on Project board
         id: release_stage
-        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true'
+        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true' && steps.checkpoint.outputs.paused != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
@@ -865,7 +945,7 @@ jobs:
         run: TARGET_STATUS=Release bash -eo pipefail "$RUNNER_TEMP/prove-project-status.sh"
 
       - name: Verify validated revisions and merge
-        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true'
+        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true' && steps.checkpoint.outputs.paused != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -892,10 +972,10 @@ jobs:
             exit 1
           fi
           echo "RELEASE_MERGE_SHA=${MERGE_SHA}" >> "$GITHUB_ENV"
-          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-release" || true
+          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-prove,5-release" || true
 
       - name: Dispatch companion game editor updates after PR merge
-        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true'
+        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true' && steps.checkpoint.outputs.paused != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           REPO_FULL_NAME: ${{ github.repository }}
@@ -935,7 +1015,7 @@ jobs:
                 continue
               fi
 
-              gh label create "4-release" --repo "$TARGET_REPO" --force --description "Run the autonomous Think -> Plan -> Code -> Prove pipeline" || true
+              gh label create "5-release" --repo "$TARGET_REPO" --force --description "Run the autonomous Think -> Plan -> Code -> Prove -> Release pipeline" || true
               gh label create "upstream:doomr" --repo "$TARGET_REPO" --force --description "Triggered by a merged DoomR.js feature update" || true
 
               EXISTING=$(gh issue list --repo "$TARGET_REPO" --state open --limit 100 --json number,title \
@@ -953,14 +1033,14 @@ jobs:
                   --repo "$TARGET_REPO" \
                   --title "$ED_TITLE" \
                   --body "$FULL_BODY" \
-                  --label "4-release,upstream:doomr")
+                  --label "5-release,upstream:doomr")
                 echo "Created companion editor issue ${ED_URL}"
               fi
               DISPATCHED_LINKS+=("- **${TARGET_REPO}**: ${ED_URL}")
             done < <(jq -c '.[]' "$EDITOR_REQ_FILE")
 
             if [ "${#DISPATCHED_LINKS[@]}" -gt 0 ]; then
-              COMMENT_BODY=$(printf "### Companion Game Editor Updates Dispatched\n\nNow that PR #%s is merged into \`%s\`, the following companion editor issues have been opened and labeled \`4-release\` to trigger their autonomous pipelines:\n\n%s\n" \
+              COMMENT_BODY=$(printf "### Companion Game Editor Updates Dispatched\n\nNow that PR #%s is merged into \`%s\`, the following companion editor issues have been opened and labeled \`5-release\` to trigger their autonomous pipelines:\n\n%s\n" \
                 "$PR_NUMBER" "$BASE_REF" "$(printf '%s\n' "${DISPATCHED_LINKS[@]}")")
               gh issue comment "$ISSUE_NUMBER" --body "$COMMENT_BODY"
             fi
@@ -980,7 +1060,7 @@ jobs:
 
       - name: Auto-release merged @1pizzateam/* library version
         id: release
-        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true' && inputs.auto_release_npm
+        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true' && steps.checkpoint.outputs.paused != 'true' && inputs.auto_release_npm
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
@@ -1168,7 +1248,7 @@ jobs:
 
       - name: Start Release
         id: start_release
-        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true' && (steps.release.outcome == 'success' || steps.release.outcome == 'skipped')
+        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true' && steps.checkpoint.outputs.paused != 'true' && (steps.release.outcome == 'success' || steps.release.outcome == 'skipped')
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
@@ -1266,6 +1346,6 @@ jobs:
         run: |
           if [ -n "${ISSUE_NUMBER:-}" ]; then
             GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
-            GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
+            GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-prove,5-release" || true
             gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" || true
           fi

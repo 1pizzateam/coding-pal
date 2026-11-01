@@ -8,7 +8,7 @@ require 'yaml'
 
 class WorkflowsTest < Minitest::Test
   ROOT = File.expand_path('..', __dir__)
-  LABELS = %w[1-think 2-plan 3-code 4-release].freeze
+  LABELS = %w[1-think 2-plan 3-code 4-prove 5-release].freeze
   PHASES = %w[think plan code prove].freeze
 
   def setup
@@ -273,7 +273,7 @@ class WorkflowsTest < Minitest::Test
   end
 
   def test_checkpoints_pause_only_at_the_requested_phase
-    %w[think plan code].each_with_index do |phase, index|
+    PHASES.each_with_index do |phase, index|
       LABELS.each do |label|
         output = run_step(step(phase, 'checkpoint'), scenario([label]))
         paused = label == LABELS[index]
@@ -292,13 +292,13 @@ class WorkflowsTest < Minitest::Test
   end
 
   def test_pause_directives_are_preserved
-    %w[think plan code].each do |phase|
+    PHASES.each do |phase|
       ["[pause:#{phase}]", "- [x] Pause after #{phase.capitalize}"].each do |body|
-        data = scenario(['4-release'])
+        data = scenario(['5-release'])
         data['issue']['body'] = body
         assert_equal 'true', run_step(step(phase, 'checkpoint'), data).fetch('paused')
       end
-      data = scenario(['4-release'])
+      data = scenario(['5-release'])
       data['issue']['body'] = "- [ ] Pause after #{phase.capitalize}"
       assert_equal 'false', run_step(step(phase, 'checkpoint'), data).fetch('paused')
     end
@@ -311,6 +311,11 @@ class WorkflowsTest < Minitest::Test
     end
     gate = steps('think').find { |entry| entry['uses'].to_s.start_with?('actions/upload-artifact@') }.fetch('if')
     assert_includes gate, 'steps.resume.outputs.resumed_stage'
+    %w[release_stage release start_release].each do |step_id|
+      assert_includes step('prove', step_id).fetch('if'), "steps.checkpoint.outputs.paused != 'true'"
+    end
+    merge = steps('prove').find { |entry| entry['name'] == 'Verify validated revisions and merge' }
+    assert_includes merge.fetch('if'), "steps.checkpoint.outputs.paused != 'true'"
   end
 
   def test_downstream_dispatch_requires_a_successful_handoff
@@ -344,9 +349,9 @@ class WorkflowsTest < Minitest::Test
   end
 
   def test_review_pauses_do_not_restart_other_issues
-    %w[think plan code].each_with_index do |phase, index|
+    PHASES.each_with_index do |phase, index|
       output = run_step(step(phase, 'checkpoint'),
-                        scenario([LABELS[index]], queue: [queue_issue(1, ['4-release'])]))
+                        scenario([LABELS[index]], queue: [queue_issue(1, ['5-release'])]))
       assert_equal 'true', output.fetch('paused')
       assert_empty dispatches
     end
@@ -368,7 +373,7 @@ class WorkflowsTest < Minitest::Test
     fifo = step('think', 'resume')
     LABELS.each do |label|
       output = run_step(fifo, scenario([label], comments: ['# Think: scope', '# Plan: steps']))
-      expected = { '1-think' => 'none', '2-plan' => 'plan', '3-code' => 'code', '4-release' => 'code' }.fetch(label)
+      expected = { '1-think' => 'none', '2-plan' => 'plan', '3-code' => 'code', '4-prove' => 'code', '5-release' => 'code' }.fetch(label)
       assert_equal expected, output.fetch('resumed_stage')
       if expected == 'code'
         assert_equal [['workflow', 'run', 'code.yml', '-f', 'issue_number=42']], dispatches
@@ -380,7 +385,7 @@ class WorkflowsTest < Minitest::Test
       end
     end
     assert_equal 'plan', run_step(fifo, scenario(['3-code'], comments: ['# Think: scope'])).fetch('resumed_stage')
-    assert_equal 'none', run_step(fifo, scenario(['4-release'])).fetch('resumed_stage')
+    assert_equal 'none', run_step(fifo, scenario(['5-release'])).fetch('resumed_stage')
     plan_resolve = run_step(step('plan', 'resolve'), scenario(['2-plan'], comments: ['# Think: scope']), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
     assert_equal 'false', plan_resolve.fetch('skip')
     plan_missing = run_step(step('plan', 'resolve'), scenario(['2-plan'], comments: []), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
@@ -391,27 +396,27 @@ class WorkflowsTest < Minitest::Test
     code_missing_plan = run_step(step('code', 'resolve'), scenario(['3-code'], comments: ['# Think: scope']), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
     assert_equal 'true', code_missing_plan.fetch('skip')
     assert_equal [['workflow', 'run', 'plan.yml', '-f', 'issue_number=42']], dispatches
-    code_missing_think = run_step(step('code', 'resolve'), scenario(['4-release'], comments: []), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
+    code_missing_think = run_step(step('code', 'resolve'), scenario(['5-release'], comments: []), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
     assert_equal 'true', code_missing_think.fetch('skip')
     assert_equal [['workflow', 'run', 'think.yml', '-f', 'issue_number=42']], dispatches
-    prove_resolve = run_step(step('prove', 'resolve'), scenario(['4-release'], prs: [{ 'number' => 99, 'headRefName' => 'feature/issue-42-test', 'labels' => [] }], pr: { 'number' => 99, 'state' => 'OPEN', 'headRefName' => 'feature/issue-42-test', 'baseRefName' => 'main', 'body' => '- **Closes:** #42', 'title' => 'feat: test' }), { 'INPUT_ISSUE_NUMBER' => '42', 'INPUT_PR_NUMBER' => '', 'RUN_ID' => '' })
+    prove_resolve = run_step(step('prove', 'resolve'), scenario(['5-release'], prs: [{ 'number' => 99, 'headRefName' => 'feature/issue-42-test', 'labels' => [] }], pr: { 'number' => 99, 'state' => 'OPEN', 'headRefName' => 'feature/issue-42-test', 'baseRefName' => 'main', 'body' => '- **Closes:** #42', 'title' => 'feat: test' }), { 'INPUT_ISSUE_NUMBER' => '42', 'INPUT_PR_NUMBER' => '', 'RUN_ID' => '' })
     assert_equal 'false', prove_resolve.fetch('skip')
   end
 
   def test_existing_pr_is_proven_only_for_release
     prs = [{ 'number' => 99, 'headRefName' => 'feature/issue-42-test', 'labels' => [] }]
     comments = ['# Think: scope', '# Plan: steps']
-    %w[3-code 4-release].each do |label|
+    %w[3-code 4-prove 5-release].each do |label|
       output = run_step(step('think', 'resume'), scenario([label], comments: comments, prs: prs))
-      assert_equal label == '4-release' ? 'prove' : 'code', output.fetch('resumed_stage')
-      if label == '4-release'
+      assert_equal label == '3-code' ? 'code' : 'prove', output.fetch('resumed_stage')
+      if label != '3-code'
         assert_equal [['workflow', 'run', 'prove.yml', '-f', 'pr_number=99', '-f', 'issue_number=42']], dispatches
       else
         assert_equal [['workflow', 'run', 'code.yml', '-f', 'issue_number=42']], dispatches
       end
 
       code_out = run_step(step('code', 'resolve'), scenario([label], comments: comments, prs: prs), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
-      if label == '4-release'
+      if label != '3-code'
         assert_equal 'true', code_out.fetch('skip')
         assert_equal [['workflow', 'run', 'prove.yml', '-f', 'pr_number=99', '-f', 'issue_number=42']], dispatches
       else
@@ -425,11 +430,11 @@ class WorkflowsTest < Minitest::Test
       [{ 'number' => 99, 'headRefName' => 'feature/issue-42-test', 'mergeable' => 'CONFLICTING', 'labels' => [] }],
       [{ 'number' => 99, 'headRefName' => 'feature/issue-42-test', 'labels' => [{ 'name' => 'needs:rebase' }] }]
     ].each do |conflicting_prs|
-      think_out = run_step(step('think', 'resume'), scenario(['4-release'], comments: comments, prs: conflicting_prs))
+      think_out = run_step(step('think', 'resume'), scenario(['5-release'], comments: comments, prs: conflicting_prs))
       assert_equal 'code', think_out.fetch('resumed_stage')
       assert_equal [['workflow', 'run', 'code.yml', '-f', 'issue_number=42']], dispatches
 
-      code_out = run_step(step('code', 'resolve'), scenario(['4-release'], comments: comments, prs: conflicting_prs), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
+      code_out = run_step(step('code', 'resolve'), scenario(['5-release'], comments: comments, prs: conflicting_prs), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
       assert_equal 'false', code_out.fetch('skip')
       assert_empty dispatches
     end
@@ -1095,7 +1100,7 @@ class WorkflowsTest < Minitest::Test
             assert_equal ['labeled'], events.fetch('issues').fetch('types'), "#{repository} #{phase}.yml"
             assert_equal "${{ inputs.issue_number || github.event.issue.number || '' }}", job.fetch('with').fetch('issue_number')
             phase_labels = job.fetch('if').scan(/github.event.label.name == '([^']+)'/).flatten
-            assert_equal phase == 'plan' ? ['2-plan'] : %w[3-code 4-release], phase_labels, "#{repository} #{phase}.yml"
+            assert_equal phase == 'plan' ? ['2-plan'] : %w[3-code 4-prove 5-release], phase_labels, "#{repository} #{phase}.yml"
           else
             assert_equal ['workflow_dispatch'], events.keys, repository
             refute job.key?('if'), repository
@@ -1206,7 +1211,7 @@ class WorkflowsTest < Minitest::Test
     ]
     run_step(entry, scenario([], issues: issues))
     edits = @calls.select { |args| args.first(2) == %w[issue edit] }
-    assert_equal [['issue', 'edit', '12', '--remove-label', 'blocked:upstream', '--add-label', '4-release']], edits
+    assert_equal [['issue', 'edit', '12', '--remove-label', 'blocked:upstream', '--add-label', '5-release']], edits
   end
 
   def test_developer_comments_and_previous_specs_are_passed_to_agents
@@ -1318,7 +1323,7 @@ class WorkflowsTest < Minitest::Test
     ]
     status_script = status_step('prove', 'Prove').fetch('run').split("<<'STATUS_SCRIPT'\n", 2).last.split("\nSTATUS_SCRIPT", 2).first
     File.write(File.join(@directory, 'prove-project-status.sh'), status_script)
-    data = scenario(['4-release'], comments: comments, project: project)
+    data = scenario(['5-release'], comments: comments, project: project)
     run_step(step('prove', 'start_release'), data, { 'RELEASE_MERGE_SHA' => 'merge-sha' })
     report = File.read(File.join(@directory, 'reports/release.md'))
     assert_includes report, '## AI Cost Summary'
@@ -1343,7 +1348,7 @@ class WorkflowsTest < Minitest::Test
     proj_num['data']['repository']['owner']['projectsV2']['nodes'].first['fields'] = {
       'nodes' => [{}, { 'id' => 'COST_NUM', 'name' => 'AI Cost', 'dataType' => 'NUMBER' }]
     }
-    run_step(status_step('code', 'Code'), scenario(['4-release'], comments: comments, project: proj_num))
+    run_step(status_step('code', 'Code'), scenario(['5-release'], comments: comments, project: proj_num))
     cost_mutation = @calls.find { |args| args.include?('fieldId=COST_NUM') }
     refute_nil cost_mutation
     assert_includes cost_mutation, 'val=0.18'
@@ -1352,7 +1357,7 @@ class WorkflowsTest < Minitest::Test
     proj_text['data']['repository']['owner']['projectsV2']['nodes'].first['fields'] = {
       'nodes' => [{ 'id' => 'COST_TXT', 'name' => 'AI Cost', 'dataType' => 'TEXT' }]
     }
-    run_step(status_step('release', 'Done'), scenario(['4-release'], comments: comments, project: proj_text))
+    run_step(status_step('release', 'Done'), scenario(['5-release'], comments: comments, project: proj_text))
     text_mutation = @calls.find { |args| args.include?('fieldId=COST_TXT') }
     refute_nil text_mutation
     assert_includes text_mutation, 'val=$0.1800'
@@ -1496,5 +1501,67 @@ class WorkflowsTest < Minitest::Test
     assert merged_by_id.key?('external-glsl-lint'), 'Repo-local forge-catalog.json asset must be merged'
     assert_equal '0.12.0', merged_by_id.dig('roostr', 'version')
     assert_equal '1.4.2', merged_by_id.dig('bumpr', 'version')
+  end
+
+  def test_code_exit_gates_auto_commit_in_scope_edits_and_reject_empty_branches
+    prepare_stale_pr
+    specs = File.join(@repository, 'specs/issue-42')
+    FileUtils.mkdir_p(specs)
+    File.write(File.join(specs, 'think.md'), <<~MD)
+      # Think: Add crates
+
+      ## Blast Radius & Rollback
+      - **Tier:** Low
+      - **Rollback:** _None._
+    MD
+    File.write(File.join(specs, 'plan.md'), <<~MD)
+      # Plan: Add crates
+
+      ## File Scope & Boundaries
+      - **In Scope:** `src/crate.js`, `tests/crate.test.js`
+      - **Out of Scope:** `src/other.js`
+
+      ## Acceptance Criteria
+      - **AC-1:** Crate spawns health.
+
+      ## Blast Radius & Rollback
+      - **Tier:** Low
+      - **Rollback:** _None._
+    MD
+    File.write(File.join(@repository, 'pr.md'), "valid pr body\n")
+    validate_dir = File.join(@repository, '.agents/skills/pr-record/scripts')
+    FileUtils.mkdir_p(validate_dir)
+    File.write(File.join(validate_dir, 'validate-pr.mjs'), "export const TIERS = ['Low', 'Medium', 'High', 'Critical'];\nexport function readPlan() { return { tier: 'Low', criteria: ['AC-1'] }; }\nexport function readThink() { return { tier: 'Low', rollback: '_None._' }; }\n")
+
+    # 1. Reset feature branch to match origin/main with no edits -> should fail with explicit error
+    git_command('checkout', '-B', 'feature/issue-42-crates', 'refs/remotes/origin/main')
+    entry = steps('code').find { |item| item['name'] == 'Run deterministic Code exit gates' }
+    data = scenario.merge('issue' => { 'title' => 'Add crates' })
+    File.write(@environment.fetch('TEST_SCENARIO'), JSON.generate(data))
+    File.write(@environment.fetch('TEST_CALLS'), '')
+    File.write(@environment.fetch('TEST_VIOLATIONS'), '')
+    env = @environment.merge(resolve_step_environment(entry)).merge(
+      'PATH' => "#{@environment.fetch('PATH')}#{File::PATH_SEPARATOR}#{ENV.fetch('PATH')}",
+      'BASE_REF' => 'main', 'BRANCH_NAME' => 'feature/issue-42-crates'
+    )
+    output, error, status = Open3.capture3(
+      env, 'bash', '--noprofile', '--norc', '-eo', 'pipefail',
+      stdin_data: entry.fetch('run'), chdir: @repository, unsetenv_others: true
+    )
+    refute status.success?
+    assert_includes "#{output}\n#{error}", 'Code Agent produced no commits or in-scope file changes'
+
+    # 2. Agent leaves uncommitted in-scope changes -> exit gate auto-stages and commits them
+    FileUtils.mkdir_p(File.join(@repository, 'src'))
+    File.write(File.join(@repository, 'src/crate.js'), "export const crate = true;\n")
+    File.write(File.join(@repository, 'src/other.js'), "export const outOfScope = true;\n")
+    output, error, status = Open3.capture3(
+      env, 'bash', '--noprofile', '--norc', '-eo', 'pipefail',
+      stdin_data: entry.fetch('run'), chdir: @repository, unsetenv_others: true
+    )
+    assert status.success?, "#{output}\n#{error}"
+    refute_empty git_command('log', 'refs/remotes/origin/main..HEAD', '--oneline')
+    committed_files = git_command('diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD').lines.map(&:strip)
+    assert_equal ['src/crate.js'], committed_files
   end
 end

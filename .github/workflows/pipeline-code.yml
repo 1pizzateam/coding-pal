@@ -84,13 +84,14 @@ jobs:
           if [ -z "$RUN_ID" ]; then
             ISSUE_VIEW=$(gh issue view "$ISSUE_NUMBER" --json labels,comments)
             HAS_CODE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("3-code") != null')
-            HAS_RELEASE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("4-release") != null')
+            HAS_PROVE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("4-prove") != null')
+            HAS_RELEASE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("5-release") != null')
             EXISTING_PR_JSON=$(gh pr list --state open --json number,headRefName,mergeable,labels \
               --jq "[.[] | select(.headRefName | test(\"^(feature|fix|chore)/issue-${ISSUE_NUMBER}-\"))][0] // empty" 2>/dev/null || true)
             EXISTING_PR=$(echo "$EXISTING_PR_JSON" | jq -r '.number // empty')
             EXISTING_PR_CONFLICT=$(echo "$EXISTING_PR_JSON" | jq -r '(.mergeable // "") == "CONFLICTING" or ([.labels[]?.name] | index("needs:rebase") != null)')
 
-            if [ -n "$EXISTING_PR" ] && [ "$HAS_RELEASE_TRIGGER" = "true" ] && [ "$EXISTING_PR_CONFLICT" != "true" ]; then
+            if [ -n "$EXISTING_PR" ] && { [ "$HAS_PROVE_TRIGGER" = "true" ] || [ "$HAS_RELEASE_TRIGGER" = "true" ]; } && [ "$EXISTING_PR_CONFLICT" != "true" ]; then
               echo "Found open PR #${EXISTING_PR} for issue #${ISSUE_NUMBER}; dispatching Pipeline - Prove directly."
               gh pr edit "$EXISTING_PR" --remove-assignee "@me" 2>/dev/null || true
               gh workflow run prove.yml -f pr_number="$EXISTING_PR" -f issue_number="$ISSUE_NUMBER"
@@ -133,7 +134,7 @@ jobs:
             fi
           fi
 
-          if [ -z "$RUN_ID" ] && { [ "${HAS_CODE_TRIGGER:-false}" = "true" ] || [ "${HAS_RELEASE_TRIGGER:-false}" = "true" ]; }; then
+          if [ -z "$RUN_ID" ] && { [ "${HAS_CODE_TRIGGER:-false}" = "true" ] || [ "${HAS_PROVE_TRIGGER:-false}" = "true" ] || [ "${HAS_RELEASE_TRIGGER:-false}" = "true" ]; }; then
             if [ ! -s "$THINK_FILE" ]; then
               echo "No think.md found on issue #${ISSUE_NUMBER}; dispatching Pipeline - Think first."
               gh workflow run think.yml -f issue_number="$ISSUE_NUMBER"
@@ -482,6 +483,8 @@ jobs:
 
       - name: Run deterministic Code exit gates
         if: steps.resolve.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
         run: |
           SPEC_DIR="specs/issue-${ISSUE_NUMBER}"
           if git ls-files "${SPEC_DIR}" --error-unmatch >/dev/null 2>&1; then
@@ -490,6 +493,69 @@ jobs:
           if [ ! -s pr.md ] && [ -s pr-body.md ]; then
             mv pr-body.md pr.md
           fi
+          git rm -f --cached pr.md pr-body.md >/dev/null 2>&1 || true
+
+          extract_in_scope() {
+            node -e '
+              const fs = require("fs");
+              const md = fs.readFileSync(process.argv[1], "utf8");
+              const paths = new Set();
+              const boundary = md.match(/^##\s+File Scope & Boundaries\s*\n([\s\S]*?)(?:\n##\s+|$)/m);
+              if (boundary) {
+                let collecting = false;
+                let buf = "";
+                for (const line of boundary[1].split(/\r?\n/)) {
+                  const m = line.match(/^- \*\*(.+?):\*\*\s*(.*)$/);
+                  if (m) {
+                    if (m[1].trim().toLowerCase() === "in scope") {
+                      collecting = true;
+                      buf += m[2] + "\n";
+                    } else if (collecting) {
+                      break;
+                    }
+                  } else if (collecting) {
+                    buf += line + "\n";
+                  }
+                }
+                for (const m of buf.matchAll(/`([^`\n]+)`/g)) {
+                  const p = m[1].trim();
+                  if (p && p !== "_None._") paths.add(p);
+                }
+              }
+              const legacy = md.match(/^##\s+In Scope\s*\n([\s\S]*?)(?:\n##\s+|$)/m);
+              if (legacy) {
+                for (const m of legacy[1].matchAll(/`([^`\n]+)`/g)) {
+                  const p = m[1].trim();
+                  if (p && p !== "_None._") paths.add(p);
+                }
+              }
+              for (const p of paths) console.log(p);
+            ' "${SPEC_DIR}/plan.md"
+          }
+
+          IN_SCOPE_PATHS=()
+          while IFS= read -r scope_glob; do
+            [ -n "$scope_glob" ] && IN_SCOPE_PATHS+=("$scope_glob")
+          done < <(extract_in_scope)
+
+          for scope_glob in "${IN_SCOPE_PATHS[@]}"; do
+            git add -- "$scope_glob" 2>/dev/null || true
+          done
+          if git ls-files "${SPEC_DIR}" --error-unmatch >/dev/null 2>&1; then
+            git rm -rf --cached "${SPEC_DIR}" >/dev/null 2>&1 || true
+          fi
+          git rm -f --cached pr.md pr-body.md >/dev/null 2>&1 || true
+
+          if ! git diff --cached --quiet; then
+            ISSUE_TITLE=$(gh issue view "$ISSUE_NUMBER" --json title --jq '.title' 2>/dev/null || echo "implement plan")
+            git commit -m "feat(issue-${ISSUE_NUMBER}): ${ISSUE_TITLE} (#${ISSUE_NUMBER})"
+          fi
+
+          if [ -z "$(git log "refs/remotes/origin/${BASE_REF}..HEAD" --oneline)" ]; then
+            echo "::error::Code Agent produced no commits or in-scope file changes between ${BASE_REF} and ${BRANCH_NAME} for issue #${ISSUE_NUMBER}."
+            exit 1
+          fi
+
           if ! node .agents/skills/pr-record/scripts/validate-pr.mjs --body pr.md --dir "$SPEC_DIR" --stage code --allow-pending-approval >/dev/null 2>&1; then
             node --input-type=module -e '
               import { readFileSync, writeFileSync } from "node:fs";
@@ -595,13 +661,14 @@ jobs:
 
           echo "paused=true" >> "$GITHUB_OUTPUT"
           TARGET_STATUS=Code bash -eo pipefail "$RUNNER_TEMP/code-project-status.sh"
-          gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-release,pause:code" --add-assignee "@me" || true
+          gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-prove,5-release,pause:code" --add-assignee "@me" || true
           gh pr edit "$PR_NUMBER" --add-assignee "@me" || true
           gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused after Code for Manual PR Validation**
 
           Pull Request #${PR_NUMBER} (${PR_URL}) is open and ready for your review.
-          - **Manual merge:** Review and merge PR #${PR_NUMBER} directly on GitHub.
-          - **Run Prove & auto-merge:** Add the **\`4-release\`** label to this issue (or run \`Pipeline - Prove\` for PR #${PR_NUMBER}) to run the 8 Prove controls and merge automatically."
+          - **Run Prove & pause before merge:** Add the **\`4-prove\`** label to this issue to run the 8 Prove controls and independent review without merging.
+          - **Run Prove & auto-merge:** Add the **\`5-release\`** label to this issue (or run \`Pipeline - Prove\` for PR #${PR_NUMBER}) to run Prove, merge, and release automatically.
+          - **Manual merge:** Review and merge PR #${PR_NUMBER} directly on GitHub."
 
       - name: Upload code-spec artifact for Prove workflow
         id: handoff
@@ -625,9 +692,13 @@ jobs:
           GH_REPO: ${{ github.repository }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
+          PROJECT_TITLE: ${{ inputs.project_title }}
         run: |
           if [ -n "${ISSUE_NUMBER:-}" ]; then
+            if [ -f "$RUNNER_TEMP/code-project-status.sh" ]; then
+              TARGET_STATUS=Code bash -eo pipefail "$RUNNER_TEMP/code-project-status.sh" 2>/dev/null || true
+            fi
             GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
-            GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
+            GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-prove,5-release" || true
             gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" || true
           fi

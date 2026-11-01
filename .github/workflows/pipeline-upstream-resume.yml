@@ -92,5 +92,5 @@ jobs:
           2. Include \`package.json\` and \`package-lock.json\` in \`## File Scope & Boundaries\` (\`- **In Scope:**\`) of \`plan.md\`.
           3. Delegate directly to the newly released \`${PACKAGE}@${VERSION}\` API."
 
-            gh issue edit "$ISSUE_NUMBER" --remove-label "blocked:upstream" --add-label "4-release"
+            gh issue edit "$ISSUE_NUMBER" --remove-label "blocked:upstream" --add-label "5-release"
           done
