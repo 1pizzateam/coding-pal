@@ -221,7 +221,6 @@ jobs:
           rm -rf .github/instructions .github/agents .github/prompts .github/skills .github/copilot-instructions.md .agents .claude .cursor .gemini CLAUDE.md GEMINI.md AGENTS.md .cursorrules .windsurfrules
           mkdir -p .github/instructions .github/agents .agents/skills
           cp /tmp/1pizza-coding-pal/instructions/*.md .github/instructions/
-          cp /tmp/alten-coding-pal/instructions/sharp-agent.instructions.md .github/instructions/
           cp /tmp/alten-coding-pal/instructions/think.instructions.md .github/instructions/
           cp /tmp/alten-coding-pal/instructions/forge.instructions.md .github/instructions/
           cp /tmp/alten-coding-pal/instructions/decision-record.instructions.md .github/instructions/
@@ -352,10 +351,12 @@ jobs:
           ${FEEDBACK_CONTEXT}
 
           Follow .github/instructions/think.instructions.md and .agents/skills/think/SKILL.md (and its references/think-contract.md).
-          Keep the exact required headings and bullet labels, but be terse and straight to the point (target under 350 words total):
-          - Limit every bullet value to 1 short, direct sentence (max ~25 words); no multi-sentence paragraphs or filler.
-          - List only 2 options in ## Options Considered unless a 3rd is genuinely needed.
-          - Query the installed Forge catalog (.agents/skills/forge/catalog.json, or run 'node .agents/skills/forge/scripts/discover.mjs --need <capability>'): when the chosen approach reuses, composes, or extends any cataloged Forge asset, set Source to 'Forge reuse' or 'Hybrid' and bind each relevant asset in ## Forge Asset Bindings as '- **forge/<id>@<version>:** <how it is composed>' using the asset id and version from .agents/skills/forge/catalog.json; only when no cataloged Forge asset applies to this change, set Source to 'Custom build' with a 1-phrase Custom Build Reason in ## Chosen Approach and '- **None:** <concise reason why no cataloged Forge asset applies>' in ## Forge Asset Bindings.
+          Keep the exact required headings and '- **<Label>:**' bullet keys enforced by validate-think.mjs, while producing a rich, insightful, IDE-grade architectural and product design specification:
+          - **Deep Codebase Investigation First:** Before writing ${THINK_FILE}, thoroughly read the relevant source files, data structures, rendering/audio/physics/UI pipelines, and tests so every section is grounded in real symbols, modules, and mechanics.
+          - **Product & Design Ambition (No Lazy No-Op Workarounds):** When an issue is brief or high-level (e.g., a 1-sentence feature idea), expand it with genuine product, UX, or gameplay creativity that fulfills the user's real intent. Never select a trivial or no-op workaround (such as claiming existing unrelated items already satisfy the request) just to minimize code changes; choose the option that delivers a cohesive, complete, and compelling feature.
+          - **Substantive Options & Trade-Off Analysis:** Explore 3 to 4 genuinely distinct architectural/design options in ## Options Considered (for example: lightweight extension of an existing entity, a dedicated interactive/destructible subsystem, or a Forge-composed/hybrid design). Give each option's Approach, Trade-offs, Cost, and Risk thorough multi-sentence analysis (and 2-space indented sub-bullets where helpful).
+          - **Rich Technical Depth in Flow & Reasoning:** In ## Chosen Approach (Reasoning) and ## System Flow & Responsibilities (Request Tracing, Component Responsibilities, Boundaries), write detailed multi-sentence explanations, 2-space indented sub-bullets ('  - ...'), and optional 'mermaid' flow/state diagrams covering concrete data models, state transitions, interaction mechanics, visual/audio feedback, and exact module boundaries. Keep top-level '- **<Label>:**' keys strictly matching the contract; indent any sub-bullets by at least 2 spaces so validate-think.mjs parses them as continuation lines of that field, and do not include source code blocks or task checkboxes.
+          - **Forge Discovery:** Query the installed Forge catalog (.agents/skills/forge/catalog.json, or run 'node .agents/skills/forge/scripts/discover.mjs --need <capability>'): when the chosen approach reuses, composes, or extends any cataloged Forge asset, set Source to 'Forge reuse' or 'Hybrid' and bind each relevant asset in ## Forge Asset Bindings as '- **forge/<id>@<version>:** <how it is composed>' using the asset id and version from .agents/skills/forge/catalog.json; only when no cataloged Forge asset applies to this change, set Source to 'Custom build' with a clear Custom Build Reason in ## Chosen Approach and '- **None:** <reason why no cataloged Forge asset applies>' in ## Forge Asset Bindings.
           - Write '_None._' in ## Ambiguities & Open Questions unless a genuine blocker exists.
           ${ESCALATION_HINT}
           ${EDITOR_HINT}

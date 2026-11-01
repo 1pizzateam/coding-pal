@@ -1239,6 +1239,8 @@ class WorkflowsTest < Minitest::Test
     think_prompt = JSON.parse(File.read(copilot_args_file)).last
     assert_includes think_prompt, '# Think: initial think spec'
     assert_includes think_prompt, 'Please play the secret SFX when the door starts opening instead of on room entry.'
+    assert_includes think_prompt, 'Product & Design Ambition'
+    refute_includes think_prompt, 'target under 350 words'
     refute_includes think_prompt, 'Paused after Think for Manual Validation'
     refute_includes think_prompt, 'Pull request opened for #42'
 
@@ -1247,6 +1249,8 @@ class WorkflowsTest < Minitest::Test
     plan_prompt = JSON.parse(File.read(copilot_args_file)).last
     assert_includes plan_prompt, '# Plan: initial plan spec'
     assert_includes plan_prompt, 'Please play the secret SFX when the door starts opening instead of on room entry.'
+    assert_includes plan_prompt, 'Rich, Concrete Step Specifications'
+    refute_includes plan_prompt, '1 concise sentence per bullet'
     refute_includes plan_prompt, 'Paused after Think for Manual Validation'
 
     code_step = steps('code').find { |item| item['name'] == 'Run Code Agent to implement plan.md and prepare pr.md' }
