@@ -323,7 +323,6 @@ jobs:
           mkdir -p .github/instructions .github/agents .agents/skills
           cp /tmp/1pizza-coding-pal/instructions/*.md .github/instructions/
           cp -R /tmp/1pizza-coding-pal/skills/* .agents/skills/
-          cp /tmp/alten-coding-pal/instructions/sharp-agent.instructions.md .github/instructions/
           cp /tmp/alten-coding-pal/instructions/prove.instructions.md .github/instructions/
           cp /tmp/alten-coding-pal/instructions/prove-controls.instructions.md .github/instructions/
           [ -d tests ] && [ -f /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md ] && cp /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md .github/instructions/

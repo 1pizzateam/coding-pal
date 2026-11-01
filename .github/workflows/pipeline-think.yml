@@ -312,6 +312,39 @@ jobs:
           EDITOR_REQ_FILE="${SPEC_DIR}/editor-requests.json"
           mkdir -p "$SPEC_DIR"
 
+          IMAGE_URLS=$(echo "$ISSUE_JSON" | jq -r '
+            [ (.body // ""), (.comments[]?.body // "") ]
+            | join("\n")
+            | [ scan("https://(?:github\\.com/user-attachments/assets/[A-Za-z0-9_-]+|user-images\\.githubusercontent\\.com/[^\"\\)\\s>]+|private-user-images\\.githubusercontent\\.com/[^\"\\)\\s>]+|[^\"\\)\\s>]+\\.(?:png|jpg|jpeg|gif|webp))") ]
+            | map(if type == "array" then .[0] else . end)
+            | unique[]
+          ' 2>/dev/null || true)
+          IMAGE_CONTEXT=""
+          if [ -n "$IMAGE_URLS" ]; then
+            IMAGE_DIR="${RUNNER_TEMP}/issue-${ISSUE_NUMBER}-images"
+            mkdir -p "$IMAGE_DIR"
+            IMG_IDX=0
+            DOWNLOADED_IMAGES=""
+            while IFS= read -r img_url; do
+              [ -z "$img_url" ] && continue
+              IMG_IDX=$((IMG_IDX + 1))
+              IMG_FILE="${IMAGE_DIR}/attachment-${IMG_IDX}.png"
+              if command -v curl >/dev/null 2>&1; then
+                curl -L --fail --silent -H "Authorization: Bearer ${GH_TOKEN}" "$img_url" -o "$IMG_FILE" 2>/dev/null || curl -L --fail --silent "$img_url" -o "$IMG_FILE" 2>/dev/null || true
+              fi
+              if [ -s "$IMG_FILE" ]; then
+                DOWNLOADED_IMAGES="${DOWNLOADED_IMAGES}
+          - ${IMG_FILE} (downloaded from ${img_url})"
+              else
+                DOWNLOADED_IMAGES="${DOWNLOADED_IMAGES}
+          - ${img_url} (download with curl -L and inspect)"
+              fi
+            done <<< "$IMAGE_URLS"
+            IMAGE_CONTEXT="
+          Attached Visual Evidence / Screenshots on Issue #${ISSUE_NUMBER} (MUST be viewed and inspected with your file-reading tool before diagnosing or designing, so your specification matches the exact visual scene, room/location, and artifact shown in the screenshot):${DOWNLOADED_IMAGES}
+          "
+          fi
+
           FEEDBACK_CONTEXT=""
           if [ -n "$PREVIOUS_THINK" ]; then
             FEEDBACK_CONTEXT="${FEEDBACK_CONTEXT}
@@ -348,6 +381,7 @@ jobs:
           Issue Title: ${ISSUE_TITLE}
           Issue Body:
           ${ISSUE_BODY}
+          ${IMAGE_CONTEXT}
           ${FEEDBACK_CONTEXT}
 
           Follow .github/instructions/think.instructions.md and .agents/skills/think/SKILL.md (and its references/think-contract.md).

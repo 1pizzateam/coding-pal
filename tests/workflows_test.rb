@@ -1233,6 +1233,7 @@ class WorkflowsTest < Minitest::Test
     ]
     data = scenario(['1-think'], comments: comments, prs: [{ 'number' => 99, 'headRefName' => 'feature/issue-42-test', 'labels' => [] }])
     data['issue']['title'] = 'Secret door SFX timing'
+    data['issue']['body'] = 'See screenshot: <img src="https://github.com/user-attachments/assets/e5b56372-2c9f-4641-9647-58700774e69a" />'
 
     think_step = steps('think').find { |item| item['name'] == 'Fetch issue context and run Thinker agent' }
     run_step(think_step, data)
@@ -1240,6 +1241,8 @@ class WorkflowsTest < Minitest::Test
     assert_includes think_prompt, '# Think: initial think spec'
     assert_includes think_prompt, 'Please play the secret SFX when the door starts opening instead of on room entry.'
     assert_includes think_prompt, 'Product & Design Ambition'
+    assert_includes think_prompt, 'Attached Visual Evidence / Screenshots on Issue #42'
+    assert_includes think_prompt, 'https://github.com/user-attachments/assets/e5b56372-2c9f-4641-9647-58700774e69a'
     refute_includes think_prompt, 'target under 350 words'
     refute_includes think_prompt, 'Paused after Think for Manual Validation'
     refute_includes think_prompt, 'Pull request opened for #42'
@@ -1250,6 +1253,8 @@ class WorkflowsTest < Minitest::Test
     assert_includes plan_prompt, '# Plan: initial plan spec'
     assert_includes plan_prompt, 'Please play the secret SFX when the door starts opening instead of on room entry.'
     assert_includes plan_prompt, 'Rich, Concrete Step Specifications'
+    assert_includes plan_prompt, 'Attached Visual Evidence / Screenshots on Issue #42'
+    assert_includes plan_prompt, 'https://github.com/user-attachments/assets/e5b56372-2c9f-4641-9647-58700774e69a'
     refute_includes plan_prompt, '1 concise sentence per bullet'
     refute_includes plan_prompt, 'Paused after Think for Manual Validation'
 
@@ -1257,6 +1262,8 @@ class WorkflowsTest < Minitest::Test
     run_step(code_step, data, { 'BRANCH_NAME' => 'feature/issue-42-test', 'BASE_REF' => 'main' })
     code_prompt = JSON.parse(File.read(copilot_args_file)).last
     assert_includes code_prompt, 'Please play the secret SFX when the door starts opening instead of on room entry.'
+    assert_includes code_prompt, 'Attached Visual Evidence / Screenshots on Issue #42'
+    assert_includes code_prompt, 'do NOT stop with zero commits'
     refute_includes code_prompt, 'Paused after Think for Manual Validation'
   end
 

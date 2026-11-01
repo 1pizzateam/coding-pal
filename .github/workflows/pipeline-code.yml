@@ -296,7 +296,6 @@ jobs:
           mkdir -p .github/instructions .github/agents .agents/skills
           cp /tmp/1pizza-coding-pal/instructions/*.md .github/instructions/
           cp -R /tmp/1pizza-coding-pal/skills/* .agents/skills/
-          cp /tmp/alten-coding-pal/instructions/sharp-agent.instructions.md .github/instructions/
           [ -d tests ] && [ -f /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md ] && cp /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md .github/instructions/
           [ -d website ] && [ -f /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md ] && cp /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md .github/instructions/
           [ -d website ] && [ -d /tmp/alten-coding-pal/skills/vitepress-docs-examples ] && cp -R /tmp/alten-coding-pal/skills/vitepress-docs-examples .agents/skills/vitepress-docs-examples
@@ -384,6 +383,7 @@ jobs:
         run: |
           ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --json title,body,comments)
           ISSUE_TITLE=$(echo "$ISSUE_JSON" | jq -r '.title')
+          ISSUE_BODY=$(echo "$ISSUE_JSON" | jq -r '.body // ""')
           DEV_COMMENTS=$(echo "$ISSUE_JSON" | jq -r '
             [.comments[]
               | select((.body // "") | test("^(# (Think|Plan|Prove|Release|Release report)|⏸️ \\*\\*(Paused after|Blocked on)|Pull request opened for #|### Companion Game Editor Updates Dispatched|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
@@ -411,6 +411,40 @@ jobs:
           SPEC_DIR="specs/issue-${ISSUE_NUMBER}"
           THINK_FILE="${SPEC_DIR}/think.md"
           PLAN_FILE="${SPEC_DIR}/plan.md"
+
+          IMAGE_URLS=$(echo "$ISSUE_JSON" | jq -r '
+            [ (.body // ""), (.comments[]?.body // "") ]
+            | join("\n")
+            | [ scan("https://(?:github\\.com/user-attachments/assets/[A-Za-z0-9_-]+|user-images\\.githubusercontent\\.com/[^\"\\)\\s>]+|private-user-images\\.githubusercontent\\.com/[^\"\\)\\s>]+|[^\"\\)\\s>]+\\.(?:png|jpg|jpeg|gif|webp))") ]
+            | map(if type == "array" then .[0] else . end)
+            | unique[]
+          ' 2>/dev/null || true)
+          IMAGE_CONTEXT=""
+          if [ -n "$IMAGE_URLS" ]; then
+            IMAGE_DIR="${RUNNER_TEMP}/issue-${ISSUE_NUMBER}-images"
+            mkdir -p "$IMAGE_DIR"
+            IMG_IDX=0
+            DOWNLOADED_IMAGES=""
+            while IFS= read -r img_url; do
+              [ -z "$img_url" ] && continue
+              IMG_IDX=$((IMG_IDX + 1))
+              IMG_FILE="${IMAGE_DIR}/attachment-${IMG_IDX}.png"
+              if command -v curl >/dev/null 2>&1; then
+                curl -L --fail --silent -H "Authorization: Bearer ${GH_TOKEN}" "$img_url" -o "$IMG_FILE" 2>/dev/null || curl -L --fail --silent "$img_url" -o "$IMG_FILE" 2>/dev/null || true
+              fi
+              if [ -s "$IMG_FILE" ]; then
+                DOWNLOADED_IMAGES="${DOWNLOADED_IMAGES}
+          - ${IMG_FILE} (downloaded from ${img_url})"
+              else
+                DOWNLOADED_IMAGES="${DOWNLOADED_IMAGES}
+          - ${img_url} (download with curl -L and inspect)"
+              fi
+            done <<< "$IMAGE_URLS"
+            IMAGE_CONTEXT="
+          Attached Visual Evidence / Screenshots on Issue #${ISSUE_NUMBER} (inspect with your file-reading tool when verifying visual behavior):${DOWNLOADED_IMAGES}
+          "
+          fi
+
           FEEDBACK_CONTEXT=""
           if [ -n "$DEV_COMMENTS" ]; then
             FEEDBACK_CONTEXT="
@@ -425,11 +459,14 @@ jobs:
 
           copilot --model="auto" --agent="code" --allow-all-tools \
             --prompt "Implement the validated Plan record at ${PLAN_FILE} (with ${THINK_FILE}) for GitHub Issue #${ISSUE_NUMBER} (${ISSUE_TITLE}) on the current branch ${BRANCH_NAME} (base: ${BASE_REF}).
+          Issue Body:
+          ${ISSUE_BODY}
+          ${IMAGE_CONTEXT}
           ${FEEDBACK_CONTEXT}
 
           Follow .agents/skills/pr-record/SKILL.md.
-          1. Think and Plan may predate intervening merges. Check their assumptions against the current base before implementing; if they are no longer valid, stop with an explicit blocking explanation rather than changing specs or broadening scope.
-          2. Implement all steps in ${PLAN_FILE} in order across the in-scope files (writing only files listed in ${PLAN_FILE}'s Files and within In Scope; if an in-scope test file has an existing assertion superseded by a behavior change, update that assertion; ensure every acceptance criterion test includes its AC-<n> token in the test name so it passes criteria-verify in Prove).
+          1. Always deliver a working implementation and commit within ${PLAN_FILE}'s In Scope files: if your codebase investigation or visual reproduction refines the diagnosis in ${THINK_FILE} or ${PLAN_FILE} (for example, the root cause of the reported bug or visual artifact resides in a different shader, function, or branch within the In Scope files than the one hypothesized in Think/Plan), do NOT stop with zero commits. Instead, adapt and implement the actual root-cause fix inside the allowed In Scope files while satisfying all Acceptance Criteria (AC-1..AC-N) and Test Plan requirements in ${PLAN_FILE}.
+          2. Implement all steps in ${PLAN_FILE} across the in-scope files (writing only files listed in ${PLAN_FILE}'s In Scope; if an in-scope test file has an existing assertion superseded by a behavior change, update that assertion; ensure every acceptance criterion test includes its AC-<n> token in the test name so it passes criteria-verify in Prove).
           3. Once all steps are implemented, run the full verification and build checks once ('npm test' and 'npm run build'; if this is a published @1pizzateam/* library, also follow .agents/skills/release-readiness/SKILL.md and run 'node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs --mode pr' so library documentation and package exports are already in sync), fix any failures, and stage and commit all modified in-scope files in a single clean commit referencing #${ISSUE_NUMBER} (do not stage or commit files under ${SPEC_DIR}).
           4. Author the pull request body at pr.md following .agents/skills/pr-record/references/pr-record-contract.md (with ## Links including - **Closes:** #${ISSUE_NUMBER}, ## Acceptance Criteria Traceability, ## Dependencies, ## Blast Radius, and ## Human Validation with Client Intent, Behavioral Experience, and Safety & Blast Radius set to Pending)."
 
