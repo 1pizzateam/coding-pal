@@ -71,15 +71,6 @@ jobs:
             exit 0
           fi
 
-          if [ -n "$EXISTING_PR" ] && [ "$HAS_CODE_TRIGGER" = "true" ]; then
-            echo "Issue #${ISSUE_NUMBER} already has open PR #${EXISTING_PR}; leaving it at the manual review checkpoint."
-            GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --remove-label "3-code" || true
-            gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" || true
-            gh pr edit "$EXISTING_PR" --add-assignee "@me" || true
-            echo "resumed_stage=code" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
           # Smart Resume 1: Reuse both specs for Code unless Think or Plan was explicitly requested.
           if [ -n "$EXISTING_THINK" ] && [ -n "$EXISTING_PLAN" ] && [ "$HAS_THINK_TRIGGER" != "true" ] && [ "$HAS_PLAN_TRIGGER" != "true" ]; then
             echo "Found validated # Think: and # Plan: comments on issue #${ISSUE_NUMBER}; dispatching Pipeline - Code directly."
@@ -218,15 +209,37 @@ jobs:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
-          ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --json title,body,labels)
+          ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --json title,body,labels,comments)
           ISSUE_TITLE=$(echo "$ISSUE_JSON" | jq -r '.title')
           ISSUE_BODY=$(echo "$ISSUE_JSON" | jq -r '.body // ""')
           ALREADY_ESCALATED=$(echo "$ISSUE_JSON" | jq -r '[.labels[].name] | index("upstream-escalated:1") != null')
+          PREVIOUS_THINK=$(echo "$ISSUE_JSON" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty')
+          DEV_COMMENTS=$(echo "$ISSUE_JSON" | jq -r '
+            [.comments[]
+              | select((.body // "") | test("^(# (Think|Plan|Prove|Release report)|⏸️ \\*\\*(Paused after|Blocked on)|Pull request opened for #|### Companion Game Editor Updates Dispatched|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
+              | select((.body // "") | gsub("\\s+"; "") | length > 0)
+              | "### Comment by @" + (.author.login // "developer") + " (" + (.createdAt // "") + "):\n" + .body
+            ] | join("\n\n")
+          ')
           SPEC_DIR="specs/issue-${ISSUE_NUMBER}"
           THINK_FILE="${SPEC_DIR}/think.md"
           UPSTREAM_FILE="${SPEC_DIR}/upstream-request.json"
           EDITOR_REQ_FILE="${SPEC_DIR}/editor-requests.json"
           mkdir -p "$SPEC_DIR"
+
+          FEEDBACK_CONTEXT=""
+          if [ -n "$PREVIOUS_THINK" ]; then
+            FEEDBACK_CONTEXT="${FEEDBACK_CONTEXT}
+          Previous Think Specification (revise and improve this specification according to any new Developer Feedback / Follow-up Comments below):
+          ${PREVIOUS_THINK}
+          "
+          fi
+          if [ -n "$DEV_COMMENTS" ]; then
+            FEEDBACK_CONTEXT="${FEEDBACK_CONTEXT}
+          Developer Feedback / Follow-up Comments on Issue #${ISSUE_NUMBER} (MUST be taken into account and incorporated into the specification):
+          ${DEV_COMMENTS}
+          "
+          fi
 
           ESCALATION_HINT=""
           if [ "$ALREADY_ESCALATED" != "true" ]; then
@@ -248,6 +261,7 @@ jobs:
           Issue Title: ${ISSUE_TITLE}
           Issue Body:
           ${ISSUE_BODY}
+          ${FEEDBACK_CONTEXT}
 
           Follow .github/instructions/think.instructions.md and .agents/skills/think/SKILL.md (and its references/think-contract.md).
           Keep the exact required headings and bullet labels, but be terse and straight to the point (target under 350 words total):
@@ -394,8 +408,7 @@ jobs:
           fi
 
           echo "paused=true" >> "$GITHUB_OUTPUT"
-          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-release,pause:think" || true
-          gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" || true
+          gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-release,pause:think" --add-assignee "@me" || true
           gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused after Think for Manual Validation**
 
           Review (and optionally edit) the \`# Think:\` specification comment above.

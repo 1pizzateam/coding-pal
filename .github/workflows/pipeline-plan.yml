@@ -213,11 +213,34 @@ jobs:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
         run: |
-          ISSUE_TITLE=$(gh issue view "$ISSUE_NUMBER" --json title --jq '.title')
-          ISSUE_BODY=$(gh issue view "$ISSUE_NUMBER" --json body --jq '.body')
+          ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --json title,body,comments)
+          ISSUE_TITLE=$(echo "$ISSUE_JSON" | jq -r '.title')
+          ISSUE_BODY=$(echo "$ISSUE_JSON" | jq -r '.body // ""')
+          PREVIOUS_PLAN=$(echo "$ISSUE_JSON" | jq -r '[.comments[].body | select(test("^# Plan:"; "m"))] | last // empty')
+          DEV_COMMENTS=$(echo "$ISSUE_JSON" | jq -r '
+            [.comments[]
+              | select((.body // "") | test("^(# (Think|Plan|Prove|Release report)|⏸️ \\*\\*(Paused after|Blocked on)|Pull request opened for #|### Companion Game Editor Updates Dispatched|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
+              | select((.body // "") | gsub("\\s+"; "") | length > 0)
+              | "### Comment by @" + (.author.login // "developer") + " (" + (.createdAt // "") + "):\n" + .body
+            ] | join("\n\n")
+          ')
           SPEC_DIR="specs/issue-${ISSUE_NUMBER}"
           THINK_FILE="${SPEC_DIR}/think.md"
           PLAN_FILE="${SPEC_DIR}/plan.md"
+
+          FEEDBACK_CONTEXT=""
+          if [ -n "$PREVIOUS_PLAN" ]; then
+            FEEDBACK_CONTEXT="${FEEDBACK_CONTEXT}
+          Previous Plan Specification (revise and improve this plan according to ${THINK_FILE} and any new Developer Feedback / Follow-up Comments below):
+          ${PREVIOUS_PLAN}
+          "
+          fi
+          if [ -n "$DEV_COMMENTS" ]; then
+            FEEDBACK_CONTEXT="${FEEDBACK_CONTEXT}
+          Developer Feedback / Follow-up Comments on Issue #${ISSUE_NUMBER} (MUST be taken into account and incorporated into the plan, within the boundaries of ${THINK_FILE}):
+          ${DEV_COMMENTS}
+          "
+          fi
 
           LIBRARY_DOCS_HINT=""
           if [ -f package.json ] && [ "$(node -p "const p=require('./package.json'); Boolean(p.name && p.name.startsWith('@1pizzateam/') && !p.private)")" = "true" ]; then
@@ -229,6 +252,7 @@ jobs:
           Issue Title: ${ISSUE_TITLE}
           Issue Body:
           ${ISSUE_BODY}
+          ${FEEDBACK_CONTEXT}
 
           Follow .github/instructions/plan.instructions.md and .agents/skills/plan/SKILL.md (and its references/plan-contract.md).
           Read ${THINK_FILE} first and ground all file scopes, acceptance criteria, atomic implementation steps (with New Code, Verification, Bootable Check, and Serves), test plan rows, and blast radius checks in ${THINK_FILE} and the existing repository conventions.
@@ -277,8 +301,7 @@ jobs:
           fi
 
           echo "paused=true" >> "$GITHUB_OUTPUT"
-          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-release,pause:plan" || true
-          gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" || true
+          gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-release,pause:plan" --add-assignee "@me" || true
           gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused after Plan for Manual Validation**
 
           Review (and optionally edit) the \`# Plan:\` specification comment above.

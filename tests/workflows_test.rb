@@ -400,25 +400,24 @@ class WorkflowsTest < Minitest::Test
 
   def test_existing_pr_is_proven_only_for_release
     prs = [{ 'number' => 99, 'headRefName' => 'feature/issue-42-test', 'labels' => [] }]
+    comments = ['# Think: scope', '# Plan: steps']
     %w[3-code 4-release].each do |label|
-      output = run_step(step('think', 'resume'), scenario([label], prs: prs))
+      output = run_step(step('think', 'resume'), scenario([label], comments: comments, prs: prs))
       assert_equal label == '4-release' ? 'prove' : 'code', output.fetch('resumed_stage')
       if label == '4-release'
         assert_equal [['workflow', 'run', 'prove.yml', '-f', 'pr_number=99', '-f', 'issue_number=42']], dispatches
       else
-        assert_empty dispatches
-        assert @calls.any? { |args| args.first(3) == ['issue', 'edit', '42'] && args.include?('--add-assignee') && args.include?('@me') }
-        assert @calls.any? { |args| args.first(3) == ['pr', 'edit', '99'] && args.include?('--add-assignee') && args.include?('@me') }
+        assert_equal [['workflow', 'run', 'code.yml', '-f', 'issue_number=42']], dispatches
       end
 
-      code_out = run_step(step('code', 'resolve'), scenario([label], prs: prs), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
-      assert_equal 'true', code_out.fetch('skip')
+      code_out = run_step(step('code', 'resolve'), scenario([label], comments: comments, prs: prs), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
       if label == '4-release'
+        assert_equal 'true', code_out.fetch('skip')
         assert_equal [['workflow', 'run', 'prove.yml', '-f', 'pr_number=99', '-f', 'issue_number=42']], dispatches
       else
+        assert_equal 'false', code_out.fetch('skip')
         assert_empty dispatches
-        assert @calls.any? { |args| args.first(3) == ['issue', 'edit', '42'] && args.include?('--add-assignee') && args.include?('@me') }
-        assert @calls.any? { |args| args.first(3) == ['pr', 'edit', '99'] && args.include?('--add-assignee') && args.include?('@me') }
+        assert @calls.any? { |args| args.first(3) == ['pr', 'edit', '99'] && args.include?('--remove-assignee') && args.include?('@me') }
       end
     end
   end
@@ -1192,5 +1191,47 @@ class WorkflowsTest < Minitest::Test
     run_step(entry, scenario([], issues: issues))
     edits = @calls.select { |args| args.first(2) == %w[issue edit] }
     assert_equal [['issue', 'edit', '12', '--remove-label', 'blocked:upstream', '--add-label', '4-release']], edits
+  end
+
+  def test_developer_comments_and_previous_specs_are_passed_to_agents
+    copilot_args_file = File.join(@directory, 'copilot_args.json')
+    copilot_bin = File.join(@directory, 'bin/copilot')
+    File.write(copilot_bin, "#!#{RbConfig.ruby}\nrequire 'json'\nFile.write(#{copilot_args_file.inspect}, JSON.generate(ARGV))\n")
+    File.chmod(0o755, copilot_bin)
+    printf_exec = ENV.fetch('PATH').split(File::PATH_SEPARATOR)
+                     .map { |dir| File.join(dir, 'printf') }
+                     .find { |candidate| File.executable?(candidate) && !File.directory?(candidate) }
+    File.symlink(printf_exec, File.join(@directory, 'bin/printf')) if printf_exec && !File.exist?(File.join(@directory, 'bin/printf'))
+
+    comments = [
+      '# Think: initial think spec',
+      '⏸️ **Paused after Think for Manual Validation**',
+      '# Plan: initial plan spec',
+      'Pull request opened for #42: https://example.test/pr/99',
+      'Please play the secret SFX when the door starts opening instead of on room entry.'
+    ]
+    data = scenario(['1-think'], comments: comments, prs: [{ 'number' => 99, 'headRefName' => 'feature/issue-42-test', 'labels' => [] }])
+    data['issue']['title'] = 'Secret door SFX timing'
+
+    think_step = steps('think').find { |item| item['name'] == 'Fetch issue context and run Thinker agent' }
+    run_step(think_step, data)
+    think_prompt = JSON.parse(File.read(copilot_args_file)).last
+    assert_includes think_prompt, '# Think: initial think spec'
+    assert_includes think_prompt, 'Please play the secret SFX when the door starts opening instead of on room entry.'
+    refute_includes think_prompt, 'Paused after Think for Manual Validation'
+    refute_includes think_prompt, 'Pull request opened for #42'
+
+    plan_step = steps('plan').find { |item| item['name'] == 'Fetch issue context and run Planner agent' }
+    run_step(plan_step, data)
+    plan_prompt = JSON.parse(File.read(copilot_args_file)).last
+    assert_includes plan_prompt, '# Plan: initial plan spec'
+    assert_includes plan_prompt, 'Please play the secret SFX when the door starts opening instead of on room entry.'
+    refute_includes plan_prompt, 'Paused after Think for Manual Validation'
+
+    code_step = steps('code').find { |item| item['name'] == 'Run Code Agent to implement plan.md and prepare pr-body.md' }
+    run_step(code_step, data, { 'BRANCH_NAME' => 'feature/issue-42-test', 'BASE_REF' => 'main' })
+    code_prompt = JSON.parse(File.read(copilot_args_file)).last
+    assert_includes code_prompt, 'Please play the secret SFX when the door starts opening instead of on room entry.'
+    refute_includes code_prompt, 'Paused after Think for Manual Validation'
   end
 end
