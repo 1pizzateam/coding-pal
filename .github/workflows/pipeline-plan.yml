@@ -262,8 +262,7 @@ jobs:
           fi
 
           echo "paused=true" >> "$GITHUB_OUTPUT"
-          gh label create "review:plan" --color "FBCA04" --force --description "Paused after Plan; waiting for manual validation of plan.md" || true
-          gh issue edit "$ISSUE_NUMBER" --add-label "review:plan" --remove-label "1-think,2-plan,3-code,4-release,pause:plan" || true
+          gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-release,pause:plan" || true
           gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused after Plan for Manual Validation**
 
           Review (and optionally edit) the \`# Plan:\` specification comment above.

@@ -281,7 +281,7 @@ class WorkflowsTest < Minitest::Test
         assert_equal paused ? 1 : 0, edits.length
         if paused
           edit = edits.first
-          assert_equal "review:#{phase}", edit[edit.index('--add-label') + 1]
+          refute edit.include?('--add-label')
           assert_equal LABELS + ["pause:#{phase}"], edit[edit.index('--remove-label') + 1].split(',')
         end
         assert_empty dispatches
@@ -390,7 +390,7 @@ class WorkflowsTest < Minitest::Test
         assert_equal [['workflow', 'run', 'prove.yml', '-f', 'pr_number=99', '-f', 'issue_number=42']], dispatches
       else
         assert_empty dispatches
-        assert @calls.any? { |args| args.first(3) == ['pr', 'edit', '99'] && args.include?('review:code') }
+        assert @calls.any? { |args| args.first(3) == ['issue', 'edit', '42'] && args.include?('--remove-label') && args.include?('3-code') }
       end
     end
   end
@@ -441,7 +441,7 @@ class WorkflowsTest < Minitest::Test
     assert @calls.any? { |args| args.include?('optionId=think') }
   end
 
-  def test_paused_code_keeps_code_status_and_adds_review_label
+  def test_paused_code_keeps_code_status_and_removes_trigger_labels
     status_entries = steps('code').select { |entry| entry.dig('env', 'TARGET_STATUS') }
     assert_equal ['Code'], status_entries.map { |entry| entry.dig('env', 'TARGET_STATUS') }
     run_step(status_entries.first, scenario(['3-code'], project: project))
@@ -450,7 +450,8 @@ class WorkflowsTest < Minitest::Test
     output = run_step(step('code', 'checkpoint'), scenario(['3-code'], project: project))
     assert_equal 'true', output.fetch('paused')
     edit = @calls.find { |args| args.first(2) == %w[issue edit] }
-    assert_equal 'review:code', edit[edit.index('--add-label') + 1]
+    refute edit.include?('--add-label')
+    assert_equal LABELS + ['pause:code'], edit[edit.index('--remove-label') + 1].split(',')
     assert @calls.any? { |args| args.include?('optionId=code') }
   end
 

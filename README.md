@@ -77,9 +77,9 @@ Create these labels in each application repository. Add one to an open issue:
 
 | Label | Runs through | Stops at |
 |---|---|---|
-| `1-think` | Think | Specification comment, with `review:think` |
-| `2-plan` | Think -> Plan | Plan comment, with `review:plan` |
-| `3-code` | Think -> Plan -> Code | Open PR, with `review:code` |
+| `1-think` | Think | Specification comment |
+| `2-plan` | Think -> Plan | Plan comment |
+| `3-code` | Think -> Plan -> Code | Open PR |
 | `4-release` | Think -> Plan -> Code -> Prove -> Release | Merge, configured publication/deployment, then Done |
 
 Use **`4-release`** for the full autonomous pipeline. With an existing PR, it resumes directly at Prove.
@@ -180,7 +180,7 @@ In the GitHub Project's **Workflows** settings, disable any built-in automation 
 3. Runs the Code agent to implement the plan and prepare the PR record.
 4. Checks branch/history, scope, control integrity, secrets, dependencies, and the PR record before publishing the branch. Full test/build verification belongs to Prove so failures enter its repair loop.
 5. Enters **Prove**, pushes the branch, and creates or updates the PR.
-6. If requested, returns to Code with `review:code` for manual PR review; otherwise, passes the specs and PR number to Prove.
+6. If requested, returns to Code for manual PR review; otherwise, passes the specs and PR number to Prove.
 
 **Stops at:** an open PR for review or handoff to Prove. Code does not merge.
 

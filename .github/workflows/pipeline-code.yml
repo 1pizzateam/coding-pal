@@ -414,9 +414,7 @@ jobs:
 
           echo "paused=true" >> "$GITHUB_OUTPUT"
           TARGET_STATUS=Code bash -eo pipefail "$RUNNER_TEMP/code-project-status.sh"
-          gh label create "review:code" --color "FBCA04" --force --description "Paused after Code; PR open and waiting for manual validation or merge" || true
-          gh issue edit "$ISSUE_NUMBER" --add-label "review:code" --remove-label "1-think,2-plan,3-code,4-release,pause:code" || true
-          gh pr edit "$PR_NUMBER" --add-label "review:code" || true
+          gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-release,pause:code" || true
           gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused after Code for Manual PR Validation**
 
           Pull Request #${PR_NUMBER} (${PR_URL}) is open and ready for your review.

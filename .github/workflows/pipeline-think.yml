@@ -48,8 +48,6 @@ jobs:
           ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
           echo "ISSUE_NUMBER=${ISSUE_NUMBER}" >> "$GITHUB_ENV"
-          # Clear any previous manual review checkpoint labels now that the issue is active
-          gh issue edit "$ISSUE_NUMBER" --remove-label "review:think,review:plan,review:code" 2>/dev/null || true
 
           ISSUE_VIEW=$(gh issue view "$ISSUE_NUMBER" --json labels,comments)
           HAS_THINK_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("1-think") != null')
@@ -64,7 +62,6 @@ jobs:
           # Smart Resume 0: An open PR already exists and the issue was explicitly marked for release.
           if [ -n "$EXISTING_PR" ] && [ "$HAS_RELEASE_TRIGGER" = "true" ]; then
             echo "Found open PR #${EXISTING_PR} for issue #${ISSUE_NUMBER}; dispatching Pipeline - Prove directly."
-            gh pr edit "$EXISTING_PR" --remove-label "review:code" 2>/dev/null || true
             gh workflow run prove.yml -f pr_number="$EXISTING_PR" -f issue_number="$ISSUE_NUMBER"
             echo "resumed_stage=prove" >> "$GITHUB_OUTPUT"
             exit 0
@@ -72,8 +69,7 @@ jobs:
 
           if [ -n "$EXISTING_PR" ] && [ "$HAS_CODE_TRIGGER" = "true" ]; then
             echo "Issue #${ISSUE_NUMBER} already has open PR #${EXISTING_PR}; leaving it at the manual review checkpoint."
-            gh issue edit "$ISSUE_NUMBER" --add-label "review:code" --remove-label "3-code" || true
-            gh pr edit "$EXISTING_PR" --add-label "review:code" || true
+            gh issue edit "$ISSUE_NUMBER" --remove-label "3-code" || true
             echo "resumed_stage=code" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -390,8 +386,7 @@ jobs:
           fi
 
           echo "paused=true" >> "$GITHUB_OUTPUT"
-          gh label create "review:think" --color "FBCA04" --force --description "Paused after Think; waiting for manual validation of think.md" || true
-          gh issue edit "$ISSUE_NUMBER" --add-label "review:think" --remove-label "1-think,2-plan,3-code,4-release,pause:think" || true
+          gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-release,pause:think" || true
           gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused after Think for Manual Validation**
 
           Review (and optionally edit) the \`# Think:\` specification comment above.

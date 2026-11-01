@@ -672,7 +672,7 @@ jobs:
             exit 1
           fi
           echo "RELEASE_MERGE_SHA=${MERGE_SHA}" >> "$GITHUB_ENV"
-          gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-release,review:code" || true
+          gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-release" || true
 
       - name: Dispatch companion game editor updates after PR merge
         if: steps.resolve.outputs.skip != 'true'
