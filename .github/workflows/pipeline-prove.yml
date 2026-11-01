@@ -440,13 +440,16 @@ jobs:
                 sleep 10
                 continue
               fi
-              echo "$checks"
               failed=$(echo "$checks" | jq '[.[] | select(
                 (.__typename == "CheckRun" and .status == "COMPLETED" and
                   (.conclusion != "SUCCESS" and .conclusion != "NEUTRAL" and .conclusion != "SKIPPED")) or
                 (.__typename == "StatusContext" and (.state == "FAILURE" or .state == "ERROR"))
               )] | length')
               if [ "$failed" -gt 0 ]; then
+                echo "$checks" | jq -r '.[] | select(
+                  (.__typename == "CheckRun" and .status == "COMPLETED" and (.conclusion != "SUCCESS" and .conclusion != "NEUTRAL" and .conclusion != "SKIPPED")) or
+                  (.__typename == "StatusContext" and (.state == "FAILURE" or .state == "ERROR"))
+                ) | "✗ " + (.name // .context // "check") + ": " + (.conclusion // .state // "FAILED") + " (" + (.detailsUrl // .targetUrl // "") + ")"'
                 echo "::error::GitHub PR checks failed. See check names and URLs above."
                 return 1
               fi
@@ -455,6 +458,7 @@ jobs:
                 (.__typename == "StatusContext" and .state != "SUCCESS")
               )] | length')
               if [ "$pending" -eq 0 ]; then
+                echo "✓ All $(echo "$checks" | jq 'length') GitHub PR check(s) passed."
                 return 0
               fi
               sleep 10
@@ -488,15 +492,23 @@ jobs:
           run_deterministic_controls() {
             mkdir -p reports
             : > gate-output.log
+            : > failed-gates.log
             local any_failed=0
 
             run_check() {
               local name="$1"
               shift
+              local tmp_out="$RUNNER_TEMP/control-${name}.log"
               echo "=== Control: ${name} ===" >> gate-output.log
-              if "$@" >> gate-output.log 2>&1; then
+              if "$@" > "$tmp_out" 2>&1; then
+                cat "$tmp_out" >> gate-output.log
                 echo "✓ ${name}: PASS"
               else
+                cat "$tmp_out" >> gate-output.log
+                {
+                  echo "=== Control: ${name} ==="
+                  sed '/^Unmapped tests (informational/,/^✗ /{/✗ /!d;}; /^| AC-.*| PASS |$/d' "$tmp_out"
+                } >> failed-gates.log
                 echo "✗ ${name}: FAIL"
                 any_failed=1
               fi
@@ -607,12 +619,13 @@ jobs:
               4. Validate ${PROVE_FILE} until it exits 0:
                  node .agents/skills/prove/scripts/validate-prove.mjs --dir ${SPEC_DIR} --stage draft"
 
-              if node .agents/skills/prove/scripts/validate-prove.mjs --dir "$SPEC_DIR" --stage pass >> gate-output.log 2>&1; then
-                if bash -eo pipefail "$RUNNER_TEMP/record-prove.sh" >> gate-output.log 2>&1; then
+              if node .agents/skills/prove/scripts/validate-prove.mjs --dir "$SPEC_DIR" --stage pass >> failed-gates.log 2>&1; then
+                if bash -eo pipefail "$RUNNER_TEMP/record-prove.sh" >> failed-gates.log 2>&1; then
                   echo "✓ Prove validation and PR checks passed!"
                   break
                 fi
               fi
+              [ -s failed-gates.log ] && cat failed-gates.log >> gate-output.log
             fi
 
             TARGET_STATUS=Code bash -eo pipefail "$RUNNER_TEMP/prove-project-status.sh"
@@ -620,11 +633,22 @@ jobs:
             {
               echo "# Prove repair request"
               echo "Issue #${ISSUE_NUMBER}; PR #${PR_NUMBER}; base ${BASE_REF}; commit $(git rev-parse HEAD)."
-              echo "## Failed checks and exact output"
-              cat gate-output.log
+              if [ -f failed-gates.log ]; then
+                if [ -s failed-gates.log ]; then
+                  echo "## Failed checks and exact output"
+                  cat failed-gates.log
+                fi
+              elif [ -s gate-output.log ]; then
+                echo "## Failed checks and exact output"
+                cat gate-output.log
+              fi
               if [ "$CONTROLS_OK" -eq 1 ]; then
                 echo "## Independent review findings"
-                cat "$PROVE_FILE"
+                if grep -qE '^## (Findings|Verdict)' "$PROVE_FILE" 2>/dev/null; then
+                  awk '/^## (Findings|Verdict)/{keep=1} /^## / && !/^## (Findings|Verdict)/{keep=0} !keep && /^- \*\*.*:\*\* FAIL/{print; print ""} keep{print}' "$PROVE_FILE"
+                else
+                  cat "$PROVE_FILE"
+                fi
               else
                 echo "Independent review deferred until all checks pass. Ignore any older prove.md verdict."
               fi
