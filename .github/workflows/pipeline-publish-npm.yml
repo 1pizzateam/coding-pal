@@ -124,11 +124,13 @@ jobs:
           for CONSUMER in \
             "1pizzateam/DoomR.js" \
             "1pizzateam/Cadenza" \
+            "1pizzateam/FaceGun" \
             "1pizzateam/MappR" \
             "1pizzateam/PixelGun" \
             "1pizzateam/PolyGun" \
             "1pizzateam/ShaderGun" \
             "1pizzateam/BumpR.js" \
+            "1pizzateam/FaceR.js" \
             "1pizzateam/LoopR.js" \
             "1pizzateam/RoostR.js" \
             "1pizzateam/GroovR.js"; do

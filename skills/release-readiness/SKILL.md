@@ -5,7 +5,7 @@ description: "Verify @1pizzateam/* library package.json, lockfiles, npm tarball 
 
 # Release Readiness Skill
 
-Deterministic pre-release gate for `@1pizzateam/*` libraries (`RoostR.js`, `BumpR.js`, `LoopR.js`, `Spock.js`, `GroovR.js`).
+Deterministic pre-release gate for `@1pizzateam/*` libraries (`RoostR.js`, `BumpR.js`, `LoopR.js`, `Spock.js`, `GroovR.js`, `FaceR.js`).
 
 ## Usage
 

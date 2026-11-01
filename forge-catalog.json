@@ -204,7 +204,7 @@
       "tests": {
         "ci": "https://github.com/1pizzateam/RoostR.js/actions/workflows/ci.yml"
       },
-      "composesWith": ["spock", "bumpr", "loopr", "pixelgun", "polygun", "shadergun"],
+      "composesWith": ["spock", "bumpr", "loopr", "facer", "pixelgun", "polygun", "shadergun", "facegun"],
       "replacement": null,
       "removalDate": null
     },
@@ -469,6 +469,96 @@
         "ci": "https://github.com/1pizzateam/ShaderGun/actions/workflows/ci.yml"
       },
       "composesWith": ["roostr", "pixelgun"],
+      "replacement": null,
+      "removalDate": null
+    },
+    {
+      "id": "facer",
+      "name": "FaceR.js",
+      "kind": "library",
+      "summary": "Real-time 3D anatomical facial animation, FACS Action Unit muscle rigging, and Ken Perlin behavioral expression engine built on Spock.js and RoostR.js.",
+      "capabilities": [
+        "Symmetrical high-polygon anatomical base head topology with 6 anatomical submeshes (skin, eyes, upper/lower teeth, inner mouth)",
+        "Automatic 26-zone FACS Action Unit muscle transfer and saturating one-minus-product expression compositor",
+        "Autonomous 1D Perlin eye saccades, coupled neck/jaw pivot rotations, stochastic blinking, and reactive combat impulses",
+        "Sparse CPU morph deformer, 5-tier progressive damage texture atlas generator, and RoostR.js WebGL Mesh buffer sync"
+      ],
+      "keywords": [
+        "facial animation",
+        "facs",
+        "action units",
+        "perlin",
+        "expression",
+        "gaze",
+        "blink",
+        "morph targets",
+        "facer"
+      ],
+      "owner": "1pizzateam",
+      "version": "0.1.0",
+      "maturity": "alpha",
+      "status": "active",
+      "releasedAt": "2026-11-01",
+      "interface": {
+        "type": "TypeScript ESM/UMD Library",
+        "docs": "https://1pizzateam.github.io/FaceR.js",
+        "integrationGuide": "https://github.com/1pizzateam/FaceR.js#readme",
+        "contract": "TypeScript declarations exported from src/facer.ts and published in @1pizzateam/facer"
+      },
+      "artifacts": [
+        { "type": "npm-package", "ref": "@1pizzateam/facer" },
+        { "type": "git-repository", "ref": "https://github.com/1pizzateam/FaceR.js" }
+      ],
+      "docs": "https://1pizzateam.github.io/FaceR.js",
+      "repository": "https://github.com/1pizzateam/FaceR.js",
+      "license": "MIT",
+      "tests": {
+        "ci": "https://github.com/1pizzateam/FaceR.js/actions/workflows/ci.yml"
+      },
+      "composesWith": ["spock", "roostr", "facegun"],
+      "replacement": null,
+      "removalDate": null
+    },
+    {
+      "id": "facegun",
+      "name": "FaceGun",
+      "kind": "shared-service",
+      "summary": "Browser-based 3D anatomical face sculpting, automatic FACS muscle-rigging, 5-tier damage/skin painting, and Perlin personality studio built on FaceR.js and RoostR.js.",
+      "capabilities": [
+        "Symmetrical 3D sculpt brushes (Inflate, Grab, Crease, Smooth) and macro skull/face proportion controls",
+        "Interactive 26-zone FACS Action Unit muscle brush and emotion layer authoring",
+        "5-tier progressive damage/skin painting and .facer cartridge export/import compatible with FaceR.js and DoomR.js"
+      ],
+      "keywords": [
+        "face editor",
+        "sculpting",
+        "facs studio",
+        "character creator",
+        "damage atlas",
+        "facegun",
+        "facer"
+      ],
+      "owner": "1pizzateam",
+      "version": "0.1.0",
+      "maturity": "alpha",
+      "status": "active",
+      "releasedAt": "2026-11-01",
+      "interface": {
+        "type": "Web Studio & .facer Cartridge Schema",
+        "docs": "https://1pizzateam.github.io/FaceGun",
+        "integrationGuide": "https://github.com/1pizzateam/FaceGun#readme",
+        "contract": "FaceR.js .facer cartridge JSON schema exported by FaceGun"
+      },
+      "artifacts": [
+        { "type": "git-repository", "ref": "https://github.com/1pizzateam/FaceGun" }
+      ],
+      "docs": "https://1pizzateam.github.io/FaceGun",
+      "repository": "https://github.com/1pizzateam/FaceGun",
+      "license": "MIT",
+      "tests": {
+        "ci": "https://github.com/1pizzateam/FaceGun/actions/workflows/ci.yml"
+      },
+      "composesWith": ["facer", "roostr", "spock", "loopr"],
       "replacement": null,
       "removalDate": null
     }

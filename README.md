@@ -260,11 +260,11 @@ The [release-readiness skill](skills/release-readiness/SKILL.md) runs in Code/Pr
 
 ### Companion game editors
 
-DoomR changes can require updates to Cadenza, MappR, PixelGun, PolyGun, or ShaderGun:
+DoomR changes can require updates to Cadenza, FaceGun, MappR, PixelGun, PolyGun, or ShaderGun:
 
 1. Think or an audit writes `editor-requests.json`.
 2. After DoomR merges, Prove opens `4-release,upstream:doomr` issues in the affected editor repositories.
-3. Each editor runs its own pipeline with a sibling `../DoomR.js` checkout for imports, tests, and builds.
+3. Each editor runs its own pipeline with a sibling `../DoomR.js` checkout (and `../FaceR.js` for FaceGun) for imports, tests, and builds.
 
 ## Audits and repository contents
 
@@ -287,7 +287,7 @@ ruby tests/workflows_test.rb
 
 The suite checks shell syntax, token separation, checkpoints, spec reuse, parallel preparation, delivery queue configuration, and Project Status updates. Shell tests use a strict mock GitHub CLI and temporary directories. No live GitHub writes, agents, merges, or publishing run.
 
-To also check triggers and handoff inputs in all 11 adjacent application workflow wrappers:
+To also check triggers and handoff inputs in all 13 adjacent application workflow wrappers:
 
 ```sh
 PROJECT_WORKFLOWS_ROOT=.. ruby tests/workflows_test.rb

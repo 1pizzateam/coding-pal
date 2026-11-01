@@ -1064,9 +1064,10 @@ class WorkflowsTest < Minitest::Test
     def test_project_wrapper_contracts
       projects = {
         'BumpR.js' => 'BumpR', 'Cadenza' => 'Cadenza', 'DoomR.js' => 'DoomR',
-        'GroovR.js' => 'GroovR', 'LoopR.js' => 'LoopR', 'MappR' => 'MappR',
-        'PixelGun' => 'PixelGun', 'PolyGun' => 'PolyGun', 'RoostR.js' => 'RoostR',
-        'ShaderGun' => 'ShaderGun', 'Spock.js' => 'Spock'
+        'FaceGun' => 'FaceGun', 'FaceR.js' => 'FaceR', 'GroovR.js' => 'GroovR',
+        'LoopR.js' => 'LoopR', 'MappR' => 'MappR', 'PixelGun' => 'PixelGun',
+        'PolyGun' => 'PolyGun', 'RoostR.js' => 'RoostR', 'ShaderGun' => 'ShaderGun',
+        'Spock.js' => 'Spock'
       }
       projects.each do |repository, title|
         directory = File.join(ENV.fetch('PROJECT_WORKFLOWS_ROOT'), repository, '.github/workflows')
@@ -1114,7 +1115,7 @@ class WorkflowsTest < Minitest::Test
         end
         code = YAML.load_file(File.join(directory, 'code.yml'))
         prove_wrapper = YAML.load_file(File.join(directory, 'prove.yml'))
-        expected_npm_release = %w[BumpR.js GroovR.js LoopR.js RoostR.js Spock.js].include?(repository)
+        expected_npm_release = %w[BumpR.js FaceR.js GroovR.js LoopR.js RoostR.js Spock.js].include?(repository)
         prove = code.fetch('jobs').fetch('prove')
         assert_equal 'code', prove.fetch('needs')
         assert_equal "needs.code.outputs.continue_to_prove == 'true'", prove.fetch('if')
@@ -1439,7 +1440,7 @@ class WorkflowsTest < Minitest::Test
     catalog = JSON.parse(File.read(catalog_path))
     assert_equal 1, catalog.fetch('version')
     asset_ids = catalog.fetch('assets').map { |a| a.fetch('id') }
-    assert_equal %w[spock bumpr loopr roostr groovr cadenza mappr pixelgun polygun shadergun].sort, asset_ids.sort
+    assert_equal %w[spock bumpr loopr roostr groovr facer cadenza facegun mappr pixelgun polygun shadergun].sort, asset_ids.sort
 
     %w[think plan code prove].each do |phase|
       content = File.read(File.join(ROOT, ".github/workflows/pipeline-#{phase}.yml"))
