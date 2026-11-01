@@ -40,7 +40,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           PACKAGE: ${{ github.event.client_payload.package || inputs.package }}
           VERSION: ${{ github.event.client_payload.version || inputs.version }}
-          UPSTREAM_REPO: ${{ github.event.client_payload.upstream_repo || github.event.client_payload.repo || inputs.upstream_repo }}
+          UPSTREAM_REPO: ${{ github.event.client_payload.upstream_repo || github.event.client_payload.repo || github.event.client_payload.repository || inputs.upstream_repo }}
         run: |
           if [ -z "$PACKAGE" ] || [ -z "$VERSION" ]; then
             echo "::error::Missing package or version payload."
@@ -61,7 +61,7 @@ jobs:
           fi
 
           BLOCKED_ISSUES=$(gh issue list --state open --label "blocked:upstream" --limit 50 --json number,body,comments \
-            --jq --arg pkg "$PACKAGE" --arg repo "$UPSTREAM_REPO" '
+            | jq -r --arg pkg "$PACKAGE" --arg repo "$UPSTREAM_REPO" '
               [
                 .[]
                 | select(

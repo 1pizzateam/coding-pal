@@ -254,6 +254,9 @@ jobs:
 
       - name: Restore repo primitives, publish summary & verify gate
         if: always()
+        env:
+          AGENT: ${{ inputs.agent }}
+          SCOPE: ${{ inputs.scope }}
         run: |
           git clean -fd .github/instructions .github/agents .github/prompts .github/skills .agents .claude .cursor .gemini
           git checkout -- .github/instructions .github/agents .github/prompts .github/skills .github/copilot-instructions.md .agents .claude .cursor .gemini CLAUDE.md GEMINI.md AGENTS.md .cursorrules .windsurfrules 2>/dev/null || true
@@ -261,7 +264,7 @@ jobs:
             cat audit-report.md >> "$GITHUB_STEP_SUMMARY"
             mv audit-report.md /tmp/report.md
           else
-            echo "Automated \`${{ inputs.agent }}\` audit in \`${{ inputs.scope }}\`." > /tmp/report.md
+            echo "Automated \`${AGENT}\` audit in \`${SCOPE}\`." > /tmp/report.md
           fi
           npm test --if-present
           npm run build --if-present

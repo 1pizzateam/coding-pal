@@ -15,8 +15,24 @@ def argument(name)
   index && ARGV[index + 1]
 end
 
+if ENV['GH_TOKEN'].to_s.empty?
+  reject_command("Missing GH_TOKEN for gh #{ARGV.first(2).join(' ')}")
+end
+
+if ARGV.include?('--arg')
+  reject_command("Invalid gh flag --arg in #{ARGV.inspect}: pipe gh --json output to jq instead")
+end
+
+if ARGV.include?('--jq') && (argument('--jq').to_s.empty? || argument('--jq').to_s.start_with?('-'))
+  reject_command("Missing or invalid --jq expression in #{ARGV.inspect}")
+end
+
 if ARGV.first != 'api' && ENV['GH_REPO'].to_s.empty? && !ARGV.include?('--repo') && !ARGV.include?('-R') && !File.directory?('.git')
   reject_command("Missing repository context for gh #{ARGV.first(2).join(' ')}: set GH_REPO, pass --repo, or run inside a git checkout")
+end
+
+if %w[issue pr].include?(ARGV[0]) && %w[view edit comment merge].include?(ARGV[1]) && ARGV[2].to_s.empty?
+  reject_command("Missing target number/branch for gh #{ARGV.first(2).join(' ')}")
 end
 
 result = case ARGV.first(2)

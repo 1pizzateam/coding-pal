@@ -27,16 +27,49 @@ class WorkflowsTest < Minitest::Test
     File.chmod(0o755, mock)
     @environment = {
       'PATH' => bin, 'HOME' => @directory, 'LC_ALL' => 'C', 'RUBYOPT' => '-EUTF-8',
-      'GH_TOKEN' => 'fake-test-token', 'GH_REPO' => 'test-owner/test-repo',
-      'OWNER' => 'test-owner', 'REPO' => 'test-repo',
       'RUNNER_TEMP' => @directory,
+      'GITHUB_REPOSITORY' => 'test-owner/test-repo',
+      'GITHUB_SERVER_URL' => 'https://github.com',
+      'GITHUB_RUN_ID' => '123',
+      'GITHUB_STEP_SUMMARY' => File.join(@directory, 'summary'),
       'ISSUE_NUMBER' => '42', 'PR_NUMBER' => '99', 'PR_URL' => 'https://example.test/pr/99',
-      'PROJECT_TITLE' => 'Test board', 'EVENT_NAME' => 'issues',
       'GITHUB_OUTPUT' => File.join(@directory, 'output'),
       'GITHUB_ENV' => File.join(@directory, 'environment'),
       'TEST_SCENARIO' => File.join(@directory, 'scenario.json'),
       'TEST_CALLS' => File.join(@directory, 'calls.jsonl'),
       'TEST_VIOLATIONS' => File.join(@directory, 'violations')
+    }
+    @actions_context = {
+      'secrets.PIPELINE_GITHUB_TOKEN' => 'fake-test-token',
+      'secrets.COPILOT_GITHUB_TOKEN' => 'fake-copilot-token',
+      'github.repository' => 'test-owner/test-repo',
+      'github.repository_owner' => 'test-owner',
+      'github.event.repository.name' => 'test-repo',
+      'github.event.repository.default_branch' => 'main',
+      'github.run_id' => '123',
+      'inputs.issue_number' => '42',
+      'inputs.pr_number' => '99',
+      'inputs.workflow_run_id' => '',
+      'inputs.project_title' => 'Test board',
+      'inputs.fix_loop_limit' => '5',
+      'inputs.base_ref' => 'main',
+      'inputs.prove_base_sha' => 'base-sha',
+      'inputs.release_merge_sha' => 'merge-sha',
+      'inputs.release_started_at' => '2026-01-02T00:00:00Z',
+      'inputs.release_sha' => '',
+      'inputs.release_tag' => '',
+      'inputs.deployment_workflow' => '',
+      'inputs.deployment_paths' => '',
+      'inputs.package' => '@1pizzateam/spock',
+      'inputs.version' => '1.2.3',
+      'inputs.upstream_repo' => '1pizzateam/Spock.js',
+      'inputs.agent' => 'dead-code',
+      'inputs.scope' => 'src/',
+      'inputs.prompt' => '',
+      'inputs.pr_title' => 'chore: remove dead code in src/',
+      'env.ISSUE_NUMBER' => '42',
+      'steps.release.outputs.release_sha' => '',
+      'steps.release.outputs.release_tag' => ''
     }
   end
 
@@ -64,6 +97,34 @@ class WorkflowsTest < Minitest::Test
     }.merge(extra.transform_keys(&:to_s))
   end
 
+  def resolve_actions_value(raw)
+    text = raw.to_s
+    return text unless text.include?('${{')
+
+    text.gsub(/\$\{\{\s*(.*?)\s*\}\}/) do
+      candidates = Regexp.last_match(1).split('||').map(&:strip)
+      resolved = candidates.lazy.map { |expr| @actions_context[expr] }.find { |val| !val.nil? && !val.empty? }
+      if resolved.nil?
+        raise "Unmapped Actions expression #{Regexp.last_match(0)}" unless candidates.any? { |expr| @actions_context.key?(expr) }
+        ''
+      else
+        resolved
+      end
+    end
+  end
+
+  def resolve_step_environment(entry)
+    job_env = {}
+    Dir.glob(File.join(ROOT, '.github/workflows/*.yml')).each do |path|
+      YAML.load_file(path).fetch('jobs').each_value do |job|
+        if Array(job['steps']).any? { |candidate| candidate['name'] == entry['name'] && candidate['id'] == entry['id'] }
+          job_env = job.fetch('env', {})
+        end
+      end
+    end
+    job_env.merge(entry.fetch('env', {})).transform_values { |value| resolve_actions_value(value) }
+  end
+
   def run_step(entry, data, environment = {}, success: true)
     script = entry.fetch('run')
     if entry['id'] == 'checkpoint' && script.include?('code-project-status.sh')
@@ -76,9 +137,9 @@ class WorkflowsTest < Minitest::Test
     %w[GITHUB_OUTPUT GITHUB_ENV TEST_CALLS TEST_VIOLATIONS].each do |key|
       File.write(@environment.fetch(key), '')
     end
-    literals = entry.fetch('env', {}).reject { |_, value| value.to_s.include?('${{') }
+    declared = resolve_step_environment(entry)
     @stdout, stderr, status = Open3.capture3(
-      @environment.merge(literals).merge(environment),
+      @environment.merge(declared).merge(environment),
       File.join(@directory, 'bin/bash'), '--noprofile', '--norc', '-e', '-o', 'pipefail',
       stdin_data: script, chdir: @directory, unsetenv_others: true
     )
@@ -105,6 +166,7 @@ class WorkflowsTest < Minitest::Test
       YAML.load_file(path).fetch('jobs').each_value do |job|
         Array(job['steps']).each do |entry|
           next unless entry['run']
+          refute_includes entry['run'], '${{', "#{path}: #{entry['name']} must take Actions expressions through env"
           _, error, status = Open3.capture3('bash', '-n', stdin_data: entry['run'])
           assert status.success?, "#{path}: #{entry['name']}\n#{error}"
           entry['run'].scan(/<<'([A-Z_]+)'\n(.*?)\n\1/m).each do |_, script|
@@ -531,12 +593,13 @@ class WorkflowsTest < Minitest::Test
   end
 
   def run_pr_checks(rollups, success: true)
-    script = steps('prove').find { |entry| entry['name'] == 'Run Prove validation and auto-remediation loop' }.fetch('run')
+    prove_entry = steps('prove').find { |entry| entry['name'] == 'Run Prove validation and auto-remediation loop' }
+    script = prove_entry.fetch('run')
     function = script.match(/wait_for_pr_checks\(\) \{.*?\n\}/m)[0]
     sleep_path = File.join(@directory, 'bin/sleep')
     File.write(sleep_path, "#!#{RbConfig.ruby}\nexit 0\n")
     File.chmod(0o755, sleep_path)
-    run_step({ 'run' => "#{function}\nwait_for_pr_checks\n" },
+    run_step(prove_entry.merge('run' => "#{function}\nwait_for_pr_checks\n"),
              scenario([], pr_sequence: rollups.map { |rollup| { 'statusCheckRollup' => rollup } }),
              { 'GITHUB_RUN_ID' => '123' }, success: success)
   end
@@ -701,6 +764,13 @@ class WorkflowsTest < Minitest::Test
     report = run_release_completion({})
     assert_includes report, 'no external publication/deployment was applicable'
     refute @calls.any? { |args| args.first == 'api' }
+
+    status_script = status_step('prove', 'Prove').fetch('run').split("<<'STATUS_SCRIPT'\n", 2).last.split("\nSTATUS_SCRIPT", 2).first
+    File.write(File.join(@directory, 'prove-project-status.sh'), status_script)
+    start_release = step('prove', 'start_release')
+    output = run_step(start_release, scenario([], project: project), release_environment)
+    assert_equal 'false', output.fetch('dispatched')
+    assert @calls.any? { |args| args.include?('optionId=done') }
   end
 
   def test_release_failure_keeps_status_and_posts_durable_failure_links
@@ -830,7 +900,8 @@ class WorkflowsTest < Minitest::Test
     File.write(@environment.fetch('TEST_SCENARIO'), JSON.generate(data))
     File.write(@environment.fetch('TEST_CALLS'), '')
     File.write(@environment.fetch('TEST_VIOLATIONS'), '')
-    env = @environment.merge(
+    declared = resolve_step_environment(entry)
+    env = @environment.merge(declared).merge(
       'PATH' => "#{@environment.fetch('PATH')}#{File::PATH_SEPARATOR}#{ENV.fetch('PATH')}",
       'BASE_REF' => 'main', 'BRANCH_NAME' => 'feature/issue-42-test'
     ).merge(environment.transform_keys(&:to_s))
@@ -872,7 +943,7 @@ class WorkflowsTest < Minitest::Test
     File.write(@environment.fetch('TEST_CALLS'), '')
     File.write(@environment.fetch('TEST_VIOLATIONS'), '')
     entry = steps('code').find { |item| item['name'] == 'Prepare implementation branch and commit specs' }
-    environment = @environment.merge(
+    environment = @environment.merge(resolve_step_environment(entry)).merge(
       'PATH' => "#{@environment.fetch('PATH')}#{File::PATH_SEPARATOR}#{ENV.fetch('PATH')}",
       'BASE_REF' => 'main'
     )
@@ -1061,5 +1132,28 @@ class WorkflowsTest < Minitest::Test
     assert_includes body_arg, 'DoomR.js moved secret room SFX to door open state.'
     assert_includes body_arg, '## Suggested Direction'
     assert_includes body_arg, 'src/levels/door.ts'
+  end
+
+  def test_upstream_resume_unblocks_matching_issues_via_jq_pipe
+    %w[npm seq grep sort].each do |command|
+      if command == 'npm'
+        path = File.join(@directory, 'bin/npm')
+        File.write(path, "#!#{RbConfig.ruby}\nputs '1.2.3'\n")
+        File.chmod(0o755, path)
+      else
+        executable = ENV.fetch('PATH').split(File::PATH_SEPARATOR)
+                        .map { |dir| File.join(dir, command) }
+                        .find { |candidate| File.executable?(candidate) && !File.directory?(candidate) }
+        File.symlink(executable, File.join(@directory, 'bin', command)) unless File.exist?(File.join(@directory, 'bin', command))
+      end
+    end
+    entry = workflow('upstream-resume').fetch('jobs').fetch('resume').fetch('steps').first
+    issues = [
+      { 'number' => 12, 'body' => 'Waiting on @1pizzateam/spock release', 'comments' => [] },
+      { 'number' => 19, 'body' => 'Unrelated issue', 'comments' => [{ 'body' => 'Blocked on @1pizzateam/roostr' }] }
+    ]
+    run_step(entry, scenario([], issues: issues))
+    edits = @calls.select { |args| args.first(2) == %w[issue edit] }
+    assert_equal [['issue', 'edit', '12', '--remove-label', 'blocked:upstream', '--add-label', '4-release']], edits
   end
 end

@@ -752,6 +752,7 @@ jobs:
                 -f event_type="upstream-library-released" \
                 -f "client_payload[package]=1pizzateam/${REPO_NAME}" \
                 -f "client_payload[version]=${HEAD_SHA}" \
+                -f "client_payload[upstream_repo]=${REPO_FULL_NAME}" \
                 -f "client_payload[repository]=${REPO_FULL_NAME}" || true
               ;;
           esac
@@ -864,6 +865,8 @@ jobs:
         if: steps.resolve.outputs.skip != 'true' && (steps.release.outcome == 'success' || steps.release.outcome == 'skipped')
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
           RELEASE_SHA: ${{ steps.release.outputs.release_sha }}
           RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
           DEPLOYMENT_WORKFLOW: ${{ inputs.deployment_workflow }}
@@ -921,7 +924,9 @@ jobs:
           REPO: ${{ github.event.repository.name }}
           PROJECT_TITLE: ${{ inputs.project_title }}
         run: |
-          TARGET_STATUS=Release bash -eo pipefail "$RUNNER_TEMP/prove-project-status.sh"
+          if [ -f "$RUNNER_TEMP/prove-project-status.sh" ]; then
+            TARGET_STATUS=Release bash -eo pipefail "$RUNNER_TEMP/prove-project-status.sh" || true
+          fi
           MESSAGE="Release failed or did not finish. Issue stays in Release and needs developer attention. Inspect ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}; any detailed Release report is posted above. A merged PR is not rolled back automatically."
           gh issue comment "$ISSUE_NUMBER" --body "$MESSAGE"
           gh pr comment "$PR_NUMBER" --body "$MESSAGE"

@@ -324,7 +324,9 @@ jobs:
           REPO: ${{ github.event.repository.name }}
           PROJECT_TITLE: ${{ inputs.project_title }}
         run: |
-          TARGET_STATUS=Release bash -eo pipefail "$RUNNER_TEMP/prove-project-status.sh"
+          if [ -f "$RUNNER_TEMP/prove-project-status.sh" ]; then
+            TARGET_STATUS=Release bash -eo pipefail "$RUNNER_TEMP/prove-project-status.sh" || true
+          fi
           MESSAGE="Release failed or did not finish. Issue stays in Release and needs developer attention. Inspect ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}; any detailed Release report is posted above. A merged PR is not rolled back automatically."
           gh issue comment "$ISSUE_NUMBER" --body "$MESSAGE"
           gh pr comment "$PR_NUMBER" --body "$MESSAGE"
