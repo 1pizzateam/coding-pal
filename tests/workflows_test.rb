@@ -983,9 +983,8 @@ class WorkflowsTest < Minitest::Test
     assert status.success?, "#{output}\n#{error}"
     assert_equal '', File.read(@environment.fetch('TEST_VIOLATIONS'))
     assert_equal 'feature/issue-42-fresh-branch', git_command('branch', '--show-current')
-    assert_equal @base_sha, git_command('rev-parse', 'HEAD~1')
+    assert_equal @base_sha, git_command('rev-parse', 'HEAD')
     assert_equal "updated base\n", File.read(File.join(@repository, 'shared.txt'))
-    assert_equal "# Plan: test\n", git_command('show', 'HEAD:specs/issue-42/plan.md') + "\n"
   end
 
   def test_conflicts_abort_without_pushing_or_merging

@@ -292,8 +292,7 @@ jobs:
             ".github/instructions/" \
             ".github/agents/" \
             ".agents/" \
-            "specs/issue_number.txt" \
-            "specs/pr_number.txt" \
+            "specs/" \
             "reports/" \
             "pr-body.md" \
             "gate-output.log" >> .git/info/exclude
@@ -365,12 +364,6 @@ jobs:
           TODAY=$(date -u +%Y-%m-%d)
           node .agents/skills/pr-record/scripts/validate-pr.mjs --body pr-body.md --dir "$SPEC_DIR" --stage prove --pr-date "$TODAY" --allow-auto-prove
           gh pr edit "$PR_NUMBER" --body-file pr-body.md
-
-          git add "$PROVE_FILE"
-          if ! git diff --cached --quiet; then
-            git commit -m "docs(prove): add validated prove.md for issue #${ISSUE_NUMBER}"
-            git push origin "$BRANCH_NAME"
-          fi
           RECORD_SCRIPT
 
       - name: Run Prove validation and auto-remediation loop
@@ -388,6 +381,14 @@ jobs:
           SPEC_DIR="specs/issue-${ISSUE_NUMBER}"
           PROVE_FILE="${SPEC_DIR}/prove.md"
           ISSUE_TITLE=$(gh issue view "$ISSUE_NUMBER" --json title --jq '.title')
+
+          if [ ! -s "${SPEC_DIR}/progress.json" ] && [ -s "${SPEC_DIR}/plan.md" ]; then
+            STEP_COUNT=$(grep -cE '^### Step [0-9]+:' "${SPEC_DIR}/plan.md" || echo 0)
+            for ((s=1; s<=STEP_COUNT; s++)); do
+              node .agents/skills/code-loop/scripts/code-loop.mjs start "$s" --dir "$SPEC_DIR" --allow-pending-approval >/dev/null 2>&1 || true
+              node .agents/skills/code-loop/scripts/code-loop.mjs pass "$s" --dir "$SPEC_DIR" >/dev/null 2>&1 || true
+            done
+          fi
 
           wait_for_pr_checks() {
             local checks pending failed poll

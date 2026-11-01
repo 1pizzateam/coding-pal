@@ -243,11 +243,6 @@ jobs:
 
           git fetch origin "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
           git checkout -B "$BRANCH_NAME" "refs/remotes/origin/${BASE_REF}"
-          git add "specs/issue-${ISSUE_NUMBER}/think.md" "specs/issue-${ISSUE_NUMBER}/plan.md"
-          if [ -f "specs/issue-${ISSUE_NUMBER}/editor-requests.json" ]; then
-            git add "specs/issue-${ISSUE_NUMBER}/editor-requests.json"
-          fi
-          git commit -m "docs(specs): add think.md and plan.md for issue #${ISSUE_NUMBER}"
 
       - name: Install ALTEN-group/coding-pal code primitives
         if: steps.resolve.outputs.skip != 'true'
@@ -275,8 +270,7 @@ jobs:
             ".github/instructions/" \
             ".github/agents/" \
             ".agents/" \
-            "specs/issue_number.txt" \
-            "specs/pr_number.txt" \
+            "specs/" \
             "reports/" \
             "pr-body.md" >> .git/info/exclude
           echo '[{"path": "/", "status": 200, "maxMs": 2000}]' > /tmp/preview-routes.json
@@ -370,7 +364,7 @@ jobs:
                - node .agents/skills/control-guard/scripts/control-guard.mjs --git origin/${BASE_REF}
              - If any check fails, record with code-loop.mjs fail <n> --reason '<reason>' --dir ${SPEC_DIR}, fix the code, and re-run checks.
              - When green, record with: node .agents/skills/code-loop/scripts/code-loop.mjs pass <n> --dir ${SPEC_DIR}
-             - Stage and commit Step <n>'s modified files and ${SPEC_DIR}/progress.json with a commit message referencing Step <n> and #${ISSUE_NUMBER}.
+             - Stage and commit Step <n>'s modified files with a commit message referencing Step <n> and #${ISSUE_NUMBER} (do not stage or commit files under ${SPEC_DIR}).
           4. Repeat until all steps in ${PLAN_FILE} are done in ${SPEC_DIR}/progress.json.
           5. Before authoring the PR body, run the full verification controls across the completed implementation:
              - Ensure every acceptance criterion test includes its AC-<n> token in the test name and passes criteria-verify:
@@ -390,9 +384,8 @@ jobs:
           ALLOW_PENDING_APPROVAL: "1"
         run: |
           SPEC_DIR="specs/issue-${ISSUE_NUMBER}"
-          if [ -f "${SPEC_DIR}/progress.json" ] && ! git diff --quiet "${SPEC_DIR}/progress.json"; then
-            git add "${SPEC_DIR}/progress.json"
-            git commit -m "chore(code-loop): record final progress for #${ISSUE_NUMBER}"
+          if git ls-files "${SPEC_DIR}" --error-unmatch >/dev/null 2>&1; then
+            git rm -rf --cached "${SPEC_DIR}" >/dev/null 2>&1 || true
           fi
           node .agents/skills/code-loop/scripts/branch-guard.mjs --git --base "$BASE_REF"
           node .agents/skills/code-loop/scripts/code-loop.mjs check-history --dir "$SPEC_DIR" --base "origin/${BASE_REF}"
@@ -513,6 +506,7 @@ jobs:
             specs/pr_number.txt
             specs/issue-${{ env.ISSUE_NUMBER }}/think.md
             specs/issue-${{ env.ISSUE_NUMBER }}/plan.md
+            specs/issue-${{ env.ISSUE_NUMBER }}/progress.json
             specs/issue-${{ env.ISSUE_NUMBER }}/editor-requests.json
           retention-days: 7
 
