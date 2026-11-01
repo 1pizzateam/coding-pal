@@ -75,14 +75,14 @@ Think, Plan, Code, Prove, and audits need both secrets. Upstream resume needs on
 
 Create these labels in each application repository. Add one to an open issue:
 
-| Label | Runs through | Stops at |
-|---|---|---|
-| `1-think` | Think | Specification comment |
-| `2-plan` | Think -> Plan | Plan comment |
-| `3-code` | Think -> Plan -> Code | Open PR |
-| `4-release` | Think -> Plan -> Code -> Prove -> Release | Merge, configured publication/deployment, then Done |
+| Label | Triggers workflow | Runs through | Stops at |
+|---|---|---|---|
+| `1-think` | `think.yml` | Think | Specification comment |
+| `2-plan` | `plan.yml` | Plan (falls back to Think if `# Think:` is missing) | Plan comment |
+| `3-code` | `code.yml` | Code (falls back to Think/Plan if specs are missing) | Open or updated PR |
+| `4-release` | `think.yml` | Think -> Plan -> Code -> Prove -> Release (resumes from existing specs/PR) | Merge, configured publication/deployment, then Done |
 
-Use **`4-release`** for the full autonomous pipeline. With an existing PR, it resumes directly at Prove.
+Each stage label (`1-think`, `2-plan`, `3-code`) directly triggers its own workflow (`think.yml`, `plan.yml`, `code.yml`) without launching intermediate workflows. Use **`4-release`** for the full autonomous pipeline; with an existing PR, it resumes directly at Prove.
 
 Only the numbered labels trigger delivery. The old `ready*` labels and unprefixed `think`, `plan`, `code`, and `release` labels do not.
 
@@ -116,13 +116,17 @@ Use a trigger label and add a checked box to the issue body:
 
 Inline `[pause:think]`, `[pause:plan]`, and `[pause:code]` directives also work.
 
-### Review and resume
+### Review, comment, and resume or re-run
 
-1. Review or edit the `# Think:` or `# Plan:` issue comment.
+1. Review (or edit in place) the `# Think:` or `# Plan:` issue comment, or post follow-up comments directly on the issue (or open PR).
 2. Clear any pause checkbox or directive for the phase you want to pass.
-3. Add a later trigger label. For example, add `4-release` to continue from any review checkpoint through merge.
+3. Add the label for the stage you want to run next:
+   - **`1-think`**: Re-runs **Think**, incorporating all non-bot developer comments on the issue and revising the previous `# Think:` specification.
+   - **`2-plan`**: Runs (or re-runs) **Plan**, incorporating the latest `# Think:`, any previous `# Plan:`, and all developer comments on the issue.
+   - **`3-code`**: Runs (or re-runs) **Code** from the latest default branch using the latest `# Think:`, `# Plan:`, and developer comments on the issue/PR, opening a new PR or force-updating the existing open PR in place.
+   - **`4-release`**: Continues from the furthest completed artifact (`# Think:`, `# Plan:`, or open PR) through **Prove**, merge, and release.
 
-The pipeline reuses existing specifications and PRs. To regenerate Think or Plan, delete its specification comment before reapplying a trigger label.
+Temporary specification and progress files (`specs/issue-<N>/`) exist only on the runner during the job and are excluded from Git commits and PR diffs via `.git/info/exclude`; the `# Think:` and `# Plan:` issue comments remain the single source of truth.
 
 ## Project Status
 
