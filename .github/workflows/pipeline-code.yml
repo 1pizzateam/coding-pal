@@ -452,6 +452,8 @@ jobs:
           if [ -n "$EXISTING_PR" ]; then
             PR_NUMBER="$EXISTING_PR"
             gh pr edit "$PR_NUMBER" --title "$PR_TITLE" --body-file pr-body.md
+            gh pr edit "$PR_NUMBER" --remove-label "fix-loop:1,fix-loop:2,fix-loop:3,fix-loop:4,fix-loop:5,needs:developer" 2>/dev/null || true
+            gh issue edit "$ISSUE_NUMBER" --remove-label "needs:developer" 2>/dev/null || true
             PR_URL=$(gh pr view "$PR_NUMBER" --json url --jq '.url')
           else
             PR_URL=$(gh pr create --base "$BASE_REF" --head "$BRANCH_NAME" --title "$PR_TITLE" --body-file pr-body.md)
