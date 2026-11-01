@@ -420,6 +420,19 @@ class WorkflowsTest < Minitest::Test
         assert @calls.any? { |args| args.first(3) == ['pr', 'edit', '99'] && args.include?('--remove-assignee') && args.include?('@me') }
       end
     end
+
+    [
+      [{ 'number' => 99, 'headRefName' => 'feature/issue-42-test', 'mergeable' => 'CONFLICTING', 'labels' => [] }],
+      [{ 'number' => 99, 'headRefName' => 'feature/issue-42-test', 'labels' => [{ 'name' => 'needs:rebase' }] }]
+    ].each do |conflicting_prs|
+      think_out = run_step(step('think', 'resume'), scenario(['4-release'], comments: comments, prs: conflicting_prs))
+      assert_equal 'code', think_out.fetch('resumed_stage')
+      assert_equal [['workflow', 'run', 'code.yml', '-f', 'issue_number=42']], dispatches
+
+      code_out = run_step(step('code', 'resolve'), scenario(['4-release'], comments: comments, prs: conflicting_prs), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
+      assert_equal 'false', code_out.fetch('skip')
+      assert_empty dispatches
+    end
   end
 
   def test_failures_remove_trigger_labels_without_restarting_other_issues
@@ -990,13 +1003,17 @@ class WorkflowsTest < Minitest::Test
   def test_conflicts_abort_without_pushing_or_merging
     prepare_stale_pr(conflict: true)
     head = git_command('rev-parse', 'HEAD')
-    output = run_freshness_script('Refresh PR branch against latest base', success: false)
-    assert_includes output, '::error::'
+    output = run_freshness_script('Refresh PR branch against latest base')
+    assert_includes output, '::warning::'
+    assert_includes output, 'Re-running Code from the latest main'
     assert_equal head, git_command('rev-parse', 'HEAD')
     assert_equal head, git_command('rev-parse', 'refs/remotes/origin/feature/issue-42-test')
     assert_equal '', git_command('status', '--porcelain')
     assert @calls.any? { |args| args.first(2) == %w[pr comment] }
+    assert @calls.any? { |args| args.first(3) == ['pr', 'edit', '99'] && args.include?('--add-label') && args.include?('needs:rebase') }
+    assert_equal [['workflow', 'run', 'code.yml', '-f', 'issue_number=42']], dispatches
     refute @calls.any? { |args| args.first(2) == %w[pr merge] }
+    assert_includes File.read(@environment.fetch('GITHUB_OUTPUT')), 'conflict=true'
   end
 
   def test_merge_requires_unchanged_base_and_exact_validated_head

@@ -259,6 +259,7 @@ jobs:
         if: steps.resolve.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -270,18 +271,23 @@ jobs:
           if ! git merge-base --is-ancestor "$BASE_SHA" HEAD; then
             if ! git merge --no-edit "$BASE_SHA"; then
               git merge --abort
-              MESSAGE="PR #${PR_NUMBER} conflicts with the latest ${BASE_REF}. Resolve conflicts within the approved plan, or revise Think/Plan before retrying Prove."
-              echo "::error::${MESSAGE}"
+              MESSAGE="PR #${PR_NUMBER} conflicts with the latest ${BASE_REF}. Re-running Code from the latest ${BASE_REF}."
+              echo "::warning::${MESSAGE}"
               gh pr comment "$PR_NUMBER" --body "$MESSAGE"
-              exit 1
+              GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh label create needs:rebase --force --description "PR conflicts with base branch; re-running Code from latest base" 2>/dev/null || true
+              GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh pr edit "$PR_NUMBER" --add-label "needs:rebase" 2>/dev/null || true
+              gh workflow run code.yml -f issue_number="$ISSUE_NUMBER"
+              echo "conflict=true" >> "$GITHUB_OUTPUT"
+              exit 0
             fi
             git push origin "HEAD:refs/heads/${BRANCH_NAME}"
           fi
 
+          echo "conflict=false" >> "$GITHUB_OUTPUT"
           echo "PROVE_BASE_SHA=${BASE_SHA}" >> "$GITHUB_ENV"
 
       - name: Configure git identity and restore specs / PR body
-        if: steps.resolve.outputs.skip != 'true'
+        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
         run: |
@@ -307,7 +313,7 @@ jobs:
           gh pr view "$PR_NUMBER" --json body --jq '.body // ""' > pr.md
 
       - name: Install ALTEN-group/coding-pal Prove and Remediation primitives
-        if: steps.resolve.outputs.skip != 'true'
+        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
         run: |
@@ -361,13 +367,13 @@ jobs:
           echo '[{"path": "/", "status": 200, "maxMs": 2000}]' > /tmp/preview-routes.json
 
       - uses: actions/setup-node@v4
-        if: steps.resolve.outputs.skip != 'true'
+        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true'
         with:
           node-version: ${{ inputs.node_version }}
           cache: npm
 
       - name: Clone sibling DoomR.js workspace for companion game editors
-        if: steps.resolve.outputs.skip != 'true'
+        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           REPO_NAME: ${{ github.event.repository.name }}
@@ -380,11 +386,11 @@ jobs:
               ;;
           esac
 
-      - if: steps.resolve.outputs.skip != 'true'
+      - if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true'
         run: npm ci
 
       - name: Cache Copilot CLI
-        if: steps.resolve.outputs.skip != 'true'
+        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true'
         id: cache_copilot
         uses: actions/cache@v4
         with:
@@ -392,7 +398,7 @@ jobs:
           key: copilot-cli-${{ runner.os }}-${{ inputs.node_version }}
 
       - name: Install Copilot CLI
-        if: steps.resolve.outputs.skip != 'true'
+        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true'
         run: |
           if [ ! -x "$HOME/.copilot-cli/bin/copilot" ]; then
             npm install --prefix "$HOME/.copilot-cli" -g @github/copilot
@@ -400,7 +406,7 @@ jobs:
           echo "$HOME/.copilot-cli/bin" >> "$GITHUB_PATH"
 
       - name: Prepare automated validation recording
-        if: steps.resolve.outputs.skip != 'true'
+        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
@@ -466,7 +472,7 @@ jobs:
           RECORD_SCRIPT
 
       - name: Run Prove validation and auto-remediation loop
-        if: steps.resolve.outputs.skip != 'true'
+        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -824,7 +830,7 @@ jobs:
           done
 
       - name: Approve validated Pull Request
-        if: steps.resolve.outputs.skip != 'true'
+        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
@@ -845,7 +851,7 @@ jobs:
 
       - name: Sync issue to Release on Project board
         id: release_stage
-        if: steps.resolve.outputs.skip != 'true'
+        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
@@ -856,7 +862,7 @@ jobs:
         run: TARGET_STATUS=Release bash -eo pipefail "$RUNNER_TEMP/prove-project-status.sh"
 
       - name: Verify validated revisions and merge
-        if: steps.resolve.outputs.skip != 'true'
+        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -886,7 +892,7 @@ jobs:
           GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-release" || true
 
       - name: Dispatch companion game editor updates after PR merge
-        if: steps.resolve.outputs.skip != 'true'
+        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           REPO_FULL_NAME: ${{ github.repository }}
@@ -970,7 +976,7 @@ jobs:
 
       - name: Auto-release merged @1pizzateam/* library version
         id: release
-        if: steps.resolve.outputs.skip != 'true' && inputs.auto_release_npm
+        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true' && inputs.auto_release_npm
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
@@ -1158,7 +1164,7 @@ jobs:
 
       - name: Start Release
         id: start_release
-        if: steps.resolve.outputs.skip != 'true' && (steps.release.outcome == 'success' || steps.release.outcome == 'skipped')
+        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true' && (steps.release.outcome == 'success' || steps.release.outcome == 'skipped')
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
@@ -1220,7 +1226,7 @@ jobs:
           fi
 
       - name: Upload prove.md artifact
-        if: steps.resolve.outputs.skip != 'true' && always()
+        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true' && always()
         uses: actions/upload-artifact@v4
         with:
           name: prove-spec

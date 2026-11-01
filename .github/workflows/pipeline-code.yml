@@ -85,10 +85,12 @@ jobs:
             ISSUE_VIEW=$(gh issue view "$ISSUE_NUMBER" --json labels,comments)
             HAS_CODE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("3-code") != null')
             HAS_RELEASE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("4-release") != null')
-            EXISTING_PR=$(gh pr list --state open --json number,headRefName \
-              --jq "[.[] | select(.headRefName | test(\"^(feature|fix|chore)/issue-${ISSUE_NUMBER}-\"))][0].number // empty" 2>/dev/null || true)
+            EXISTING_PR_JSON=$(gh pr list --state open --json number,headRefName,mergeable,labels \
+              --jq "[.[] | select(.headRefName | test(\"^(feature|fix|chore)/issue-${ISSUE_NUMBER}-\"))][0] // empty" 2>/dev/null || true)
+            EXISTING_PR=$(echo "$EXISTING_PR_JSON" | jq -r '.number // empty')
+            EXISTING_PR_CONFLICT=$(echo "$EXISTING_PR_JSON" | jq -r '(.mergeable // "") == "CONFLICTING" or ([.labels[]?.name] | index("needs:rebase") != null)')
 
-            if [ -n "$EXISTING_PR" ] && [ "$HAS_RELEASE_TRIGGER" = "true" ]; then
+            if [ -n "$EXISTING_PR" ] && [ "$HAS_RELEASE_TRIGGER" = "true" ] && [ "$EXISTING_PR_CONFLICT" != "true" ]; then
               echo "Found open PR #${EXISTING_PR} for issue #${ISSUE_NUMBER}; dispatching Pipeline - Prove directly."
               gh pr edit "$EXISTING_PR" --remove-assignee "@me" 2>/dev/null || true
               gh workflow run prove.yml -f pr_number="$EXISTING_PR" -f issue_number="$ISSUE_NUMBER"
@@ -548,7 +550,7 @@ jobs:
           if [ -n "$EXISTING_PR" ]; then
             PR_NUMBER="$EXISTING_PR"
             gh pr edit "$PR_NUMBER" --title "$PR_TITLE" --body-file pr.md
-            gh pr edit "$PR_NUMBER" --remove-label "fix-loop:1,fix-loop:2,fix-loop:3,fix-loop:4,fix-loop:5,needs:developer" 2>/dev/null || true
+            gh pr edit "$PR_NUMBER" --remove-label "fix-loop:1,fix-loop:2,fix-loop:3,fix-loop:4,fix-loop:5,needs:developer,needs:rebase" 2>/dev/null || true
             gh issue edit "$ISSUE_NUMBER" --remove-label "needs:developer" 2>/dev/null || true
             PR_URL=$(gh pr view "$PR_NUMBER" --json url --jq '.url')
           else
