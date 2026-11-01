@@ -421,7 +421,7 @@ jobs:
           ' 2>/dev/null || true)
           IMAGE_CONTEXT=""
           if [ -n "$IMAGE_URLS" ]; then
-            IMAGE_DIR="${RUNNER_TEMP}/issue-${ISSUE_NUMBER}-images"
+            IMAGE_DIR=".agents/issue-images"
             mkdir -p "$IMAGE_DIR"
             IMG_IDX=0
             DOWNLOADED_IMAGES=""
@@ -430,18 +430,18 @@ jobs:
               IMG_IDX=$((IMG_IDX + 1))
               IMG_FILE="${IMAGE_DIR}/attachment-${IMG_IDX}.png"
               if command -v curl >/dev/null 2>&1; then
-                curl -L --fail --silent -H "Authorization: Bearer ${GH_TOKEN}" "$img_url" -o "$IMG_FILE" 2>/dev/null || curl -L --fail --silent "$img_url" -o "$IMG_FILE" 2>/dev/null || true
+                curl -L --fail --silent "$img_url" -o "$IMG_FILE" 2>/dev/null || curl -L --fail --silent -H "Authorization: Bearer ${GH_TOKEN}" "$img_url" -o "$IMG_FILE" 2>/dev/null || true
               fi
               if [ -s "$IMG_FILE" ]; then
                 DOWNLOADED_IMAGES="${DOWNLOADED_IMAGES}
-          - ${IMG_FILE} (downloaded from ${img_url})"
+          - ${IMG_FILE} (downloaded inside workspace from ${img_url} — open this relative path directly with your Read/view file tool)"
               else
                 DOWNLOADED_IMAGES="${DOWNLOADED_IMAGES}
-          - ${img_url} (download with curl -L and inspect)"
+          - ${img_url} (download into .agents/issue-images/ with curl -L and inspect)"
               fi
             done <<< "$IMAGE_URLS"
             IMAGE_CONTEXT="
-          Attached Visual Evidence / Screenshots on Issue #${ISSUE_NUMBER} (inspect with your file-reading tool when verifying visual behavior):${DOWNLOADED_IMAGES}
+          Attached Visual Evidence / Screenshots on Issue #${ISSUE_NUMBER} (open and inspect directly with your multimodal file-reading tool at the workspace path below when verifying visual behavior):${DOWNLOADED_IMAGES}
           "
           fi
 

@@ -254,6 +254,14 @@ jobs:
         if: steps.resume.outputs.resumed_stage == 'none'
         with:
           node-version: 22
+          cache: npm
+
+      - name: Install project dependencies for codebase investigation
+        if: steps.resume.outputs.resumed_stage == 'none'
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --ignore-scripts 2>/dev/null || npm ci || true
+          fi
 
       - name: Clone sibling DoomR.js workspace for companion game editors
         if: steps.resume.outputs.resumed_stage == 'none'
@@ -321,7 +329,7 @@ jobs:
           ' 2>/dev/null || true)
           IMAGE_CONTEXT=""
           if [ -n "$IMAGE_URLS" ]; then
-            IMAGE_DIR="${RUNNER_TEMP}/issue-${ISSUE_NUMBER}-images"
+            IMAGE_DIR=".agents/issue-images"
             mkdir -p "$IMAGE_DIR"
             IMG_IDX=0
             DOWNLOADED_IMAGES=""
@@ -330,18 +338,18 @@ jobs:
               IMG_IDX=$((IMG_IDX + 1))
               IMG_FILE="${IMAGE_DIR}/attachment-${IMG_IDX}.png"
               if command -v curl >/dev/null 2>&1; then
-                curl -L --fail --silent -H "Authorization: Bearer ${GH_TOKEN}" "$img_url" -o "$IMG_FILE" 2>/dev/null || curl -L --fail --silent "$img_url" -o "$IMG_FILE" 2>/dev/null || true
+                curl -L --fail --silent "$img_url" -o "$IMG_FILE" 2>/dev/null || curl -L --fail --silent -H "Authorization: Bearer ${GH_TOKEN}" "$img_url" -o "$IMG_FILE" 2>/dev/null || true
               fi
               if [ -s "$IMG_FILE" ]; then
                 DOWNLOADED_IMAGES="${DOWNLOADED_IMAGES}
-          - ${IMG_FILE} (downloaded from ${img_url})"
+          - ${IMG_FILE} (downloaded inside workspace from ${img_url} — open this relative path directly with your Read/view file tool)"
               else
                 DOWNLOADED_IMAGES="${DOWNLOADED_IMAGES}
-          - ${img_url} (download with curl -L and inspect)"
+          - ${img_url} (download into .agents/issue-images/ with curl -L and inspect)"
               fi
             done <<< "$IMAGE_URLS"
             IMAGE_CONTEXT="
-          Attached Visual Evidence / Screenshots on Issue #${ISSUE_NUMBER} (MUST be viewed and inspected with your file-reading tool before diagnosing or designing, so your specification matches the exact visual scene, room/location, and artifact shown in the screenshot):${DOWNLOADED_IMAGES}
+          Attached Visual Evidence / Screenshots on Issue #${ISSUE_NUMBER} (MUST be opened and viewed directly with your multimodal file-reading tool at the workspace path below before diagnosing or designing, so your specification matches the exact visual scene, room/location, and artifact shown in the screenshot):${DOWNLOADED_IMAGES}
           "
           fi
 
@@ -386,7 +394,7 @@ jobs:
 
           Follow .github/instructions/think.instructions.md and .agents/skills/think/SKILL.md (and its references/think-contract.md).
           Keep the exact required headings and '- **<Label>:**' bullet keys enforced by validate-think.mjs, while producing a rich, insightful, IDE-grade architectural and product design specification:
-          - **Deep Codebase Investigation First:** Before writing ${THINK_FILE}, thoroughly read the relevant source files, data structures, rendering/audio/physics/UI pipelines, and tests so every section is grounded in real symbols, modules, and mechanics.
+          - **Deep Codebase Investigation First:** Before writing ${THINK_FILE}, thoroughly read the relevant source files, data structures, rendering/audio/physics/UI pipelines, and tests so every section is grounded in real symbols, modules, and mechanics. When diagnosing a visual, rendering, or cross-module issue, trace the complete end-to-end pipeline (including both indoor and outdoor geometry builders, solid occluder backings, vertex depth biases, fragment shader discard/clip bounds such as vHeight thresholds, and skybox/fog backgrounds) and include every required companion shader or helper file in ## Blast Radius (- **Affected:**) so the implementation is never blocked by an out-of-scope shader or helper constraint.
           - **Product & Design Ambition (No Lazy No-Op Workarounds):** When an issue is brief or high-level (e.g., a 1-sentence feature idea), expand it with genuine product, UX, or gameplay creativity that fulfills the user's real intent. Never select a trivial or no-op workaround (such as claiming existing unrelated items already satisfy the request) just to minimize code changes; choose the option that delivers a cohesive, complete, and compelling feature.
           - **Substantive Options & Trade-Off Analysis:** Explore 3 to 4 genuinely distinct architectural/design options in ## Options Considered (for example: lightweight extension of an existing entity, a dedicated interactive/destructible subsystem, or a Forge-composed/hybrid design). Give each option's Approach, Trade-offs, Cost, and Risk thorough multi-sentence analysis (and 2-space indented sub-bullets where helpful).
           - **Rich Technical Depth in Flow & Reasoning:** In ## Chosen Approach (Reasoning) and ## System Flow & Responsibilities (Request Tracing, Component Responsibilities, Boundaries), write detailed multi-sentence explanations, 2-space indented sub-bullets ('  - ...'), and optional 'mermaid' flow/state diagrams covering concrete data models, state transitions, interaction mechanics, visual/audio feedback, and exact module boundaries. Keep top-level '- **<Label>:**' keys strictly matching the contract; indent any sub-bullets by at least 2 spaces so validate-think.mjs parses them as continuation lines of that field, and do not include source code blocks or task checkboxes.

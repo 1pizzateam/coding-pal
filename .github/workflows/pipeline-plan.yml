@@ -255,6 +255,14 @@ jobs:
         if: steps.resolve.outputs.skip != 'true'
         with:
           node-version: 22
+          cache: npm
+
+      - name: Install project dependencies for codebase verification
+        if: steps.resolve.outputs.skip != 'true'
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --ignore-scripts 2>/dev/null || npm ci || true
+          fi
 
       - name: Clone sibling DoomR.js workspace for companion game editors
         if: steps.resolve.outputs.skip != 'true'
@@ -318,7 +326,7 @@ jobs:
           ' 2>/dev/null || true)
           IMAGE_CONTEXT=""
           if [ -n "$IMAGE_URLS" ]; then
-            IMAGE_DIR="${RUNNER_TEMP}/issue-${ISSUE_NUMBER}-images"
+            IMAGE_DIR=".agents/issue-images"
             mkdir -p "$IMAGE_DIR"
             IMG_IDX=0
             DOWNLOADED_IMAGES=""
@@ -327,18 +335,18 @@ jobs:
               IMG_IDX=$((IMG_IDX + 1))
               IMG_FILE="${IMAGE_DIR}/attachment-${IMG_IDX}.png"
               if command -v curl >/dev/null 2>&1; then
-                curl -L --fail --silent -H "Authorization: Bearer ${GH_TOKEN}" "$img_url" -o "$IMG_FILE" 2>/dev/null || curl -L --fail --silent "$img_url" -o "$IMG_FILE" 2>/dev/null || true
+                curl -L --fail --silent "$img_url" -o "$IMG_FILE" 2>/dev/null || curl -L --fail --silent -H "Authorization: Bearer ${GH_TOKEN}" "$img_url" -o "$IMG_FILE" 2>/dev/null || true
               fi
               if [ -s "$IMG_FILE" ]; then
                 DOWNLOADED_IMAGES="${DOWNLOADED_IMAGES}
-          - ${IMG_FILE} (downloaded from ${img_url})"
+          - ${IMG_FILE} (downloaded inside workspace from ${img_url} — open this relative path directly with your Read/view file tool)"
               else
                 DOWNLOADED_IMAGES="${DOWNLOADED_IMAGES}
-          - ${img_url} (download with curl -L and inspect)"
+          - ${img_url} (download into .agents/issue-images/ with curl -L and inspect)"
               fi
             done <<< "$IMAGE_URLS"
             IMAGE_CONTEXT="
-          Attached Visual Evidence / Screenshots on Issue #${ISSUE_NUMBER} (MUST be viewed and inspected with your file-reading tool before writing ${PLAN_FILE}):${DOWNLOADED_IMAGES}
+          Attached Visual Evidence / Screenshots on Issue #${ISSUE_NUMBER} (MUST be opened and viewed directly with your multimodal file-reading tool at the workspace path below before writing ${PLAN_FILE}):${DOWNLOADED_IMAGES}
           "
           fi
 
@@ -376,7 +384,7 @@ jobs:
           Order ## Implementation Checklist steps strictly so every step passes its Verification, Bootable Check, and full test suite immediately when executed in sequence: always place core implementation steps BEFORE the test steps that assert on their new behavior (never place a test step before the implementation step it depends on), and if an implementation step changes existing behavior asserted by an existing test file, update that existing assertion in the same implementation step (listing both files in Files) while reserving subsequent test steps for adding new AC-<n> tests.
           Keep the exact required headings and '- **<Label>:**' bullet keys enforced by validate-plan.mjs, while producing a comprehensive, IDE-grade implementation blueprint:
           - **Rich, Concrete Step Specifications:** In each step's '- **Action:**' field, do NOT write vague 1-sentence summaries. Provide a thorough multi-sentence technical specification (plus 2-space indented sub-bullets '  - ...' where helpful) detailing exact function/method signatures, data structures, constants/glyphs, state transitions, integration points with existing symbols, and edge-case handling so the Code agent can implement the feature with zero guesswork. Only top-level '- **Files:**', '- **Action:**', '- **Verification:**', '- **Bootable Check:**', and '- **Serves:**' bullets may start at column 0 in a step; indent any sub-bullets inside Action by at least 2 spaces. Do NOT write source code or test code blocks in ${PLAN_FILE} (no code fences or New Code fields)—code is written once in Code.
-          - **High-Value Acceptance Criteria (AC-1..AC-8):** Formulate 4 to 8 substantive, observable 'Given ..., then ...' criteria (each on a single '- **AC-<N>:**' line) that verify core mechanics, state transitions, edge cases, and invariants—not just superficial existence checks.
+          - **High-Value Acceptance Criteria (AC-1..AC-8):** Formulate 4 to 8 substantive, observable 'Given ..., then ...' criteria (each on a single '- **AC-<N>:**' line) that verify core mechanics, state transitions, edge cases, and invariants—not just superficial existence checks. Never write an acceptance criterion that forbids modifying a shader, clip threshold, or helper if that shader/helper must be adjusted for the primary fix (AC-1) to work end-to-end.
           ${LIBRARY_DOCS_HINT}
           Every test in ## Test Plan must include its acceptance criterion ID ('AC-1', 'AC-2', etc.) in the test name (for example 'tests/<file>: AC-1 ...' or 'scripts/<file>: AC-1 ...') and start the Test Plan 'Test' cell with the relative test file path so criteria-verify can verify every criterion with --require-test-files.
           Do not modify any production or test files; only write ${PLAN_FILE}.
