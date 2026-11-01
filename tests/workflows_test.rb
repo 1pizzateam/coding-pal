@@ -15,7 +15,7 @@ class WorkflowsTest < Minitest::Test
     @directory = Dir.mktmpdir('coding-pal-workflows-')
     bin = File.join(@directory, 'bin')
     Dir.mkdir(bin)
-    %w[bash jq mkdir head uname cat rm tr sed].each do |command|
+    %w[bash jq mkdir head uname cat rm tr sed chmod printf].each do |command|
       executable = ENV.fetch('PATH').split(File::PATH_SEPARATOR)
                       .map { |path| File.join(path, command) }
                       .find { |path| File.executable?(path) && !File.directory?(path) }
@@ -1231,5 +1231,103 @@ class WorkflowsTest < Minitest::Test
     code_prompt = JSON.parse(File.read(copilot_args_file)).last
     assert_includes code_prompt, 'Please play the secret SFX when the door starts opening instead of on room entry.'
     refute_includes code_prompt, 'Paused after Think for Manual Validation'
+  end
+
+  def test_ai_cost_footers_are_appended_and_stripped_when_restoring_specs
+    copilot_bin = File.join(@directory, 'bin/copilot')
+    session_dir = File.join(@directory, '.copilot/session-state/s1')
+    File.write(copilot_bin, <<~RUBY)
+      #!#{RbConfig.ruby}
+      require 'fileutils'
+      require 'json'
+      dir = #{session_dir.inspect}
+      FileUtils.mkdir_p(dir)
+      File.write(File.join(dir, 'events.jsonl'), [
+        JSON.generate({ 'type' => 'assistant.usage', 'model' => 'claude-sonnet-4.5', 'input_tokens' => 10_000, 'output_tokens' => 2_000 }),
+        JSON.generate({ 'type' => 'assistant.usage', 'model' => 'claude-sonnet-4.5', 'input_tokens' => 5_000, 'output_tokens' => 1_000 })
+      ].join("\\n") + "\\n")
+    RUBY
+    File.chmod(0o755, copilot_bin)
+
+    data = scenario(['1-think'])
+    data['issue']['title'] = 'Track AI cost per pipeline step'
+    FileUtils.mkdir_p(File.join(@directory, 'specs/issue-42'))
+    File.write(File.join(@directory, 'specs/issue-42/think.md'), "# Think: Track AI cost\n\n## Problem\nCost visibility.")
+
+    think_agent_step = steps('think').find { |item| item['name'] == 'Fetch issue context and run Thinker agent' }
+    run_step(think_agent_step, data)
+    assert File.file?(File.join(@directory, 'specs/issue-42/ai-cost-step.md'))
+
+    think_comment_step = steps('think').find { |item| item['name'] == 'Comment think.md on issue' }
+    run_step(think_comment_step, data)
+    comment_call = @calls.find { |args| args.first(2) == %w[issue comment] }
+    refute_nil comment_call
+    posted_think = File.read(comment_call[comment_call.index('--body-file') + 1])
+    assert_includes posted_think, "# Think: Track AI cost\n\n## Problem\nCost visibility."
+    assert_includes posted_think, '<!-- ai-cost-step:{"step":"Think","model":"claude-sonnet-4.5","input_tokens":15000,"output_tokens":3000,"cached_tokens":0,"requests":2,"cost_usd":0.09} -->'
+    assert_includes posted_think, '💰 **AI Cost (Think):** `$0.0900` (`claude-sonnet-4.5` · 15000 in / 3000 out tokens · 2 requests)'
+    refute_includes File.read(File.join(@directory, 'specs/issue-42/think.md')), 'ai-cost-step'
+
+    plan_data = scenario(['2-plan'], comments: [posted_think])
+    plan_data['issue']['title'] = 'Track AI cost per pipeline step'
+    FileUtils.rm_rf(File.join(@directory, 'specs/issue-42'))
+    run_step(step('plan', 'resolve'), plan_data)
+    restored_think = File.read('/tmp/specs/issue-42/think.md')
+    assert_equal "# Think: Track AI cost\n\n## Problem\nCost visibility.\n", restored_think
+    refute_includes restored_think, 'ai-cost-step'
+
+    FileUtils.mkdir_p(File.join(@directory, 'specs/issue-42'))
+    File.write(File.join(@directory, 'specs/issue-42/think.md'), restored_think)
+    File.write(File.join(@directory, 'specs/issue-42/plan.md'), "# Plan: Track AI cost\n\n## Steps\n1. Add cost footer.")
+    plan_agent_step = steps('plan').find { |item| item['name'] == 'Fetch issue context and run Planner agent' }
+    run_step(plan_agent_step, plan_data)
+    plan_comment_step = steps('plan').find { |item| item['name'] == 'Comment plan.md on issue' }
+    run_step(plan_comment_step, plan_data)
+    plan_comment_call = @calls.find { |args| args.first(2) == %w[issue comment] }
+    posted_plan = File.read(plan_comment_call[plan_comment_call.index('--body-file') + 1])
+    assert_includes posted_plan, '💰 **AI Cost (Plan):** `$0.0900` (`claude-sonnet-4.5` · 15000 in / 3000 out tokens · 2 requests · **Cumulative:** `$0.1800`)'
+    refute_includes File.read(File.join(@directory, 'specs/issue-42/plan.md')), 'ai-cost-step'
+  ensure
+    FileUtils.rm_rf('/tmp/specs/issue-42')
+  end
+
+  def test_release_report_includes_cumulative_ai_cost_summary_table
+    comments = [
+      "# Think: Spec\n\n---\n<!-- ai-cost-step:{\"step\":\"Think\",\"model\":\"claude-sonnet-4.5\",\"input_tokens\":10000,\"output_tokens\":2000,\"cached_tokens\":0,\"requests\":2,\"cost_usd\":0.06} -->\n💰 **AI Cost (Think):** `$0.0600`",
+      "# Plan: Spec\n\n---\n<!-- ai-cost-step:{\"step\":\"Plan\",\"model\":\"claude-sonnet-4.5\",\"input_tokens\":20000,\"output_tokens\":4000,\"cached_tokens\":0,\"requests\":3,\"cost_usd\":0.12} -->\n💰 **AI Cost (Plan):** `$0.1200`",
+      "Pull request opened for #42: https://example.test/pr/99\n\n---\n<!-- ai-cost-step:{\"step\":\"Code\",\"model\":\"claude-sonnet-4.5\",\"input_tokens\":50000,\"output_tokens\":10000,\"cached_tokens\":0,\"requests\":8,\"cost_usd\":0.3} -->\n💰 **AI Cost (Code):** `$0.3000`",
+      "# Prove: Spec\n\n---\n<!-- ai-cost-step:{\"step\":\"Prove\",\"model\":\"claude-sonnet-4.5\",\"input_tokens\":15000,\"output_tokens\":1000,\"cached_tokens\":0,\"requests\":2,\"cost_usd\":0.06} -->\n💰 **AI Cost (Prove):** `$0.0600`"
+    ]
+    status_script = status_step('prove', 'Prove').fetch('run').split("<<'STATUS_SCRIPT'\n", 2).last.split("\nSTATUS_SCRIPT", 2).first
+    File.write(File.join(@directory, 'prove-project-status.sh'), status_script)
+    data = scenario(['4-release'], comments: comments, project: project)
+    run_step(step('prove', 'start_release'), data, { 'RELEASE_MERGE_SHA' => 'merge-sha' })
+    report = File.read(File.join(@directory, 'reports/release.md'))
+    assert_includes report, '## AI Cost Summary'
+    assert_includes report, '| Think | `claude-sonnet-4.5` | 10000 | 2000 | 2 | `$0.0600` |'
+    assert_includes report, '| Plan | `claude-sonnet-4.5` | 20000 | 4000 | 3 | `$0.1200` |'
+    assert_includes report, '| Code | `claude-sonnet-4.5` | 50000 | 10000 | 8 | `$0.3000` |'
+    assert_includes report, '| Prove | `claude-sonnet-4.5` | 15000 | 1000 | 2 | `$0.0600` |'
+    assert_includes report, '| **Total** | — | **95000** | **17000** | **15** | **`$0.5400`** |'
+  end
+
+  def test_project_board_syncs_cumulative_ai_cost_custom_field
+    comments = [
+      "# Think: Spec\n\n---\n<!-- ai-cost-step:{\"step\":\"Think\",\"model\":\"claude-sonnet-4.5\",\"input_tokens\":10000,\"output_tokens\":2000,\"cached_tokens\":0,\"requests\":2,\"cost_usd\":0.06} -->",
+      "# Plan: Spec\n\n---\n<!-- ai-cost-step:{\"step\":\"Plan\",\"model\":\"claude-sonnet-4.5\",\"input_tokens\":20000,\"output_tokens\":4000,\"cached_tokens\":0,\"requests\":3,\"cost_usd\":0.12} -->"
+    ]
+    proj_num = project
+    proj_num['data']['repository']['owner']['projectsV2']['nodes'].first['costField'] = { 'id' => 'COST_NUM', 'name' => 'AI Cost', 'dataType' => 'NUMBER' }
+    run_step(status_step('code', 'Code'), scenario(['4-release'], comments: comments, project: proj_num))
+    cost_mutation = @calls.find { |args| args.include?('fieldId=COST_NUM') }
+    refute_nil cost_mutation
+    assert_includes cost_mutation, 'val=0.18'
+
+    proj_text = project
+    proj_text['data']['repository']['owner']['projectsV2']['nodes'].first['costField'] = { 'id' => 'COST_TXT', 'name' => 'AI Cost', 'dataType' => 'TEXT' }
+    run_step(status_step('release', 'Done'), scenario(['4-release'], comments: comments, project: proj_text))
+    text_mutation = @calls.find { |args| args.include?('fieldId=COST_TXT') }
+    refute_nil text_mutation
+    assert_includes text_mutation, 'val=$0.1800'
   end
 end

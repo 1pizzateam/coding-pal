@@ -57,8 +57,8 @@ jobs:
           HAS_PLAN_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("2-plan") != null')
           HAS_CODE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("3-code") != null')
           HAS_RELEASE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("4-release") != null')
-          EXISTING_THINK=$(echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty')
-          EXISTING_PLAN=$(echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Plan:"; "m"))] | last // empty')
+          EXISTING_THINK=$(echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")')
+          EXISTING_PLAN=$(echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Plan:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")')
           EXISTING_PR=$(gh pr list --state open --json number,headRefName \
             --jq "[.[] | select(.headRefName | test(\"^(feature|fix|chore)/issue-${ISSUE_NUMBER}-\"))][0].number // empty" 2>/dev/null || true)
 
@@ -95,6 +95,7 @@ jobs:
         if: steps.resume.outputs.resumed_stage == 'none'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
           PROJECT_TITLE: ${{ inputs.project_title }}
@@ -122,6 +123,13 @@ jobs:
                             options { id name }
                           }
                         }
+                        costField: field(name: "AI Cost") {
+                          ... on ProjectV2Field {
+                            id
+                            name
+                            dataType
+                          }
+                        }
                       }
                     }
                   }
@@ -134,6 +142,8 @@ jobs:
           PROJECT_ID=$(echo "$PROJECT" | jq -r '.id // empty')
           FIELD_ID=$(echo "$PROJECT" | jq -r '.field.id // empty')
           OPTION_ID=$(echo "$PROJECT" | jq -r --arg status "$TARGET_STATUS" '.field.options[]? | select((.name | ascii_downcase) == ($status | ascii_downcase)) | .id' | head -n 1)
+          COST_FIELD_ID=$(echo "$PROJECT" | jq -r '.costField.id // empty')
+          COST_FIELD_TYPE=$(echo "$PROJECT" | jq -r '.costField.dataType // "NUMBER"')
 
           if [ -z "$ISSUE_ID" ] || [ -z "$PROJECT_ID" ] || [ -z "$FIELD_ID" ] || [ -z "$OPTION_ID" ]; then
             echo "::error::Could not find issue, project, Status field, or '$TARGET_STATUS' option for ${OWNER}/${REPO} in Project '$PROJECT_TITLE'."
@@ -152,6 +162,46 @@ jobs:
                 value: { singleSelectOptionId: $optionId }
               }) { projectV2Item { id } }
             }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$FIELD_ID" -f optionId="$OPTION_ID" >/dev/null
+
+          if [ -n "$COST_FIELD_ID" ]; then
+            echo "PROJECT_ID=${PROJECT_ID}" >> "$GITHUB_ENV"
+            echo "PROJECT_ITEM_ID=${ITEM_ID}" >> "$GITHUB_ENV"
+            echo "COST_FIELD_ID=${COST_FIELD_ID}" >> "$GITHUB_ENV"
+            echo "COST_FIELD_TYPE=${COST_FIELD_TYPE}" >> "$GITHUB_ENV"
+            COMMENTS_JSON=$(gh issue view "$ISSUE_NUMBER" --json comments 2>/dev/null || echo '{"comments":[]}')
+            PENDING_JSON="[]"
+            if [ -s "specs/issue-${ISSUE_NUMBER}/ai-cost-pending.jsonl" ]; then
+              PENDING_JSON=$(jq -s '.' "specs/issue-${ISSUE_NUMBER}/ai-cost-pending.jsonl")
+            fi
+            TOTAL_COST=$(jq -n --argjson issue "$COMMENTS_JSON" --argjson pending "$PENDING_JSON" '
+              ([ $issue.comments[]?.body // "" | scan("<!-- ai-cost-step:(\\{[^\\n]*?\\}) -->") | .[0] | fromjson? ] + $pending)
+              | [.[].cost_usd // 0] | add // 0 | ((. * 10000 | round) / 10000)
+            ')
+            if [ "$COST_FIELD_TYPE" = "TEXT" ]; then
+              TOTAL_COST_TEXT=$(jq -n --argjson c "$TOTAL_COST" '
+                def fmt_usd:
+                  ((. * 10000 | round) | tostring) as $s
+                  | (if ($s | length) <= 4 then ("0000" + $s)[-4:] else $s end) as $padded
+                  | (if ($s | length) <= 4 then "0" else $s[0:($s | length) - 4] end) + "." + $padded[-4:];
+                "$" + ($c | fmt_usd)
+              ' -r)
+              gh api graphql -f query='
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $cost: String!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
+                    value: { text: $cost }
+                  }) { projectV2Item { id } }
+                }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$COST_FIELD_ID" -f cost="$TOTAL_COST_TEXT" >/dev/null
+            else
+              gh api graphql -f query='
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $cost: Float!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
+                    value: { number: $cost }
+                  }) { projectV2Item { id } }
+                }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$COST_FIELD_ID" -F cost="$TOTAL_COST" >/dev/null
+            fi
+          fi
 
       - uses: actions/checkout@v4
         if: steps.resume.outputs.resumed_stage == 'none'
@@ -213,10 +263,10 @@ jobs:
           ISSUE_TITLE=$(echo "$ISSUE_JSON" | jq -r '.title')
           ISSUE_BODY=$(echo "$ISSUE_JSON" | jq -r '.body // ""')
           ALREADY_ESCALATED=$(echo "$ISSUE_JSON" | jq -r '[.labels[].name] | index("upstream-escalated:1") != null')
-          PREVIOUS_THINK=$(echo "$ISSUE_JSON" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty')
+          PREVIOUS_THINK=$(echo "$ISSUE_JSON" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")')
           DEV_COMMENTS=$(echo "$ISSUE_JSON" | jq -r '
             [.comments[]
-              | select((.body // "") | test("^(# (Think|Plan|Prove|Release report)|⏸️ \\*\\*(Paused after|Blocked on)|Pull request opened for #|### Companion Game Editor Updates Dispatched|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
+              | select((.body // "") | test("^(# (Think|Plan|Prove|Release|Release report)|⏸️ \\*\\*(Paused after|Blocked on)|Pull request opened for #|### Companion Game Editor Updates Dispatched|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
               | select((.body // "") | gsub("\\s+"; "") | length > 0)
               | "### Comment by @" + (.author.login // "developer") + " (" + (.createdAt // "") + "):\n" + .body
             ] | join("\n\n")
@@ -256,6 +306,8 @@ jobs:
             LIBRARY_DOCS_HINT="Because this repository is a published @1pizzateam/* library, if solving this issue adds or changes any public export, class, method, or signature in src/**, you MUST note the corresponding documentation files (exact files under website/docs/ if website/docs exists, or README.md otherwise) in ## Blast Radius (- **Affected:**) so the Plan phase includes them in scope and passes release-readiness verification."
           fi
 
+          export COPILOT_OTEL_ENABLED="true"
+          export COPILOT_OTEL_FILE_EXPORTER_PATH="${RUNNER_TEMP}/copilot-otel.jsonl"
           copilot --model="auto" --agent="think" --allow-all-tools \
             --prompt "Produce a validated Think record at ${THINK_FILE} for GitHub Issue #${ISSUE_NUMBER}.
           Issue Title: ${ISSUE_TITLE}
@@ -275,6 +327,45 @@ jobs:
           Do not post comments or edit labels on GitHub issues; only write local files under ${SPEC_DIR}.
           Validate the generated file with: node .agents/skills/think/scripts/validate-think.mjs --think ${THINK_FILE} and fix any validation errors until it exits with code 0."
 
+          STEP_COST_JSON=$(
+            {
+              for f in "${COPILOT_HOME:-$HOME/.copilot}"/session-state/*/events.jsonl "$COPILOT_OTEL_FILE_EXPORTER_PATH"; do
+                [ -f "$f" ] && cat "$f" || true
+              done
+            } | jq -sc --arg step "Think" '
+              def num(x): if (x | type) == "number" then x elif (x | type) == "string" then (x | tonumber? // 0) else 0 end;
+              def tok_in: [.. | objects | (.input_tokens? // .prompt_tokens? // .inputTokens? // .promptTokens? // ."gen_ai.usage.input_tokens"? // empty) | num(.)] | add // 0;
+              def tok_out: [.. | objects | (.output_tokens? // .completion_tokens? // .outputTokens? // .completionTokens? // ."gen_ai.usage.output_tokens"? // empty) | num(.)] | add // 0;
+              def tok_cache: [.. | objects | (.cache_read_tokens? // .cached_tokens? // .cacheReadTokens? // ."gen_ai.usage.cache_read.input_tokens"? // empty) | num(.)] | add // 0;
+              def reqs: [.. | objects | select(.type? == "assistant.usage" or .type? == "assistant.turn_end" or .type? == "session.metrics" or ."gen_ai.usage.input_tokens"? != null or .input_tokens? != null or .prompt_tokens? != null)] | length;
+              def explicit_cost: [.. | objects | (.cost_usd? // .total_cost_usd? // .costUsd? // .totalCostUsd? // ."gen_ai.usage.cost"? // empty) | num(.)] | add // 0;
+              def models: ([.. | objects | (.model? // ."gen_ai.response.model"? // ."gen_ai.request.model"? // empty) | select(type == "string" and length > 0 and . != "auto")] + [.. | objects | .modelMetrics? | select(type == "object") | keys[]]) | unique;
+              def model_str: (models | if length == 0 then "auto" else join(", ") end);
+              def rate_in(m): if (m | test("opus"; "i")) then 15.0 elif (m | test("haiku|mini|flash"; "i")) then 0.25 else 3.0 end;
+              def rate_out(m): if (m | test("opus"; "i")) then 75.0 elif (m | test("haiku|mini|flash"; "i")) then 1.25 else 15.0 end;
+              (tok_in) as $in | (tok_out) as $out | (tok_cache) as $cache | (model_str) as $m |
+              (if explicit_cost > 0 then explicit_cost else (($in * rate_in($m) + $out * rate_out($m)) / 1000000.0) end) as $cost |
+              {
+                step: $step,
+                model: $m,
+                input_tokens: $in,
+                output_tokens: $out,
+                cached_tokens: $cache,
+                requests: (if reqs > 0 then reqs else 1 end),
+                cost_usd: (($cost * 10000 | round) / 10000)
+              }
+            ' 2>/dev/null || echo '{"step":"Think","model":"auto","input_tokens":0,"output_tokens":0,"cached_tokens":0,"requests":1,"cost_usd":0}'
+          )
+          rm -f "${COPILOT_OTEL_FILE_EXPORTER_PATH}"
+          echo "$STEP_COST_JSON" >> "${SPEC_DIR}/ai-cost.jsonl"
+          echo "$STEP_COST_JSON" > "${SPEC_DIR}/ai-cost-pending.jsonl"
+          PRIOR_COST=$(echo "$ISSUE_JSON" | jq -r '.comments[].body // empty' 2>/dev/null | sed -n 's/.*<!-- ai-cost-step:\({.*}\) -->.*/\1/p' | jq -sr '([.[].cost_usd // 0] | add // 0)' 2>/dev/null || echo "0")
+          echo "$STEP_COST_JSON" | jq -r --argjson prior "${PRIOR_COST:-0}" '
+            def fmt_usd(x): (x * 10000 | round / 10000) | tostring | if test("\\.") then (split(".") | .[0] + "." + ((.[1] + "0000")[0:4])) else . + ".0000" end;
+            ((.cost_usd // 0) + $prior) as $cum |
+            "\n\n---\n<!-- ai-cost-step:" + (. | tojson) + " -->\n💰 **AI Cost (" + .step + "):** `$" + fmt_usd(.cost_usd) + "` (`" + .model + "` · " + (.input_tokens | tostring) + " in / " + (.output_tokens | tostring) + " out tokens · " + (.requests | tostring) + (if .requests == 1 then " request" else " requests" end) + (if $prior > 0 then " · **Cumulative:** `$" + fmt_usd($cum) + "`" else "" end) + ")"
+          ' > "${SPEC_DIR}/ai-cost-step.md"
+
       - name: Validate think.md contract
         if: steps.resume.outputs.resumed_stage == 'none'
         env:
@@ -291,8 +382,47 @@ jobs:
           ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
           THINK_FILE="specs/issue-${ISSUE_NUMBER}/think.md"
-          gh issue comment "$ISSUE_NUMBER" --body-file "$THINK_FILE"
+          COST_STEP_FILE="specs/issue-${ISSUE_NUMBER}/ai-cost-step.md"
+          COMMENT_FILE="$THINK_FILE"
+          if [ -s "$COST_STEP_FILE" ]; then
+            COMMENT_FILE="$RUNNER_TEMP/think-comment.md"
+            printf "%s%s\n" "$(cat "$THINK_FILE")" "$(cat "$COST_STEP_FILE")" > "$COMMENT_FILE"
+          fi
+          gh issue comment "$ISSUE_NUMBER" --body-file "$COMMENT_FILE"
+          rm -f "specs/issue-${ISSUE_NUMBER}/ai-cost-pending.jsonl"
           echo "$ISSUE_NUMBER" > specs/issue_number.txt
+
+          if [ -n "${COST_FIELD_ID:-}" ] && [ -n "${PROJECT_ID:-}" ] && [ -n "${PROJECT_ITEM_ID:-}" ]; then
+            COMMENTS_JSON=$(gh issue view "$ISSUE_NUMBER" --json comments 2>/dev/null || echo '{"comments":[]}')
+            TOTAL_COST=$(jq -n --argjson issue "$COMMENTS_JSON" '
+              [ $issue.comments[]?.body // "" | scan("<!-- ai-cost-step:(\\{[^\\n]*?\\}) -->") | .[0] | fromjson? ]
+              | [.[].cost_usd // 0] | add // 0 | ((. * 10000 | round) / 10000)
+            ')
+            if [ "${COST_FIELD_TYPE:-NUMBER}" = "TEXT" ]; then
+              TOTAL_COST_TEXT=$(jq -n --argjson c "$TOTAL_COST" '
+                def fmt_usd:
+                  ((. * 10000 | round) | tostring) as $s
+                  | (if ($s | length) <= 4 then ("0000" + $s)[-4:] else $s end) as $padded
+                  | (if ($s | length) <= 4 then "0" else $s[0:($s | length) - 4] end) + "." + $padded[-4:];
+                "$" + ($c | fmt_usd)
+              ' -r)
+              gh api graphql -f query='
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $cost: String!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
+                    value: { text: $cost }
+                  }) { projectV2Item { id } }
+                }' -f projectId="$PROJECT_ID" -f itemId="$PROJECT_ITEM_ID" -f fieldId="$COST_FIELD_ID" -f cost="$TOTAL_COST_TEXT" >/dev/null
+            else
+              gh api graphql -f query='
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $cost: Float!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
+                    value: { number: $cost }
+                  }) { projectV2Item { id } }
+                }' -f projectId="$PROJECT_ID" -f itemId="$PROJECT_ITEM_ID" -f fieldId="$COST_FIELD_ID" -F cost="$TOTAL_COST" >/dev/null
+            fi
+          fi
 
           EDITOR_REQ_FILE="specs/issue-${ISSUE_NUMBER}/editor-requests.json"
           if [ -s "$EDITOR_REQ_FILE" ]; then

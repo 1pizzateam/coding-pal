@@ -147,6 +147,7 @@ jobs:
         if: steps.resolve.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
           PROJECT_TITLE: ${{ inputs.project_title }}
@@ -175,6 +176,13 @@ jobs:
                             options { id name }
                           }
                         }
+                        costField: field(name: "AI Cost") {
+                          ... on ProjectV2Field {
+                            id
+                            name
+                            dataType
+                          }
+                        }
                       }
                     }
                   }
@@ -187,6 +195,8 @@ jobs:
           PROJECT_ID=$(echo "$PROJECT" | jq -r '.id // empty')
           FIELD_ID=$(echo "$PROJECT" | jq -r '.field.id // empty')
           OPTION_ID=$(echo "$PROJECT" | jq -r --arg status "$TARGET_STATUS" '.field.options[]? | select((.name | ascii_downcase) == ($status | ascii_downcase)) | .id' | head -n 1)
+          COST_FIELD_ID=$(echo "$PROJECT" | jq -r '.costField.id // empty')
+          COST_FIELD_TYPE=$(echo "$PROJECT" | jq -r '.costField.dataType // empty')
 
           if [ -z "$ISSUE_ID" ] || [ -z "$PROJECT_ID" ] || [ -z "$FIELD_ID" ] || [ -z "$OPTION_ID" ]; then
             echo "::error::Could not find issue, project, Status field, or '$TARGET_STATUS' option for ${OWNER}/${REPO} in Project '$PROJECT_TITLE'."
@@ -205,6 +215,33 @@ jobs:
                 value: { singleSelectOptionId: $optionId }
               }) { projectV2Item { id } }
             }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$FIELD_ID" -f optionId="$OPTION_ID" >/dev/null
+
+          if [ -n "$COST_FIELD_ID" ]; then
+            CUM_COST=$(
+              {
+                gh issue view "$ISSUE_NUMBER" --json comments --jq '.comments[].body // empty' 2>/dev/null | sed -n 's/.*<!-- ai-cost-step:\({.*}\) -->.*/\1/p'
+                [ -f "specs/issue-${ISSUE_NUMBER}/ai-cost-pending.jsonl" ] && cat "specs/issue-${ISSUE_NUMBER}/ai-cost-pending.jsonl" || true
+              } | jq -sr '([.[].cost_usd // 0] | add // 0) | (. * 10000 | round / 10000)' 2>/dev/null || echo "0"
+            )
+            if [ "${COST_FIELD_TYPE:-NUMBER}" = "NUMBER" ]; then
+              gh api graphql -f query='
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $val: Float!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
+                    value: { number: $val }
+                  }) { projectV2Item { id } }
+                }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$COST_FIELD_ID" -F val="${CUM_COST:-0}" >/dev/null 2>&1 || true
+            elif [ "$COST_FIELD_TYPE" = "TEXT" ]; then
+              COST_TEXT=$(printf '$%.4f' "${CUM_COST:-0}")
+              gh api graphql -f query='
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $val: String!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
+                    value: { text: $val }
+                  }) { projectV2Item { id } }
+                }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$COST_FIELD_ID" -f val="$COST_TEXT" >/dev/null 2>&1 || true
+            fi
+          fi
           STATUS_SCRIPT
           bash -eo pipefail "$RUNNER_TEMP/prove-project-status.sh"
 
@@ -258,11 +295,11 @@ jobs:
 
           if [ ! -s "${SPEC_DIR}/think.md" ]; then
             gh issue view "$ISSUE_NUMBER" --json comments \
-              --jq '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty' > "${SPEC_DIR}/think.md"
+              --jq '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")' > "${SPEC_DIR}/think.md"
           fi
           if [ ! -s "${SPEC_DIR}/plan.md" ]; then
             gh issue view "$ISSUE_NUMBER" --json comments \
-              --jq '[.comments[].body | select(test("^# Plan:"; "m"))] | last // empty' > "${SPEC_DIR}/plan.md"
+              --jq '[.comments[].body | select(test("^# Plan:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")' > "${SPEC_DIR}/plan.md"
           fi
 
           gh pr view "$PR_NUMBER" --json body --jq '.body // ""' > pr-body.md
@@ -428,6 +465,58 @@ jobs:
           SPEC_DIR="specs/issue-${ISSUE_NUMBER}"
           PROVE_FILE="${SPEC_DIR}/prove.md"
           ISSUE_TITLE=$(gh issue view "$ISSUE_NUMBER" --json title --jq '.title')
+          export COPILOT_OTEL_ENABLED="true"
+          export COPILOT_OTEL_FILE_EXPORTER_PATH="${RUNNER_TEMP}/copilot-otel.jsonl"
+
+          record_ai_cost() {
+            local step_name="$1"
+            local step_json prior_cost
+            step_json=$(
+              {
+                for f in "${COPILOT_HOME:-$HOME/.copilot}"/session-state/*/events.jsonl "$COPILOT_OTEL_FILE_EXPORTER_PATH"; do
+                  [ -f "$f" ] && cat "$f" || true
+                done
+              } | jq -sc --arg step "$step_name" '
+                def num(x): if (x | type) == "number" then x elif (x | type) == "string" then (x | tonumber? // 0) else 0 end;
+                def tok_in: [.. | objects | (.input_tokens? // .prompt_tokens? // .inputTokens? // .promptTokens? // ."gen_ai.usage.input_tokens"? // empty) | num(.)] | add // 0;
+                def tok_out: [.. | objects | (.output_tokens? // .completion_tokens? // .outputTokens? // .completionTokens? // ."gen_ai.usage.output_tokens"? // empty) | num(.)] | add // 0;
+                def tok_cache: [.. | objects | (.cache_read_tokens? // .cached_tokens? // .cacheReadTokens? // ."gen_ai.usage.cache_read.input_tokens"? // empty) | num(.)] | add // 0;
+                def reqs: [.. | objects | select(.type? == "assistant.usage" or .type? == "assistant.turn_end" or .type? == "session.metrics" or ."gen_ai.usage.input_tokens"? != null or .input_tokens? != null or .prompt_tokens? != null)] | length;
+                def explicit_cost: [.. | objects | (.cost_usd? // .total_cost_usd? // .costUsd? // .totalCostUsd? // ."gen_ai.usage.cost"? // empty) | num(.)] | add // 0;
+                def models: [.. | objects | (.model? // ."gen_ai.response.model"? // ."gen_ai.request.model"? // empty) | select(type == "string" and length > 0 and . != "auto")] | unique;
+                def model_str: (models | if length == 0 then "auto" else join(", ") end);
+                def rate_in(m): if (m | test("opus"; "i")) then 15.0 elif (m | test("haiku|mini|flash"; "i")) then 0.25 else 3.0 end;
+                def rate_out(m): if (m | test("opus"; "i")) then 75.0 elif (m | test("haiku|mini|flash"; "i")) then 1.25 else 15.0 end;
+                (tok_in) as $in | (tok_out) as $out | (tok_cache) as $cache | (model_str) as $m |
+                (if explicit_cost > 0 then explicit_cost else (($in * rate_in($m) + $out * rate_out($m)) / 1000000.0) end) as $cost |
+                {
+                  step: $step,
+                  model: $m,
+                  input_tokens: $in,
+                  output_tokens: $out,
+                  cached_tokens: $cache,
+                  requests: (if reqs > 0 then reqs else 1 end),
+                  cost_usd: (($cost * 10000 | round) / 10000)
+                }
+              ' 2>/dev/null || echo "{\"step\":\"${step_name}\",\"model\":\"auto\",\"input_tokens\":0,\"output_tokens\":0,\"cached_tokens\":0,\"requests\":1,\"cost_usd\":0}"
+            )
+            echo "$step_json" >> "${SPEC_DIR}/ai-cost.jsonl"
+            echo "$step_json" >> "${SPEC_DIR}/ai-cost-pending.jsonl"
+            prior_cost=$(gh issue view "$ISSUE_NUMBER" --json comments --jq '.comments[].body // empty' 2>/dev/null | sed -n 's/.*<!-- ai-cost-step:\({.*}\) -->.*/\1/p' | jq -sr '([.[].cost_usd // 0] | add // 0)' 2>/dev/null || echo "0")
+            jq -sr --argjson prior "${prior_cost:-0}" '
+              def fmt_usd(x): (x * 10000 | round / 10000) | tostring | if test("\\.") then (split(".") | .[0] + "." + ((.[1] + "0000")[0:4])) else . + ".0000" end;
+              reduce .[] as $item (
+                { cum: $prior, lines: [] };
+                (.cum + ($item.cost_usd // 0)) as $next_cum |
+                {
+                  cum: $next_cum,
+                  lines: (.lines + [
+                    "<!-- ai-cost-step:" + ($item | tojson) + " -->\n💰 **AI Cost (" + $item.step + "):** `$" + fmt_usd($item.cost_usd) + "` (`" + $item.model + "` · " + ($item.input_tokens | tostring) + " in / " + ($item.output_tokens | tostring) + " out tokens · " + ($item.requests | tostring) + (if $item.requests == 1 then " request" else " requests" end) + (if $next_cum > ($item.cost_usd // 0) then " · **Cumulative:** `$" + fmt_usd($next_cum) + "`" else "" end) + ")"
+                  ])
+                }
+              ) | "\n\n---\n" + (.lines | join("\n"))
+            ' "${SPEC_DIR}/ai-cost-pending.jsonl" > "${SPEC_DIR}/ai-cost-step.md"
+          }
 
           wait_for_pr_checks() {
             local checks pending failed poll
@@ -609,15 +698,18 @@ jobs:
 
             if [ "$CONTROLS_OK" -eq 1 ]; then
               : > "$PROVE_FILE"
+              rm -rf "${COPILOT_HOME:-$HOME/.copilot}/session-state" "$COPILOT_OTEL_FILE_EXPORTER_PATH" 2>/dev/null || true
               copilot --model="auto" --agent="prove" --allow-all-tools \
                 --prompt "Run the Prove validation for Pull Request #${PR_NUMBER} (GitHub Issue #${ISSUE_NUMBER}: ${ISSUE_TITLE}) on branch ${BRANCH_NAME} (base: ${BASE_REF}).
 
               Follow .github/instructions/prove.instructions.md, .agents/skills/prove/SKILL.md, and .agents/skills/prove/references/prove-contract.md.
               1. Read ${SPEC_DIR}/think.md, ${SPEC_DIR}/plan.md, pr-body.md, gate-output.log, and inspect the diff with git diff origin/${BASE_REF}...HEAD.
               2. Write the Prove record to ${PROVE_FILE} with exact header links (- **Issue:** #${ISSUE_NUMBER}, - **PR:** #${PR_NUMBER}, - **Think:** \`${SPEC_DIR}/think.md\`, - **Plan:** \`${SPEC_DIR}/plan.md\`, - **Branch:** \`${BRANCH_NAME}\`, - **Base:** \`${BASE_REF}\`).
-              3. Record the truthful status of all 8 required deterministic controls from gate-output.log (`control-guard`, `secret-guard`, `dependency-guard`, `scope-guard`, `task-gate`, `criteria-verify`, `test-probe`, `preview-smoke`), verify every AC-<n> criterion against the implementation and tests, and evaluate Client Intent, Behavioral Experience, and Safety & Blast Radius. Only those 8 required deterministic controls in gate-output.log apply (do NOT run bug-rule.mjs or fail on implementation-before-test commit ordering: Plan and Code intentionally order implementation steps before test steps so every atomic commit passes task-gate, and test falsifiability against origin/${BASE_REF} is verified by test-probe in gate-output.log). The branch includes the latest base: check interactions with intervening changes, not just textual conflicts. If the approved Think/Plan is no longer valid, record a blocking finding; do not broaden scope or change the specs.
+              3. Record the truthful status of all 8 required deterministic controls from gate-output.log (\`control-guard\`, \`secret-guard\`, \`dependency-guard\`, \`scope-guard\`, \`task-gate\`, \`criteria-verify\`, \`test-probe\`, \`preview-smoke\`), verify every AC-<n> criterion against the implementation and tests, and evaluate Client Intent, Behavioral Experience, and Safety & Blast Radius. Only those 8 required deterministic controls in gate-output.log apply (do NOT run bug-rule.mjs or fail on implementation-before-test commit ordering: Plan and Code intentionally order implementation steps before test steps so every atomic commit passes task-gate, and test falsifiability against origin/${BASE_REF} is verified by test-probe in gate-output.log). The branch includes the latest base: check interactions with intervening changes, not just textual conflicts. If the approved Think/Plan is no longer valid, record a blocking finding; do not broaden scope or change the specs.
               4. Validate ${PROVE_FILE} until it exits 0:
                  node .agents/skills/prove/scripts/validate-prove.mjs --dir ${SPEC_DIR} --stage draft"
+
+              record_ai_cost "Prove"
 
               if node .agents/skills/prove/scripts/validate-prove.mjs --dir "$SPEC_DIR" --stage pass >> failed-gates.log 2>&1; then
                 if bash -eo pipefail "$RUNNER_TEMP/record-prove.sh" >> failed-gates.log 2>&1; then
@@ -654,9 +746,13 @@ jobs:
               fi
               echo "## Constraints"
               echo "Use ${SPEC_DIR}/think.md and ${SPEC_DIR}/plan.md. Fix only approved scope; stop if replanning is required. Never weaken controls."
+              if [ -s "${SPEC_DIR}/ai-cost-step.md" ]; then
+                cat "${SPEC_DIR}/ai-cost-step.md"
+              fi
             } > "$REPAIR_FILE"
             gh issue comment "$ISSUE_NUMBER" --body-file "$REPAIR_FILE"
             gh pr comment "$PR_NUMBER" --body-file "$REPAIR_FILE"
+            rm -f "${SPEC_DIR}/ai-cost-pending.jsonl" "${SPEC_DIR}/ai-cost-step.md"
 
             ATTEMPTS=$(gh pr view "$PR_NUMBER" --json labels \
               --jq '[.labels[].name | select(startswith("fix-loop:")) | ltrimstr("fix-loop:") | tonumber] | max // 0')
@@ -682,6 +778,7 @@ jobs:
             fi
 
             BEFORE=$(git rev-parse HEAD)
+            rm -rf "${COPILOT_HOME:-$HOME/.copilot}/session-state" "$COPILOT_OTEL_FILE_EXPORTER_PATH" 2>/dev/null || true
             copilot --model="auto" --agent="code" --allow-all-tools \
               --prompt "Remediate the failing Prove controls and findings for Pull Request #${PR_NUMBER} (Issue #${ISSUE_NUMBER}, attempt ${NEXT}/${FIX_LOOP_LIMIT}).
 
@@ -691,6 +788,8 @@ jobs:
             2. Never weaken, skip, or edit any control or spec file.
             3. Re-run the failed checks and node .agents/skills/control-guard/scripts/control-guard.mjs --git origin/${BASE_REF}.
             4. Stage and commit your fix on ${BRANCH_NAME} with a clear message referencing #${ISSUE_NUMBER}."
+
+            record_ai_cost "Prove Repair #${NEXT}"
 
             if [ "$(git rev-parse HEAD)" != "$BEFORE" ]; then
               node .agents/skills/control-guard/scripts/control-guard.mjs --git "origin/${BASE_REF}"
@@ -709,8 +808,15 @@ jobs:
         run: |
           SPEC_DIR="specs/issue-${ISSUE_NUMBER}"
           PROVE_FILE="${SPEC_DIR}/prove.md"
+          PROVE_COMMENT="$RUNNER_TEMP/prove-comment.md"
+          cat "$PROVE_FILE" > "$PROVE_COMMENT"
+          if [ -s "${SPEC_DIR}/ai-cost-step.md" ]; then
+            cat "${SPEC_DIR}/ai-cost-step.md" >> "$PROVE_COMMENT"
+          fi
 
-          gh pr review "$PR_NUMBER" --approve --body-file "$PROVE_FILE" || gh pr comment "$PR_NUMBER" --body-file "$PROVE_FILE"
+          gh pr review "$PR_NUMBER" --approve --body-file "$PROVE_COMMENT" || gh pr comment "$PR_NUMBER" --body-file "$PROVE_COMMENT"
+          gh issue comment "$ISSUE_NUMBER" --body-file "$PROVE_COMMENT"
+          rm -f "${SPEC_DIR}/ai-cost-pending.jsonl" "${SPEC_DIR}/ai-cost-step.md"
 
       - name: Sync issue to Release on Project board
         id: release_stage
@@ -896,6 +1002,10 @@ jobs:
           ')
 
           SPEC_DIR="specs/issue-${ISSUE_NUMBER}"
+          export COPILOT_OTEL_ENABLED="true"
+          export COPILOT_OTEL_FILE_EXPORTER_PATH="${RUNNER_TEMP}/copilot-otel.jsonl"
+          rm -rf "${COPILOT_HOME:-$HOME/.copilot}/session-state" "$COPILOT_OTEL_FILE_EXPORTER_PATH" 2>/dev/null || true
+
           copilot --model="auto" --allow-all-tools \
             --prompt "Prepare release ${TAG_NAME} (bumped from ${CURRENT_VERSION}) for merged PR #${PR_NUMBER} / Issue #${ISSUE_NUMBER} (${ISSUE_TITLE}) following .agents/skills/release-readiness/SKILL.md.
           1. Update CHANGELOG.md so the very first section at line 1 is:
@@ -907,6 +1017,45 @@ jobs:
           3. Run:
              node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs --mode release --expected-version ${NEW_VERSION} --previous-version ${CURRENT_VERSION}
              Fix any reported CHANGELOG.md, README.md, website/docs, or package.json issues until it exits 0. Do NOT create git commits or tags."
+
+          STEP_COST_JSON=$(
+            {
+              for f in "${COPILOT_HOME:-$HOME/.copilot}"/session-state/*/events.jsonl "$COPILOT_OTEL_FILE_EXPORTER_PATH"; do
+                [ -f "$f" ] && cat "$f" || true
+              done
+            } | jq -sc --arg step "Release Prep" '
+              def num(x): if (x | type) == "number" then x elif (x | type) == "string" then (x | tonumber? // 0) else 0 end;
+              def tok_in: [.. | objects | (.input_tokens? // .prompt_tokens? // .inputTokens? // .promptTokens? // ."gen_ai.usage.input_tokens"? // empty) | num(.)] | add // 0;
+              def tok_out: [.. | objects | (.output_tokens? // .completion_tokens? // .outputTokens? // .completionTokens? // ."gen_ai.usage.output_tokens"? // empty) | num(.)] | add // 0;
+              def tok_cache: [.. | objects | (.cache_read_tokens? // .cached_tokens? // .cacheReadTokens? // ."gen_ai.usage.cache_read.input_tokens"? // empty) | num(.)] | add // 0;
+              def reqs: [.. | objects | select(.type? == "assistant.usage" or .type? == "assistant.turn_end" or .type? == "session.metrics" or ."gen_ai.usage.input_tokens"? != null or .input_tokens? != null or .prompt_tokens? != null)] | length;
+              def explicit_cost: [.. | objects | (.cost_usd? // .total_cost_usd? // .costUsd? // .totalCostUsd? // ."gen_ai.usage.cost"? // empty) | num(.)] | add // 0;
+              def models: [.. | objects | (.model? // ."gen_ai.response.model"? // ."gen_ai.request.model"? // empty) | select(type == "string" and length > 0 and . != "auto")] | unique;
+              def model_str: (models | if length == 0 then "auto" else join(", ") end);
+              def rate_in(m): if (m | test("opus"; "i")) then 15.0 elif (m | test("haiku|mini|flash"; "i")) then 0.25 else 3.0 end;
+              def rate_out(m): if (m | test("opus"; "i")) then 75.0 elif (m | test("haiku|mini|flash"; "i")) then 1.25 else 15.0 end;
+              (tok_in) as $in | (tok_out) as $out | (tok_cache) as $cache | (model_str) as $m |
+              (if explicit_cost > 0 then explicit_cost else (($in * rate_in($m) + $out * rate_out($m)) / 1000000.0) end) as $cost |
+              {
+                step: $step,
+                model: $m,
+                input_tokens: $in,
+                output_tokens: $out,
+                cached_tokens: $cache,
+                requests: (if reqs > 0 then reqs else 1 end),
+                cost_usd: (($cost * 10000 | round) / 10000)
+              }
+            ' 2>/dev/null || echo '{"step":"Release Prep","model":"auto","input_tokens":0,"output_tokens":0,"cached_tokens":0,"requests":1,"cost_usd":0}'
+          )
+          mkdir -p "$SPEC_DIR"
+          echo "$STEP_COST_JSON" >> "${SPEC_DIR}/ai-cost.jsonl"
+          echo "$STEP_COST_JSON" > "${SPEC_DIR}/ai-cost-pending.jsonl"
+          PRIOR_COST=$(gh issue view "$ISSUE_NUMBER" --json comments --jq '.comments[].body // empty' 2>/dev/null | sed -n 's/.*<!-- ai-cost-step:\({.*}\) -->.*/\1/p' | jq -sr '([.[].cost_usd // 0] | add // 0)' 2>/dev/null || echo "0")
+          echo "$STEP_COST_JSON" | jq -r --argjson prior "${PRIOR_COST:-0}" '
+            def fmt_usd(x): (x * 10000 | round / 10000) | tostring | if test("\\.") then (split(".") | .[0] + "." + ((.[1] + "0000")[0:4])) else . + ".0000" end;
+            ((.cost_usd // 0) + $prior) as $cum |
+            "\n\n---\n<!-- ai-cost-step:" + (. | tojson) + " -->\n💰 **AI Cost (" + .step + "):** `$" + fmt_usd(.cost_usd) + "` (`" + .model + "` · " + (.input_tokens | tostring) + " in / " + (.output_tokens | tostring) + " out tokens · " + (.requests | tostring) + (if .requests == 1 then " request" else " requests" end) + (if $prior > 0 then " · **Cumulative:** `$" + fmt_usd($cum) + "`" else "" end) + ")"
+          ' > "${SPEC_DIR}/ai-cost-step.md"
 
           if node -p "Boolean(require('./package.json').scripts?.['build:lib'])" | grep -q true; then
             npm run build:lib
@@ -938,6 +1087,10 @@ jobs:
             --target "$RELEASE_COMMIT" \
             --title "$TAG_NAME" \
             --generate-notes
+          if [ -s "${SPEC_DIR}/ai-cost-step.md" ]; then
+            gh issue comment "$ISSUE_NUMBER" --body "$(printf '# Release: %s\nPrepared release commit `%s` for #%s.%s' "$TAG_NAME" "$RELEASE_COMMIT" "$ISSUE_NUMBER" "$(cat "${SPEC_DIR}/ai-cost-step.md")")"
+            rm -f "${SPEC_DIR}/ai-cost-pending.jsonl" "${SPEC_DIR}/ai-cost-step.md"
+          fi
           echo "Created verified GitHub Release ${TAG_NAME} on ${BASE_REF} to trigger publish-npm.yml."
 
       - name: Start Release
@@ -976,6 +1129,26 @@ jobs:
               echo "Delivery run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
               echo "All required release workflows succeeded (or no external publication/deployment was applicable)."
             } > "$REPORT"
+            COST_SUMMARY=$(
+              {
+                gh issue view "$ISSUE_NUMBER" --json comments --jq '.comments[].body // empty' 2>/dev/null | sed -n 's/.*<!-- ai-cost-step:\({.*}\) -->.*/\1/p'
+                [ -f "specs/issue-${ISSUE_NUMBER}/ai-cost-pending.jsonl" ] && cat "specs/issue-${ISSUE_NUMBER}/ai-cost-pending.jsonl" || true
+              } | jq -sr '
+                if length == 0 then "" else
+                  def fmt_usd(x): (x * 10000 | round / 10000) | tostring | if test("\\.") then (split(".") | .[0] + "." + ((.[1] + "0000")[0:4])) else . + ".0000" end;
+                  ([.[].input_tokens // 0] | add // 0) as $tot_in |
+                  ([.[].output_tokens // 0] | add // 0) as $tot_out |
+                  ([.[].requests // 0] | add // 0) as $tot_req |
+                  ([.[].cost_usd // 0] | add // 0) as $tot_cost |
+                  "\n## AI Cost Summary\n\n| Step | Model | Input Tokens | Output Tokens | Requests | Cost (USD) |\n| :--- | :--- | ---: | ---: | ---: | ---: |\n" +
+                  (map("| " + (.step // "Step") + " | `" + (.model // "auto") + "` | " + ((.input_tokens // 0) | tostring) + " | " + ((.output_tokens // 0) | tostring) + " | " + ((.requests // 1) | tostring) + " | `$" + fmt_usd(.cost_usd // 0) + "` |") | join("\n")) +
+                  "\n| **Total** | — | **" + ($tot_in | tostring) + "** | **" + ($tot_out | tostring) + "** | **" + ($tot_req | tostring) + "** | **`$" + fmt_usd($tot_cost) + "`** |"
+                end
+              ' 2>/dev/null || true
+            )
+            if [ -n "$COST_SUMMARY" ]; then
+              printf "%s\n" "$COST_SUMMARY" >> "$REPORT"
+            fi
             gh issue comment "$ISSUE_NUMBER" --body-file "$REPORT"
             gh pr comment "$PR_NUMBER" --body-file "$REPORT"
             cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"

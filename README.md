@@ -146,6 +146,8 @@ Add these options to the Project's `Status` field:
 
 **Done means required release workflows succeeded.** DoomR waits for Pages. Libraries wait for npm publication when an automatic GitHub Release was created, plus applicable documentation deployment. Repositories without configured publication/deployment finish after merge.
 
+**Optional `AI Cost` field:** If the GitHub Project V2 board includes a custom field named **`AI Cost`** (`Number` or `Text`), each stage (`Think`, `Plan`, `Code`, `Prove`, `Release`, and `Done`) automatically syncs the issue's cumulative AI cost in USD alongside `Status`. Each pipeline comment (`# Think:`, `# Plan:`, `Pull request opened for #...`, `# Prove repair request`, `# Prove:`, and `# Release:`) also appends a per-step and cumulative AI cost footer (`<!-- ai-cost-step:{...} -->`), and `# Release report` includes an `## AI Cost Summary` table across all steps.
+
 In the GitHub Project's **Workflows** settings, disable any built-in automation that sets Status to Done when an issue is closed or a PR is merged. Merge can close the issue before publication finishes; only this pipeline should set Done for delivery.
 
 ## Pipeline Walkthrough

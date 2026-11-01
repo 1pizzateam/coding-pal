@@ -114,20 +114,20 @@ jobs:
           if [ ! -s "$THINK_FILE" ]; then
             echo "Fetching latest think.md from issue #${ISSUE_NUMBER} comments..."
             if [ -n "${ISSUE_VIEW:-}" ]; then
-              echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty' > "$THINK_FILE"
+              echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")' > "$THINK_FILE"
             else
               gh issue view "$ISSUE_NUMBER" --json comments \
-                --jq '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty' > "$THINK_FILE"
+                --jq '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")' > "$THINK_FILE"
             fi
           fi
 
           if [ ! -s "$PLAN_FILE" ]; then
             echo "Fetching latest plan.md from issue #${ISSUE_NUMBER} comments..."
             if [ -n "${ISSUE_VIEW:-}" ]; then
-              echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Plan:"; "m"))] | last // empty' > "$PLAN_FILE"
+              echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Plan:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")' > "$PLAN_FILE"
             else
               gh issue view "$ISSUE_NUMBER" --json comments \
-                --jq '[.comments[].body | select(test("^# Plan:"; "m"))] | last // empty' > "$PLAN_FILE"
+                --jq '[.comments[].body | select(test("^# Plan:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")' > "$PLAN_FILE"
             fi
           fi
 
@@ -198,6 +198,13 @@ jobs:
                             options { id name }
                           }
                         }
+                        costField: field(name: "AI Cost") {
+                          ... on ProjectV2Field {
+                            id
+                            name
+                            dataType
+                          }
+                        }
                       }
                     }
                   }
@@ -210,6 +217,8 @@ jobs:
           PROJECT_ID=$(echo "$PROJECT" | jq -r '.id // empty')
           FIELD_ID=$(echo "$PROJECT" | jq -r '.field.id // empty')
           OPTION_ID=$(echo "$PROJECT" | jq -r --arg status "$TARGET_STATUS" '.field.options[]? | select((.name | ascii_downcase) == ($status | ascii_downcase)) | .id' | head -n 1)
+          COST_FIELD_ID=$(echo "$PROJECT" | jq -r '.costField.id // empty')
+          COST_FIELD_TYPE=$(echo "$PROJECT" | jq -r '.costField.dataType // empty')
           if [ -z "$ISSUE_ID" ] || [ -z "$PROJECT_ID" ] || [ -z "$FIELD_ID" ] || [ -z "$OPTION_ID" ]; then
             echo "::error::Could not find issue, project, Status field, or '$TARGET_STATUS' option for ${OWNER}/${REPO} in Project '$PROJECT_TITLE'."
             exit 1
@@ -227,6 +236,33 @@ jobs:
                 value: { singleSelectOptionId: $optionId }
               }) { projectV2Item { id } }
             }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$FIELD_ID" -f optionId="$OPTION_ID" >/dev/null
+
+          if [ -n "$COST_FIELD_ID" ]; then
+            CUM_COST=$(
+              {
+                gh issue view "$ISSUE_NUMBER" --json comments --jq '.comments[].body // empty' 2>/dev/null | sed -n 's/.*<!-- ai-cost-step:\({.*}\) -->.*/\1/p'
+                [ -f "specs/issue-${ISSUE_NUMBER}/ai-cost-pending.jsonl" ] && cat "specs/issue-${ISSUE_NUMBER}/ai-cost-pending.jsonl" || true
+              } | jq -sr '([.[].cost_usd // 0] | add // 0) | (. * 10000 | round / 10000)' 2>/dev/null || echo "0"
+            )
+            if [ "${COST_FIELD_TYPE:-NUMBER}" = "NUMBER" ]; then
+              gh api graphql -f query='
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $val: Float!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
+                    value: { number: $val }
+                  }) { projectV2Item { id } }
+                }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$COST_FIELD_ID" -F val="${CUM_COST:-0}" >/dev/null 2>&1 || true
+            elif [ "$COST_FIELD_TYPE" = "TEXT" ]; then
+              COST_TEXT=$(printf '$%.4f' "${CUM_COST:-0}")
+              gh api graphql -f query='
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $val: String!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
+                    value: { text: $val }
+                  }) { projectV2Item { id } }
+                }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$COST_FIELD_ID" -f val="$COST_TEXT" >/dev/null 2>&1 || true
+            fi
+          fi
           STATUS_SCRIPT
           bash -eo pipefail "$RUNNER_TEMP/code-project-status.sh"
 
@@ -311,7 +347,7 @@ jobs:
           ISSUE_TITLE=$(echo "$ISSUE_JSON" | jq -r '.title')
           DEV_COMMENTS=$(echo "$ISSUE_JSON" | jq -r '
             [.comments[]
-              | select((.body // "") | test("^(# (Think|Plan|Prove|Release report)|⏸️ \\*\\*(Paused after|Blocked on)|Pull request opened for #|### Companion Game Editor Updates Dispatched|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
+              | select((.body // "") | test("^(# (Think|Plan|Prove|Release|Release report)|⏸️ \\*\\*(Paused after|Blocked on)|Pull request opened for #|### Companion Game Editor Updates Dispatched|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
               | select((.body // "") | gsub("\\s+"; "") | length > 0)
               | "### Issue Comment by @" + (.author.login // "developer") + " (" + (.createdAt // "") + "):\n" + .body
             ] | join("\n\n")
@@ -320,7 +356,7 @@ jobs:
           if [ -n "$EXISTING_PR" ]; then
             PR_DEV_COMMENTS=$(gh pr view "$EXISTING_PR" --json comments --jq '
               [.comments[]
-                | select((.body // "") | test("^(# (Think|Plan|Prove|Release report)|⏸️ \\*\\*(Paused after|Blocked on)|Pull request opened for #|### Companion Game Editor Updates Dispatched|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
+                | select((.body // "") | test("^(# (Think|Plan|Prove|Release|Release report)|⏸️ \\*\\*(Paused after|Blocked on)|Pull request opened for #|### Companion Game Editor Updates Dispatched|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
                 | select((.body // "") | gsub("\\s+"; "") | length > 0)
                 | "### PR Comment by @" + (.author.login // "developer") + " (" + (.createdAt // "") + "):\n" + .body
               ] | join("\n\n")
@@ -344,31 +380,70 @@ jobs:
           "
           fi
 
+          export COPILOT_OTEL_ENABLED="true"
+          export COPILOT_OTEL_FILE_EXPORTER_PATH="${RUNNER_TEMP}/copilot-otel.jsonl"
+          rm -rf "${COPILOT_HOME:-$HOME/.copilot}/session-state" "$COPILOT_OTEL_FILE_EXPORTER_PATH" 2>/dev/null || true
+
           copilot --model="auto" --agent="code" --allow-all-tools \
             --prompt "Implement the validated Plan record at ${PLAN_FILE} (with ${THINK_FILE}) for GitHub Issue #${ISSUE_NUMBER} (${ISSUE_TITLE}) on the current branch ${BRANCH_NAME} (base: ${BASE_REF}).
           ${FEEDBACK_CONTEXT}
 
           Follow .agents/skills/pr-record/SKILL.md.
           1. Think and Plan may predate intervening merges. Check their assumptions against the current base before implementing; if they are no longer valid, stop with an explicit blocking explanation rather than changing specs or broadening scope.
-          2. Implement the steps in ${PLAN_FILE} in order:
-             - Apply each step's changes (writing only files listed in ${PLAN_FILE}'s In Scope; if an in-scope test file has an existing assertion superseded by the behavior change, update that assertion so the test suite passes).
-             - Ensure every acceptance criterion test includes its AC-<n> token in the test name so criteria-verify can map each AC-<n> to a passing test.
-             - Verify your changes with `npm test` and `npm run build`.
-             - Stage and commit your modified In Scope files with a clear commit message referencing #${ISSUE_NUMBER} (do not stage or commit files under ${SPEC_DIR}).
-          3. If this is a published @1pizzateam/* library, follow .agents/skills/release-readiness/SKILL.md and verify library documentation and package readiness with:
-             node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs --mode pr --require-dist --build-docs
-          4. Author the pull request body at pr-body.md following .agents/skills/pr-record/references/pr-record-contract.md (with ## Links, ## Acceptance Criteria Traceability, ## Dependencies, ## Blast Radius, and ## Human Validation all set to Pending)."
+          2. Implement each step in ${PLAN_FILE} in order:
+             - Apply Step <n>'s New Code (writing only files in Step <n>'s Files and within In Scope; if an in-scope test file has an existing assertion superseded by Step <n>'s behavior change, update that assertion so the test suite passes).
+             - Ensure every acceptance criterion test includes its AC-<n> token in the test name so it passes criteria-verify in Prove.
+             - Run Step <n>'s Verification and Bootable Check commands ('npm test' and 'npm run build').
+             - Stage and commit Step <n>'s modified files with a commit message referencing Step <n> and #${ISSUE_NUMBER} (do not stage or commit files under ${SPEC_DIR}).
+          3. If this is a published @1pizzateam/* library, follow .agents/skills/release-readiness/SKILL.md and ensure library documentation and package exports stay in sync.
+          4. Author the pull request body at pr-body.md following .agents/skills/pr-record/references/pr-record-contract.md (with ## Links including - **Closes:** #${ISSUE_NUMBER}, ## Acceptance Criteria Traceability, ## Dependencies, ## Blast Radius, and ## Human Validation with Client Intent, Behavioral Experience, and Safety & Blast Radius set to Pending)."
+
+          STEP_COST_JSON=$(
+            {
+              for f in "${COPILOT_HOME:-$HOME/.copilot}"/session-state/*/events.jsonl "$COPILOT_OTEL_FILE_EXPORTER_PATH"; do
+                [ -f "$f" ] && cat "$f" || true
+              done
+            } | jq -sc --arg step "Code" '
+              def num(x): if (x | type) == "number" then x elif (x | type) == "string" then (x | tonumber? // 0) else 0 end;
+              def tok_in: [.. | objects | (.input_tokens? // .prompt_tokens? // .inputTokens? // .promptTokens? // ."gen_ai.usage.input_tokens"? // empty) | num(.)] | add // 0;
+              def tok_out: [.. | objects | (.output_tokens? // .completion_tokens? // .outputTokens? // .completionTokens? // ."gen_ai.usage.output_tokens"? // empty) | num(.)] | add // 0;
+              def tok_cache: [.. | objects | (.cache_read_tokens? // .cached_tokens? // .cacheReadTokens? // ."gen_ai.usage.cache_read.input_tokens"? // empty) | num(.)] | add // 0;
+              def reqs: [.. | objects | select(.type? == "assistant.usage" or .type? == "assistant.turn_end" or .type? == "session.metrics" or ."gen_ai.usage.input_tokens"? != null or .input_tokens? != null or .prompt_tokens? != null)] | length;
+              def explicit_cost: [.. | objects | (.cost_usd? // .total_cost_usd? // .costUsd? // .totalCostUsd? // ."gen_ai.usage.cost"? // empty) | num(.)] | add // 0;
+              def models: [.. | objects | (.model? // ."gen_ai.response.model"? // ."gen_ai.request.model"? // empty) | select(type == "string" and length > 0 and . != "auto")] | unique;
+              def model_str: (models | if length == 0 then "auto" else join(", ") end);
+              def rate_in(m): if (m | test("opus"; "i")) then 15.0 elif (m | test("haiku|mini|flash"; "i")) then 0.25 else 3.0 end;
+              def rate_out(m): if (m | test("opus"; "i")) then 75.0 elif (m | test("haiku|mini|flash"; "i")) then 1.25 else 15.0 end;
+              (tok_in) as $in | (tok_out) as $out | (tok_cache) as $cache | (model_str) as $m |
+              (if explicit_cost > 0 then explicit_cost else (($in * rate_in($m) + $out * rate_out($m)) / 1000000.0) end) as $cost |
+              {
+                step: $step,
+                model: $m,
+                input_tokens: $in,
+                output_tokens: $out,
+                cached_tokens: $cache,
+                requests: (if reqs > 0 then reqs else 1 end),
+                cost_usd: (($cost * 10000 | round) / 10000)
+              }
+            ' 2>/dev/null || echo '{"step":"Code","model":"auto","input_tokens":0,"output_tokens":0,"cached_tokens":0,"requests":1,"cost_usd":0}'
+          )
+          echo "$STEP_COST_JSON" >> "${SPEC_DIR}/ai-cost.jsonl"
+          echo "$STEP_COST_JSON" > "${SPEC_DIR}/ai-cost-pending.jsonl"
+          PRIOR_COST=$(echo "$ISSUE_JSON" | jq -r '.comments[].body // empty' 2>/dev/null | sed -n 's/.*<!-- ai-cost-step:\({.*}\) -->.*/\1/p' | jq -sr '([.[].cost_usd // 0] | add // 0)' 2>/dev/null || echo "0")
+          echo "$STEP_COST_JSON" | jq -r --argjson prior "${PRIOR_COST:-0}" '
+            def fmt_usd(x): (x * 10000 | round / 10000) | tostring | if test("\\.") then (split(".") | .[0] + "." + ((.[1] + "0000")[0:4])) else . + ".0000" end;
+            ((.cost_usd // 0) + $prior) as $cum |
+            "\n\n---\n<!-- ai-cost-step:" + (. | tojson) + " -->\n💰 **AI Cost (" + .step + "):** `$" + fmt_usd(.cost_usd) + "` (`" + .model + "` · " + (.input_tokens | tostring) + " in / " + (.output_tokens | tostring) + " out tokens · " + (.requests | tostring) + (if .requests == 1 then " request" else " requests" end) + (if $prior > 0 then " · **Cumulative:** `$" + fmt_usd($cum) + "`" else "" end) + ")"
+          ' > "${SPEC_DIR}/ai-cost-step.md"
 
       - name: Run deterministic Code exit gates
         if: steps.resolve.outputs.skip != 'true'
-        env:
-          ALLOW_PENDING_APPROVAL: "1"
         run: |
           SPEC_DIR="specs/issue-${ISSUE_NUMBER}"
           if git ls-files "${SPEC_DIR}" --error-unmatch >/dev/null 2>&1; then
             git rm -rf --cached "${SPEC_DIR}" >/dev/null 2>&1 || true
           fi
-          cat pr-body.md >> "$GITHUB_STEP_SUMMARY"
+          [ -f pr-body.md ] && cat pr-body.md >> "$GITHUB_STEP_SUMMARY" || true
 
       - name: Enter Prove and create or update Pull Request
         if: steps.resolve.outputs.skip != 'true'
@@ -400,7 +475,12 @@ jobs:
           echo "$ISSUE_NUMBER" > specs/issue_number.txt
           echo "PR_NUMBER=${PR_NUMBER}" >> "$GITHUB_ENV"
           echo "PR_URL=${PR_URL}" >> "$GITHUB_ENV"
-          gh issue comment "$ISSUE_NUMBER" --body "Pull request opened for #${ISSUE_NUMBER}: ${PR_URL}"
+          PR_OPEN_MSG="Pull request opened for #${ISSUE_NUMBER}: ${PR_URL}"
+          if [ -s "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md" ]; then
+            PR_OPEN_MSG="${PR_OPEN_MSG}$(cat "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md")"
+          fi
+          gh issue comment "$ISSUE_NUMBER" --body "$PR_OPEN_MSG"
+          rm -f "specs/issue-${ISSUE_NUMBER}/ai-cost-pending.jsonl"
 
       - name: Check for manual validation checkpoint after Code
         id: checkpoint
@@ -431,7 +511,7 @@ jobs:
 
           Pull Request #${PR_NUMBER} (${PR_URL}) is open and ready for your review.
           - **Manual merge:** Review and merge PR #${PR_NUMBER} directly on GitHub.
-          - **Run Prove & auto-merge:** Add the **\`4-release\`** label to this issue (or run \`Pipeline - Prove\` for PR #${PR_NUMBER}) to run the 13 Prove controls and merge automatically."
+          - **Run Prove & auto-merge:** Add the **\`4-release\`** label to this issue (or run \`Pipeline - Prove\` for PR #${PR_NUMBER}) to run the 8 Prove controls and merge automatically."
 
       - name: Upload code-spec artifact for Prove workflow
         id: handoff
@@ -444,7 +524,6 @@ jobs:
             specs/pr_number.txt
             specs/issue-${{ env.ISSUE_NUMBER }}/think.md
             specs/issue-${{ env.ISSUE_NUMBER }}/plan.md
-            specs/issue-${{ env.ISSUE_NUMBER }}/progress.json
             specs/issue-${{ env.ISSUE_NUMBER }}/editor-requests.json
           retention-days: 7
 

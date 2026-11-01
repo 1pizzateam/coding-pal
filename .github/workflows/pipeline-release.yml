@@ -117,6 +117,13 @@ jobs:
                             options { id name }
                           }
                         }
+                        costField: field(name: "AI Cost") {
+                          ... on ProjectV2Field {
+                            id
+                            name
+                            dataType
+                          }
+                        }
                       }
                     }
                   }
@@ -129,6 +136,8 @@ jobs:
           PROJECT_ID=$(echo "$PROJECT" | jq -r '.id // empty')
           FIELD_ID=$(echo "$PROJECT" | jq -r '.field.id // empty')
           OPTION_ID=$(echo "$PROJECT" | jq -r --arg status "$TARGET_STATUS" '.field.options[]? | select((.name | ascii_downcase) == ($status | ascii_downcase)) | .id' | head -n 1)
+          COST_FIELD_ID=$(echo "$PROJECT" | jq -r '.costField.id // empty')
+          COST_FIELD_TYPE=$(echo "$PROJECT" | jq -r '.costField.dataType // empty')
 
           if [ -z "$ISSUE_ID" ] || [ -z "$PROJECT_ID" ] || [ -z "$FIELD_ID" ] || [ -z "$OPTION_ID" ]; then
             echo "::error::Could not find issue, project, Status field, or '$TARGET_STATUS' option for ${OWNER}/${REPO} in Project '$PROJECT_TITLE'."
@@ -147,6 +156,30 @@ jobs:
                 value: { singleSelectOptionId: $optionId }
               }) { projectV2Item { id } }
             }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$FIELD_ID" -f optionId="$OPTION_ID" >/dev/null
+
+          if [ -n "$COST_FIELD_ID" ]; then
+            CUM_COST=$(
+              gh issue view "$ISSUE_NUMBER" --json comments --jq '.comments[].body // empty' 2>/dev/null | sed -n 's/.*<!-- ai-cost-step:\({.*}\) -->.*/\1/p' | jq -sr '([.[].cost_usd // 0] | add // 0) | (. * 10000 | round / 10000)' 2>/dev/null || echo "0"
+            )
+            if [ "${COST_FIELD_TYPE:-NUMBER}" = "NUMBER" ]; then
+              gh api graphql -f query='
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $val: Float!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
+                    value: { number: $val }
+                  }) { projectV2Item { id } }
+                }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$COST_FIELD_ID" -F val="${CUM_COST:-0}" >/dev/null 2>&1 || true
+            elif [ "$COST_FIELD_TYPE" = "TEXT" ]; then
+              COST_TEXT=$(printf '$%.4f' "${CUM_COST:-0}")
+              gh api graphql -f query='
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $val: String!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
+                    value: { text: $val }
+                  }) { projectV2Item { id } }
+                }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$COST_FIELD_ID" -f val="$COST_TEXT" >/dev/null 2>&1 || true
+            fi
+          fi
           STATUS_SCRIPT
           bash -eo pipefail "$RUNNER_TEMP/prove-project-status.sh"
 
@@ -242,6 +275,23 @@ jobs:
           else
             echo "All required release workflows succeeded (or no external publication/deployment was applicable)." >> "$REPORT"
           fi
+          COST_SUMMARY=$(
+            gh issue view "$ISSUE_NUMBER" --json comments --jq '.comments[].body // empty' 2>/dev/null | sed -n 's/.*<!-- ai-cost-step:\({.*}\) -->.*/\1/p' | jq -sr '
+              if length == 0 then "" else
+                def fmt_usd(x): (x * 10000 | round / 10000) | tostring | if test("\\.") then (split(".") | .[0] + "." + ((.[1] + "0000")[0:4])) else . + ".0000" end;
+                ([.[].input_tokens // 0] | add // 0) as $tot_in |
+                ([.[].output_tokens // 0] | add // 0) as $tot_out |
+                ([.[].requests // 0] | add // 0) as $tot_req |
+                ([.[].cost_usd // 0] | add // 0) as $tot_cost |
+                "\n## AI Cost Summary\n\n| Step | Model | Input Tokens | Output Tokens | Requests | Cost (USD) |\n| :--- | :--- | ---: | ---: | ---: | ---: |\n" +
+                (map("| " + (.step // "Step") + " | `" + (.model // "auto") + "` | " + ((.input_tokens // 0) | tostring) + " | " + ((.output_tokens // 0) | tostring) + " | " + ((.requests // 1) | tostring) + " | `$" + fmt_usd(.cost_usd // 0) + "` |") | join("\n")) +
+                "\n| **Total** | — | **" + ($tot_in | tostring) + "** | **" + ($tot_out | tostring) + "** | **" + ($tot_req | tostring) + "** | **`$" + fmt_usd($tot_cost) + "`** |"
+              end
+            ' 2>/dev/null || true
+          )
+          if [ -n "$COST_SUMMARY" ]; then
+            printf "%s\n" "$COST_SUMMARY" >> "$REPORT"
+          fi
           gh issue comment "$ISSUE_NUMBER" --body-file "$REPORT"
           gh pr comment "$PR_NUMBER" --body-file "$REPORT"
           cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
@@ -277,6 +327,13 @@ jobs:
                             options { id name }
                           }
                         }
+                        costField: field(name: "AI Cost") {
+                          ... on ProjectV2Field {
+                            id
+                            name
+                            dataType
+                          }
+                        }
                       }
                     }
                   }
@@ -289,6 +346,8 @@ jobs:
           PROJECT_ID=$(echo "$PROJECT" | jq -r '.id // empty')
           FIELD_ID=$(echo "$PROJECT" | jq -r '.field.id // empty')
           OPTION_ID=$(echo "$PROJECT" | jq -r --arg status "$TARGET_STATUS" '.field.options[]? | select((.name | ascii_downcase) == ($status | ascii_downcase)) | .id' | head -n 1)
+          COST_FIELD_ID=$(echo "$PROJECT" | jq -r '.costField.id // empty')
+          COST_FIELD_TYPE=$(echo "$PROJECT" | jq -r '.costField.dataType // empty')
           if [ -z "$ISSUE_ID" ] || [ -z "$PROJECT_ID" ] || [ -z "$FIELD_ID" ] || [ -z "$OPTION_ID" ]; then
             echo "::error::Could not find issue, project, Status field, or '$TARGET_STATUS' option for ${OWNER}/${REPO} in Project '$PROJECT_TITLE'."
             exit 1
@@ -306,6 +365,30 @@ jobs:
                 value: { singleSelectOptionId: $optionId }
               }) { projectV2Item { id } }
             }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$FIELD_ID" -f optionId="$OPTION_ID" >/dev/null
+
+          if [ -n "$COST_FIELD_ID" ]; then
+            CUM_COST=$(
+              gh issue view "$ISSUE_NUMBER" --json comments --jq '.comments[].body // empty' 2>/dev/null | sed -n 's/.*<!-- ai-cost-step:\({.*}\) -->.*/\1/p' | jq -sr '([.[].cost_usd // 0] | add // 0) | (. * 10000 | round / 10000)' 2>/dev/null || echo "0"
+            )
+            if [ "${COST_FIELD_TYPE:-NUMBER}" = "NUMBER" ]; then
+              gh api graphql -f query='
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $val: Float!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
+                    value: { number: $val }
+                  }) { projectV2Item { id } }
+                }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$COST_FIELD_ID" -F val="${CUM_COST:-0}" >/dev/null 2>&1 || true
+            elif [ "$COST_FIELD_TYPE" = "TEXT" ]; then
+              COST_TEXT=$(printf '$%.4f' "${CUM_COST:-0}")
+              gh api graphql -f query='
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $val: String!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
+                    value: { text: $val }
+                  }) { projectV2Item { id } }
+                }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$COST_FIELD_ID" -f val="$COST_TEXT" >/dev/null 2>&1 || true
+            fi
+          fi
 
       - name: Upload release.md artifact
         if: always()
