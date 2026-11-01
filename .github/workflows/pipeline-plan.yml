@@ -219,6 +219,7 @@ jobs:
 
           Follow .github/instructions/plan.instructions.md and .agents/skills/plan/SKILL.md (and its references/plan-contract.md).
           Read ${THINK_FILE} first and ground all file scopes, acceptance criteria, atomic implementation steps (with New Code, Verification, Bootable Check, and Serves), test plan rows, and blast radius checks in ${THINK_FILE} and the existing repository conventions.
+          Keep the exact required headings and bullet labels, but make every prose description short and straight to the point (1 concise sentence per bullet; no filler or repetition).
           ${LIBRARY_DOCS_HINT}
           Every test in ## Test Plan and in test steps' New Code must include its acceptance criterion ID (`AC-1`, `AC-2`, etc.) in the test name (for example `test('AC-1: ...', ...)` or `it('AC-1: ...', ...)`) and start the Test Plan `Test` cell with the relative test file path (`tests/<file>: AC-1 ...` or `scripts/<file>: AC-1 ...`) so `criteria-verify` can verify every criterion with `--require-test-files`.
           Do not modify any production or test files; only write ${PLAN_FILE}.

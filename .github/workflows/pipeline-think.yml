@@ -248,7 +248,11 @@ jobs:
           ${ISSUE_BODY}
 
           Follow .github/instructions/think.instructions.md and .agents/skills/think/SKILL.md (and its references/think-contract.md).
-          Because no Forge catalog is installed in this repository, evaluate options grounded in the codebase and existing package.json dependencies, set Custom build where applicable with Custom Build Reason in ## Chosen Approach and '- **None:** <reason>' in ## Forge Asset Bindings.
+          Keep the exact required headings and bullet labels, but be terse and straight to the point (target under 350 words total):
+          - Limit every bullet value to 1 short, direct sentence (max ~25 words); no multi-sentence paragraphs or filler.
+          - List only 2 options in ## Options Considered unless a 3rd is genuinely needed.
+          - Because no Forge catalog is installed in this repository, set Custom build where applicable with a 1-phrase Custom Build Reason in ## Chosen Approach and '- **None:** No Forge catalog in repository.' in ## Forge Asset Bindings (do not list unrelated package.json versions or explain why optional escalation files were omitted).
+          - Write '_None._' in ## Ambiguities & Open Questions unless a genuine blocker exists.
           ${ESCALATION_HINT}
           ${EDITOR_HINT}
           ${LIBRARY_DOCS_HINT}
