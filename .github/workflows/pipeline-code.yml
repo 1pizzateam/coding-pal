@@ -79,7 +79,7 @@ jobs:
             exit 1
           fi
 
-          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --remove-assignee "@me" 2>/dev/null || true
+          gh issue edit "$ISSUE_NUMBER" --remove-assignee "@me" 2>/dev/null || true
 
           if [ -z "$RUN_ID" ]; then
             ISSUE_VIEW=$(gh issue view "$ISSUE_NUMBER" --json labels,comments)
@@ -90,7 +90,7 @@ jobs:
 
             if [ -n "$EXISTING_PR" ] && [ "$HAS_RELEASE_TRIGGER" = "true" ]; then
               echo "Found open PR #${EXISTING_PR} for issue #${ISSUE_NUMBER}; dispatching Pipeline - Prove directly."
-              GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh pr edit "$EXISTING_PR" --remove-assignee "@me" 2>/dev/null || true
+              gh pr edit "$EXISTING_PR" --remove-assignee "@me" 2>/dev/null || true
               gh workflow run prove.yml -f pr_number="$EXISTING_PR" -f issue_number="$ISSUE_NUMBER"
               echo "skip=true" >> "$GITHUB_OUTPUT"
               exit 0
@@ -98,8 +98,9 @@ jobs:
 
             if [ -n "$EXISTING_PR" ] && [ "$HAS_CODE_TRIGGER" = "true" ]; then
               echo "Issue #${ISSUE_NUMBER} already has open PR #${EXISTING_PR}; leaving it at the manual review checkpoint."
-              GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" --remove-label "3-code" || true
-              GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh pr edit "$EXISTING_PR" --add-assignee "@me" || true
+              GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --remove-label "3-code" || true
+              gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" || true
+              gh pr edit "$EXISTING_PR" --add-assignee "@me" || true
               echo "skip=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -465,8 +466,9 @@ jobs:
 
           echo "paused=true" >> "$GITHUB_OUTPUT"
           TARGET_STATUS=Code bash -eo pipefail "$RUNNER_TEMP/code-project-status.sh"
-          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" --remove-label "1-think,2-plan,3-code,4-release,pause:code" || true
-          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh pr edit "$PR_NUMBER" --add-assignee "@me" || true
+          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-release,pause:code" || true
+          gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" || true
+          gh pr edit "$PR_NUMBER" --add-assignee "@me" || true
           gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused after Code for Manual PR Validation**
 
           Pull Request #${PR_NUMBER} (${PR_URL}) is open and ready for your review.
@@ -498,5 +500,6 @@ jobs:
         run: |
           if [ -n "${ISSUE_NUMBER:-}" ]; then
             GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
-            GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
+            GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
+            gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" || true
           fi

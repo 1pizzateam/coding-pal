@@ -67,7 +67,7 @@ jobs:
             exit 1
           fi
 
-          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --remove-assignee "@me" 2>/dev/null || true
+          gh issue edit "$ISSUE_NUMBER" --remove-assignee "@me" 2>/dev/null || true
 
           echo "skip=false" >> "$GITHUB_OUTPUT"
           echo "ISSUE_NUMBER=${ISSUE_NUMBER}" >> "$GITHUB_ENV"
@@ -277,7 +277,8 @@ jobs:
           fi
 
           echo "paused=true" >> "$GITHUB_OUTPUT"
-          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" --remove-label "1-think,2-plan,3-code,4-release,pause:plan" || true
+          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-release,pause:plan" || true
+          gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" || true
           gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused after Plan for Manual Validation**
 
           Review (and optionally edit) the \`# Plan:\` specification comment above.
@@ -316,5 +317,6 @@ jobs:
         run: |
           if [ -n "${ISSUE_NUMBER:-}" ]; then
             GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
-            GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
+            GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-release" || true
+            gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" || true
           fi
