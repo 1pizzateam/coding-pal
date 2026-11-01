@@ -162,6 +162,7 @@ jobs:
           cp /tmp/1pizza-coding-pal/instructions/*.md .github/instructions/
           cp /tmp/alten-coding-pal/instructions/sharp-agent.instructions.md .github/instructions/
           cp /tmp/alten-coding-pal/instructions/plan.instructions.md .github/instructions/
+          sed -i 's/sequence test steps (testing acceptance criteria), core implementation steps/sequence core implementation steps, test steps (testing acceptance criteria)/g' .github/instructions/plan.instructions.md
           [ -d tests ] && [ -f /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md ] && cp /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md .github/instructions/
           [ -d website ] && [ -f /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md ] && cp /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md .github/instructions/
           cp /tmp/alten-coding-pal/agents/plan.agent.md .github/agents/
@@ -219,6 +220,7 @@ jobs:
 
           Follow .github/instructions/plan.instructions.md and .agents/skills/plan/SKILL.md (and its references/plan-contract.md).
           Read ${THINK_FILE} first and ground all file scopes, acceptance criteria, atomic implementation steps (with New Code, Verification, Bootable Check, and Serves), test plan rows, and blast radius checks in ${THINK_FILE} and the existing repository conventions.
+          Order ## Implementation Checklist steps strictly so every step passes its Verification, Bootable Check, and full test suite immediately when executed in sequence: always place core implementation steps BEFORE the test steps that assert on their new behavior (never place a test step before the implementation step it depends on).
           Keep the exact required headings and bullet labels, but make every prose description short and straight to the point (1 concise sentence per bullet; no filler or repetition).
           ${LIBRARY_DOCS_HINT}
           Every test in ## Test Plan and in test steps' New Code must include its acceptance criterion ID (`AC-1`, `AC-2`, etc.) in the test name (for example `test('AC-1: ...', ...)` or `it('AC-1: ...', ...)`) and start the Test Plan `Test` cell with the relative test file path (`tests/<file>: AC-1 ...` or `scripts/<file>: AC-1 ...`) so `criteria-verify` can verify every criterion with `--require-test-files`.

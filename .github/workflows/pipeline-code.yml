@@ -284,7 +284,7 @@ jobs:
              - node .agents/skills/code-loop/scripts/code-loop.mjs start <n> --dir ${SPEC_DIR} --allow-pending-approval
              - Apply Step <n>'s New Code (writing only files in Step <n>'s Files and within In Scope).
              - Run Step <n>'s Verification and Bootable Check commands, plus:
-               - node .agents/skills/task-gate/scripts/task-gate.mjs --stage 'test:npm test' --stage 'build:npm run build'
+               - node .agents/skills/task-gate/scripts/task-gate.mjs --stage 'test:npm test' --stage 'build:npm run build' (if Step <n> is a test-only step placed before the implementation step it tests, verify syntax with 'node --check <file>' and 'npm run build' on Step <n>, and run the test suite once the corresponding implementation step is applied)
                - node .agents/skills/scope-guard/scripts/scope-guard.mjs --git --base origin/${BASE_REF} --scope '${SPEC_DIR}/**' (plus a --scope flag for each In Scope path in ${PLAN_FILE})
                - node .agents/skills/secret-guard/scripts/secret-guard.mjs --git --base origin/${BASE_REF}
                - node .agents/skills/dependency-guard/scripts/dependency-guard.mjs --git --base origin/${BASE_REF}
