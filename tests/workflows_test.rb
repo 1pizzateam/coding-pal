@@ -282,6 +282,7 @@ class WorkflowsTest < Minitest::Test
         if paused
           edit = edits.first
           refute edit.include?('--add-label')
+          assert_equal '@me', edit[edit.index('--add-assignee') + 1]
           assert_equal LABELS + ["pause:#{phase}"], edit[edit.index('--remove-label') + 1].split(',')
         end
         assert_empty dispatches
@@ -390,7 +391,8 @@ class WorkflowsTest < Minitest::Test
         assert_equal [['workflow', 'run', 'prove.yml', '-f', 'pr_number=99', '-f', 'issue_number=42']], dispatches
       else
         assert_empty dispatches
-        assert @calls.any? { |args| args.first(3) == ['issue', 'edit', '42'] && args.include?('--remove-label') && args.include?('3-code') }
+        assert @calls.any? { |args| args.first(3) == ['issue', 'edit', '42'] && args.include?('--add-assignee') && args.include?('@me') }
+        assert @calls.any? { |args| args.first(3) == ['pr', 'edit', '99'] && args.include?('--add-assignee') && args.include?('@me') }
       end
     end
   end
@@ -451,6 +453,7 @@ class WorkflowsTest < Minitest::Test
     assert_equal 'true', output.fetch('paused')
     edit = @calls.find { |args| args.first(2) == %w[issue edit] }
     refute edit.include?('--add-label')
+    assert_equal '@me', edit[edit.index('--add-assignee') + 1]
     assert_equal LABELS + ['pause:code'], edit[edit.index('--remove-label') + 1].split(',')
     assert @calls.any? { |args| args.include?('optionId=code') }
   end
