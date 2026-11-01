@@ -72,13 +72,24 @@ jobs:
             Cadenza|MappR|PixelGun|PolyGun|ShaderGun)
               if [ ! -d ../DoomR.js ]; then
                 git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/1pizzateam/DoomR.js.git" ../DoomR.js
-                npm --prefix ../DoomR.js ci
               fi
               ;;
           esac
 
       - run: npm ci
-      - run: npm install -g @github/copilot
+
+      - name: Cache Copilot CLI
+        uses: actions/cache@v4
+        with:
+          path: ~/.copilot-cli
+          key: copilot-cli-${{ runner.os }}-node22
+
+      - name: Install Copilot CLI
+        run: |
+          if [ ! -x "$HOME/.copilot-cli/bin/copilot" ]; then
+            npm install --prefix "$HOME/.copilot-cli" -g @github/copilot
+          fi
+          echo "$HOME/.copilot-cli/bin" >> "$GITHUB_PATH"
 
       - name: Run ${{ inputs.agent }} agent
         env:

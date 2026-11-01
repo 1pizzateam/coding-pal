@@ -226,18 +226,36 @@ jobs:
           cp /tmp/1pizza-coding-pal/instructions/*.md .github/instructions/
           cp /tmp/alten-coding-pal/instructions/sharp-agent.instructions.md .github/instructions/
           cp /tmp/alten-coding-pal/instructions/plan.instructions.md .github/instructions/
-          sed -i 's/sequence test steps (testing acceptance criteria), core implementation steps/sequence core implementation steps, test steps (testing acceptance criteria)/g' .github/instructions/plan.instructions.md
+          cp /tmp/alten-coding-pal/instructions/forge.instructions.md .github/instructions/
           [ -d tests ] && [ -f /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md ] && cp /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md .github/instructions/
           [ -d website ] && [ -f /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md ] && cp /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md .github/instructions/
           cp /tmp/alten-coding-pal/agents/plan.agent.md .github/agents/
           cp -R /tmp/alten-coding-pal/skills/plan .agents/skills/plan
+          cp -R /tmp/alten-coding-pal/skills/forge .agents/skills/forge
+          cp /tmp/1pizza-coding-pal/forge-catalog.json .agents/skills/forge/catalog.json
+          for repo_cat in docs/forge/catalog.json .github/forge-catalog.json forge-catalog.json; do
+            if [ -f "$repo_cat" ]; then
+              jq -s '.[0] as $base | .[1] as $ext | ($base * $ext) | .assets = (((($base.assets // []) + ($ext.assets // [])) | group_by(.id) | map(reduce .[] as $item ({}; . * $item))))' \
+                .agents/skills/forge/catalog.json "$repo_cat" > .agents/skills/forge/catalog.json.tmp && mv .agents/skills/forge/catalog.json.tmp .agents/skills/forge/catalog.json
+            fi
+          done
+          if [ -f package.json ]; then
+            jq --slurpfile pkg package.json '
+              (($pkg[0].dependencies // {}) + ($pkg[0].devDependencies // {})) as $deps |
+              .assets |= map(
+                . as $a |
+                ($deps["@1pizzateam/" + $a.id] // $deps[$a.id] // "") |
+                sub("^[~^>=<v]+"; "") as $v |
+                if ($v | test("^[0-9]+\\.[0-9]+\\.[0-9]+")) then ($a | .version = $v) else $a end
+              )
+            ' .agents/skills/forge/catalog.json > .agents/skills/forge/catalog.json.tmp && mv .agents/skills/forge/catalog.json.tmp .agents/skills/forge/catalog.json
+          fi
           rm -rf /tmp/alten-coding-pal /tmp/1pizza-coding-pal
 
       - uses: actions/setup-node@v4
         if: steps.resolve.outputs.skip != 'true'
         with:
           node-version: 22
-          cache: npm
 
       - name: Clone sibling DoomR.js workspace for companion game editors
         if: steps.resolve.outputs.skip != 'true'
@@ -249,15 +267,24 @@ jobs:
             Cadenza|MappR|PixelGun|PolyGun|ShaderGun)
               if [ ! -d ../DoomR.js ]; then
                 git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/1pizzateam/DoomR.js.git" ../DoomR.js
-                npm --prefix ../DoomR.js ci
               fi
               ;;
           esac
 
-      - if: steps.resolve.outputs.skip != 'true'
-        run: npm ci
-      - if: steps.resolve.outputs.skip != 'true'
-        run: npm install -g @github/copilot
+      - name: Cache Copilot CLI
+        if: steps.resolve.outputs.skip != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.copilot-cli
+          key: copilot-cli-${{ runner.os }}-node22
+
+      - name: Install Copilot CLI
+        if: steps.resolve.outputs.skip != 'true'
+        run: |
+          if [ ! -x "$HOME/.copilot-cli/bin/copilot" ]; then
+            npm install --prefix "$HOME/.copilot-cli" -g @github/copilot
+          fi
+          echo "$HOME/.copilot-cli/bin" >> "$GITHUB_PATH"
 
       - name: Fetch issue context and run Planner agent
         if: steps.resolve.outputs.skip != 'true'
@@ -309,11 +336,11 @@ jobs:
           ${FEEDBACK_CONTEXT}
 
           Follow .github/instructions/plan.instructions.md and .agents/skills/plan/SKILL.md (and its references/plan-contract.md).
-          Read ${THINK_FILE} first and ground all file scopes, acceptance criteria, atomic implementation steps (with New Code, Verification, Bootable Check, and Serves), test plan rows, and blast radius checks in ${THINK_FILE} and the existing repository conventions.
+          Read ${THINK_FILE} first and ground all file scopes, acceptance criteria, atomic implementation steps (with Files, Action, Verification, Bootable Check, and Serves), test plan rows, and blast radius checks in ${THINK_FILE} and the existing repository conventions.
           Order ## Implementation Checklist steps strictly so every step passes its Verification, Bootable Check, and full test suite immediately when executed in sequence: always place core implementation steps BEFORE the test steps that assert on their new behavior (never place a test step before the implementation step it depends on), and if an implementation step changes existing behavior asserted by an existing test file, update that existing assertion in the same implementation step (listing both files in Files) while reserving subsequent test steps for adding new AC-<n> tests.
-          Keep the exact required headings and bullet labels, but make every prose description short and straight to the point (1 concise sentence per bullet; no filler or repetition).
+          Keep the exact required headings and bullet labels, but make every prose description short and straight to the point (1 concise sentence per bullet; no filler or repetition). Do NOT write source code or test code in ${PLAN_FILE} (no code blocks or New Code fields)—code is written once in Code.
           ${LIBRARY_DOCS_HINT}
-          Every test in ## Test Plan and in test steps' New Code must include its acceptance criterion ID (`AC-1`, `AC-2`, etc.) in the test name (for example `test('AC-1: ...', ...)` or `it('AC-1: ...', ...)`) and start the Test Plan `Test` cell with the relative test file path (`tests/<file>: AC-1 ...` or `scripts/<file>: AC-1 ...`) so `criteria-verify` can verify every criterion with `--require-test-files`.
+          Every test in ## Test Plan must include its acceptance criterion ID (`AC-1`, `AC-2`, etc.) in the test name (for example `tests/<file>: AC-1 ...` or `scripts/<file>: AC-1 ...`) and start the Test Plan `Test` cell with the relative test file path so `criteria-verify` can verify every criterion with `--require-test-files`.
           Do not modify any production or test files; only write ${PLAN_FILE}.
           Do not post comments or edit labels on GitHub issues; only write ${PLAN_FILE}.
           Validate and cross-check the generated file with: node .agents/skills/plan/scripts/validate-plan.mjs --plan ${PLAN_FILE} --think ${THINK_FILE} and fix any validation errors until it exits with code 0."
@@ -325,29 +352,38 @@ jobs:
               done
             } | jq -sc --arg step "Plan" '
               def num(x): if (x | type) == "number" then x elif (x | type) == "string" then (x | tonumber? // 0) else 0 end;
-              def tok_in: [.. | objects | (.input_tokens? // .prompt_tokens? // .inputTokens? // .promptTokens? // ."gen_ai.usage.input_tokens"? // empty) | num(.)] | add // 0;
-              def tok_out: [.. | objects | (.output_tokens? // .completion_tokens? // .outputTokens? // .completionTokens? // ."gen_ai.usage.output_tokens"? // empty) | num(.)] | add // 0;
-              def tok_cache: [.. | objects | (.cache_read_tokens? // .cached_tokens? // .cacheReadTokens? // ."gen_ai.usage.cache_read.input_tokens"? // empty) | num(.)] | add // 0;
-              def reqs: [.. | objects | select(.type? == "assistant.usage" or .type? == "assistant.turn_end" or .type? == "session.metrics" or ."gen_ai.usage.input_tokens"? != null or .input_tokens? != null or .prompt_tokens? != null)] | length;
-              def explicit_cost: [.. | objects | (.cost_usd? // .total_cost_usd? // .costUsd? // .totalCostUsd? // ."gen_ai.usage.cost"? // empty) | num(.)] | add // 0;
-              def models: ([.. | objects | (.model? // ."gen_ai.response.model"? // ."gen_ai.request.model"? // empty) | select(type == "string" and length > 0 and . != "auto")] + [.. | objects | .modelMetrics? | select(type == "object") | keys[]]) | unique;
+              ([.[] | select(.type? == "session.usage_record") | .data.usage | select(type == "object")]) as $urec |
+              ([.[] | select(.type? == "assistant.usage")]) as $ausg |
+              ([.[] | select(.type? == null and (."gen_ai.usage.input_tokens"? != null or .input_tokens? != null or .prompt_tokens? != null))]) as $otel |
+              (if ($urec | length) > 0 then $urec elif ($ausg | length) > 0 then $ausg else $otel end) as $recs |
+              def tok_in: [$recs[] | (.inputTokens? // .input_tokens? // .promptTokens? // .prompt_tokens? // ."gen_ai.usage.input_tokens"? // 0) | num(.)] | add // 0;
+              def tok_out: [$recs[] | (.outputTokens? // .output_tokens? // .completionTokens? // .completion_tokens? // ."gen_ai.usage.output_tokens"? // 0) | num(.)] | add // 0;
+              def tok_cache: [$recs[] | (.cacheReadTokens? // .cache_read_tokens? // .cached_tokens? // ."gen_ai.usage.cache_read.input_tokens"? // 0) | num(.)] | add // 0;
+              def tok_cache_write: [$recs[] | (.cacheWriteTokens? // .cache_write_tokens? // ."gen_ai.usage.cache_creation.input_tokens"? // 0) | num(.)] | add // 0;
+              def nano_aiu: [$recs[] | (.copilotUsage.totalNanoAiu? // .copilotUsage.total_nano_aiu? // .totalNanoAiu? // 0) | num(.)] | add // 0;
+              def explicit_cost: [$recs[] | (.cost_usd? // .total_cost_usd? // .costUsd? // .totalCostUsd? // ."gen_ai.usage.cost"? // 0) | num(.)] | add // 0;
+              def models: [$recs[] | (.model? // ."gen_ai.response.model"? // ."gen_ai.request.model"? // empty) | select(type == "string" and length > 0 and . != "auto")] | unique;
               def model_str: (models | if length == 0 then "auto" else join(", ") end);
-              def rate_in(m): if (m | test("opus"; "i")) then 15.0 elif (m | test("haiku|mini|flash"; "i")) then 0.25 else 3.0 end;
-              def rate_out(m): if (m | test("opus"; "i")) then 75.0 elif (m | test("haiku|mini|flash"; "i")) then 1.25 else 15.0 end;
-              (tok_in) as $in | (tok_out) as $out | (tok_cache) as $cache | (model_str) as $m |
-              (if explicit_cost > 0 then explicit_cost else (($in * rate_in($m) + $out * rate_out($m)) / 1000000.0) end) as $cost |
+              def rate_in(m): if (m | test("opus"; "i")) then 15.0 elif (m | test("haiku|mini|flash|nano|luna"; "i")) then 0.25 else 3.0 end;
+              def rate_out(m): if (m | test("opus"; "i")) then 75.0 elif (m | test("haiku|mini|flash|nano|luna"; "i")) then 1.25 else 15.0 end;
+              (tok_in) as $in | (tok_out) as $out | (tok_cache) as $cache | (tok_cache_write) as $cwrite | (nano_aiu) as $naiu | (model_str) as $m |
+              ([($in - $cache - $cwrite), 0] | max) as $uncached_in |
+              (if explicit_cost > 0 then explicit_cost
+               elif $naiu > 0 then (($naiu / 1000000000.0) * 0.01)
+               else (($uncached_in * rate_in($m) + $cwrite * (rate_in($m) * 1.25) + $cache * (rate_in($m) * 0.1) + $out * rate_out($m)) / 1000000.0)
+               end) as $cost |
               {
                 step: $step,
                 model: $m,
                 input_tokens: $in,
                 output_tokens: $out,
                 cached_tokens: $cache,
-                requests: (if reqs > 0 then reqs else 1 end),
+                requests: (if ($recs | length) > 0 then ($recs | length) else 1 end),
                 cost_usd: (($cost * 10000 | round) / 10000)
               }
             ' 2>/dev/null || echo '{"step":"Plan","model":"auto","input_tokens":0,"output_tokens":0,"cached_tokens":0,"requests":1,"cost_usd":0}'
           )
-          rm -f "${COPILOT_OTEL_FILE_EXPORTER_PATH}"
+          rm -rf "${COPILOT_HOME:-$HOME/.copilot}"/session-state/* "${COPILOT_OTEL_FILE_EXPORTER_PATH}"
           mkdir -p "$SPEC_DIR"
           echo "$STEP_COST_JSON" >> "${SPEC_DIR}/ai-cost.jsonl"
           echo "$STEP_COST_JSON" > "${SPEC_DIR}/ai-cost-pending.jsonl"

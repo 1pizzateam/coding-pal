@@ -220,19 +220,38 @@ jobs:
           cp /tmp/1pizza-coding-pal/instructions/*.md .github/instructions/
           cp /tmp/alten-coding-pal/instructions/sharp-agent.instructions.md .github/instructions/
           cp /tmp/alten-coding-pal/instructions/think.instructions.md .github/instructions/
+          cp /tmp/alten-coding-pal/instructions/forge.instructions.md .github/instructions/
           cp /tmp/alten-coding-pal/instructions/decision-record.instructions.md .github/instructions/
           [ -d tests ] && [ -f /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md ] && cp /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md .github/instructions/
           [ -d website ] && [ -f /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md ] && cp /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md .github/instructions/
           cp /tmp/alten-coding-pal/agents/think.agent.md .github/agents/
           cp -R /tmp/alten-coding-pal/skills/think .agents/skills/think
+          cp -R /tmp/alten-coding-pal/skills/forge .agents/skills/forge
           cp -R /tmp/alten-coding-pal/skills/decision-record .agents/skills/decision-record
+          cp /tmp/1pizza-coding-pal/forge-catalog.json .agents/skills/forge/catalog.json
+          for repo_cat in docs/forge/catalog.json .github/forge-catalog.json forge-catalog.json; do
+            if [ -f "$repo_cat" ]; then
+              jq -s '.[0] as $base | .[1] as $ext | ($base * $ext) | .assets = (((($base.assets // []) + ($ext.assets // [])) | group_by(.id) | map(reduce .[] as $item ({}; . * $item))))' \
+                .agents/skills/forge/catalog.json "$repo_cat" > .agents/skills/forge/catalog.json.tmp && mv .agents/skills/forge/catalog.json.tmp .agents/skills/forge/catalog.json
+            fi
+          done
+          if [ -f package.json ]; then
+            jq --slurpfile pkg package.json '
+              (($pkg[0].dependencies // {}) + ($pkg[0].devDependencies // {})) as $deps |
+              .assets |= map(
+                . as $a |
+                ($deps["@1pizzateam/" + $a.id] // $deps[$a.id] // "") |
+                sub("^[~^>=<v]+"; "") as $v |
+                if ($v | test("^[0-9]+\\.[0-9]+\\.[0-9]+")) then ($a | .version = $v) else $a end
+              )
+            ' .agents/skills/forge/catalog.json > .agents/skills/forge/catalog.json.tmp && mv .agents/skills/forge/catalog.json.tmp .agents/skills/forge/catalog.json
+          fi
           rm -rf /tmp/alten-coding-pal /tmp/1pizza-coding-pal
 
       - uses: actions/setup-node@v4
         if: steps.resume.outputs.resumed_stage == 'none'
         with:
           node-version: 22
-          cache: npm
 
       - name: Clone sibling DoomR.js workspace for companion game editors
         if: steps.resume.outputs.resumed_stage == 'none'
@@ -244,15 +263,24 @@ jobs:
             Cadenza|MappR|PixelGun|PolyGun|ShaderGun)
               if [ ! -d ../DoomR.js ]; then
                 git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/1pizzateam/DoomR.js.git" ../DoomR.js
-                npm --prefix ../DoomR.js ci
               fi
               ;;
           esac
 
-      - if: steps.resume.outputs.resumed_stage == 'none'
-        run: npm ci
-      - if: steps.resume.outputs.resumed_stage == 'none'
-        run: npm install -g @github/copilot
+      - name: Cache Copilot CLI
+        if: steps.resume.outputs.resumed_stage == 'none'
+        uses: actions/cache@v4
+        with:
+          path: ~/.copilot-cli
+          key: copilot-cli-${{ runner.os }}-node22
+
+      - name: Install Copilot CLI
+        if: steps.resume.outputs.resumed_stage == 'none'
+        run: |
+          if [ ! -x "$HOME/.copilot-cli/bin/copilot" ]; then
+            npm install --prefix "$HOME/.copilot-cli" -g @github/copilot
+          fi
+          echo "$HOME/.copilot-cli/bin" >> "$GITHUB_PATH"
 
       - name: Fetch issue context and run Thinker agent
         if: steps.resume.outputs.resumed_stage == 'none'
@@ -321,7 +349,7 @@ jobs:
           Keep the exact required headings and bullet labels, but be terse and straight to the point (target under 350 words total):
           - Limit every bullet value to 1 short, direct sentence (max ~25 words); no multi-sentence paragraphs or filler.
           - List only 2 options in ## Options Considered unless a 3rd is genuinely needed.
-          - Because no Forge catalog is installed in this repository, set Custom build where applicable with a 1-phrase Custom Build Reason in ## Chosen Approach and '- **None:** No Forge catalog in repository.' in ## Forge Asset Bindings (do not list unrelated package.json versions or explain why optional escalation files were omitted).
+          - Query the installed Forge catalog (.agents/skills/forge/catalog.json, or run 'node .agents/skills/forge/scripts/discover.mjs --need <capability>'): when the chosen approach reuses, composes, or extends any cataloged Forge asset, set Source to 'Forge reuse' or 'Hybrid' and bind each relevant asset in ## Forge Asset Bindings as '- **forge/<id>@<version>:** <how it is composed>' using the asset id and version from .agents/skills/forge/catalog.json; only when no cataloged Forge asset applies to this change, set Source to 'Custom build' with a 1-phrase Custom Build Reason in ## Chosen Approach and '- **None:** <concise reason why no cataloged Forge asset applies>' in ## Forge Asset Bindings.
           - Write '_None._' in ## Ambiguities & Open Questions unless a genuine blocker exists.
           ${ESCALATION_HINT}
           ${EDITOR_HINT}
@@ -336,29 +364,38 @@ jobs:
               done
             } | jq -sc --arg step "Think" '
               def num(x): if (x | type) == "number" then x elif (x | type) == "string" then (x | tonumber? // 0) else 0 end;
-              def tok_in: [.. | objects | (.input_tokens? // .prompt_tokens? // .inputTokens? // .promptTokens? // ."gen_ai.usage.input_tokens"? // empty) | num(.)] | add // 0;
-              def tok_out: [.. | objects | (.output_tokens? // .completion_tokens? // .outputTokens? // .completionTokens? // ."gen_ai.usage.output_tokens"? // empty) | num(.)] | add // 0;
-              def tok_cache: [.. | objects | (.cache_read_tokens? // .cached_tokens? // .cacheReadTokens? // ."gen_ai.usage.cache_read.input_tokens"? // empty) | num(.)] | add // 0;
-              def reqs: [.. | objects | select(.type? == "assistant.usage" or .type? == "assistant.turn_end" or .type? == "session.metrics" or ."gen_ai.usage.input_tokens"? != null or .input_tokens? != null or .prompt_tokens? != null)] | length;
-              def explicit_cost: [.. | objects | (.cost_usd? // .total_cost_usd? // .costUsd? // .totalCostUsd? // ."gen_ai.usage.cost"? // empty) | num(.)] | add // 0;
-              def models: ([.. | objects | (.model? // ."gen_ai.response.model"? // ."gen_ai.request.model"? // empty) | select(type == "string" and length > 0 and . != "auto")] + [.. | objects | .modelMetrics? | select(type == "object") | keys[]]) | unique;
+              ([.[] | select(.type? == "session.usage_record") | .data.usage | select(type == "object")]) as $urec |
+              ([.[] | select(.type? == "assistant.usage")]) as $ausg |
+              ([.[] | select(.type? == null and (."gen_ai.usage.input_tokens"? != null or .input_tokens? != null or .prompt_tokens? != null))]) as $otel |
+              (if ($urec | length) > 0 then $urec elif ($ausg | length) > 0 then $ausg else $otel end) as $recs |
+              def tok_in: [$recs[] | (.inputTokens? // .input_tokens? // .promptTokens? // .prompt_tokens? // ."gen_ai.usage.input_tokens"? // 0) | num(.)] | add // 0;
+              def tok_out: [$recs[] | (.outputTokens? // .output_tokens? // .completionTokens? // .completion_tokens? // ."gen_ai.usage.output_tokens"? // 0) | num(.)] | add // 0;
+              def tok_cache: [$recs[] | (.cacheReadTokens? // .cache_read_tokens? // .cached_tokens? // ."gen_ai.usage.cache_read.input_tokens"? // 0) | num(.)] | add // 0;
+              def tok_cache_write: [$recs[] | (.cacheWriteTokens? // .cache_write_tokens? // ."gen_ai.usage.cache_creation.input_tokens"? // 0) | num(.)] | add // 0;
+              def nano_aiu: [$recs[] | (.copilotUsage.totalNanoAiu? // .copilotUsage.total_nano_aiu? // .totalNanoAiu? // 0) | num(.)] | add // 0;
+              def explicit_cost: [$recs[] | (.cost_usd? // .total_cost_usd? // .costUsd? // .totalCostUsd? // ."gen_ai.usage.cost"? // 0) | num(.)] | add // 0;
+              def models: [$recs[] | (.model? // ."gen_ai.response.model"? // ."gen_ai.request.model"? // empty) | select(type == "string" and length > 0 and . != "auto")] | unique;
               def model_str: (models | if length == 0 then "auto" else join(", ") end);
-              def rate_in(m): if (m | test("opus"; "i")) then 15.0 elif (m | test("haiku|mini|flash"; "i")) then 0.25 else 3.0 end;
-              def rate_out(m): if (m | test("opus"; "i")) then 75.0 elif (m | test("haiku|mini|flash"; "i")) then 1.25 else 15.0 end;
-              (tok_in) as $in | (tok_out) as $out | (tok_cache) as $cache | (model_str) as $m |
-              (if explicit_cost > 0 then explicit_cost else (($in * rate_in($m) + $out * rate_out($m)) / 1000000.0) end) as $cost |
+              def rate_in(m): if (m | test("opus"; "i")) then 15.0 elif (m | test("haiku|mini|flash|nano|luna"; "i")) then 0.25 else 3.0 end;
+              def rate_out(m): if (m | test("opus"; "i")) then 75.0 elif (m | test("haiku|mini|flash|nano|luna"; "i")) then 1.25 else 15.0 end;
+              (tok_in) as $in | (tok_out) as $out | (tok_cache) as $cache | (tok_cache_write) as $cwrite | (nano_aiu) as $naiu | (model_str) as $m |
+              ([($in - $cache - $cwrite), 0] | max) as $uncached_in |
+              (if explicit_cost > 0 then explicit_cost
+               elif $naiu > 0 then (($naiu / 1000000000.0) * 0.01)
+               else (($uncached_in * rate_in($m) + $cwrite * (rate_in($m) * 1.25) + $cache * (rate_in($m) * 0.1) + $out * rate_out($m)) / 1000000.0)
+               end) as $cost |
               {
                 step: $step,
                 model: $m,
                 input_tokens: $in,
                 output_tokens: $out,
                 cached_tokens: $cache,
-                requests: (if reqs > 0 then reqs else 1 end),
+                requests: (if ($recs | length) > 0 then ($recs | length) else 1 end),
                 cost_usd: (($cost * 10000 | round) / 10000)
               }
             ' 2>/dev/null || echo '{"step":"Think","model":"auto","input_tokens":0,"output_tokens":0,"cached_tokens":0,"requests":1,"cost_usd":0}'
           )
-          rm -f "${COPILOT_OTEL_FILE_EXPORTER_PATH}"
+          rm -rf "${COPILOT_HOME:-$HOME/.copilot}"/session-state/* "${COPILOT_OTEL_FILE_EXPORTER_PATH}"
           echo "$STEP_COST_JSON" >> "${SPEC_DIR}/ai-cost.jsonl"
           echo "$STEP_COST_JSON" > "${SPEC_DIR}/ai-cost-pending.jsonl"
           PRIOR_COST=$(echo "$ISSUE_JSON" | jq -r '.comments[].body // empty' 2>/dev/null | sed -n 's/.*<!-- ai-cost-step:\({.*}\) -->.*/\1/p' | jq -sr '([.[].cost_usd // 0] | add // 0)' 2>/dev/null || echo "0")

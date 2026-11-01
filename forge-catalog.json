@@ -1,0 +1,476 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "spock",
+      "name": "Spock.js",
+      "kind": "library",
+      "summary": "Zero-dependency TypeScript mathematics library providing vectors, matrices, quaternions, geometry primitives, interpolation, and deterministic random number generation for games and WebGL engines.",
+      "capabilities": [
+        "2D, 3D, and 4D vector and matrix algebra (Vec2, Vec3, Vec4, Mat3, Mat4, Quat)",
+        "Geometric primitives, rays, planes, bounding boxes, and frustum math",
+        "Deterministic seeded pseudo-random number generation and noise helpers",
+        "Zero-allocation in-place vector and matrix operations for hot loops"
+      ],
+      "keywords": [
+        "math",
+        "mathematics",
+        "vector",
+        "vec2",
+        "vec3",
+        "vec4",
+        "matrix",
+        "mat3",
+        "mat4",
+        "quaternion",
+        "geometry",
+        "interpolation",
+        "lerp",
+        "random",
+        "rng",
+        "trigonometry",
+        "spock"
+      ],
+      "owner": "1pizzateam",
+      "version": "4.5.0",
+      "maturity": "stable",
+      "status": "active",
+      "releasedAt": "2026-10-30",
+      "interface": {
+        "type": "TypeScript ESM/UMD Library",
+        "docs": "https://1pizzateam.github.io/Spock.js",
+        "integrationGuide": "https://github.com/1pizzateam/Spock.js#readme",
+        "contract": "TypeScript declarations exported from src/index.ts and published in @1pizzateam/spock"
+      },
+      "artifacts": [
+        { "type": "npm-package", "ref": "@1pizzateam/spock" },
+        { "type": "git-repository", "ref": "https://github.com/1pizzateam/Spock.js" }
+      ],
+      "docs": "https://1pizzateam.github.io/Spock.js",
+      "repository": "https://github.com/1pizzateam/Spock.js",
+      "license": "MIT",
+      "tests": {
+        "ci": "https://github.com/1pizzateam/Spock.js/actions/workflows/ci.yml"
+      },
+      "composesWith": ["bumpr", "roostr", "loopr"],
+      "replacement": null,
+      "removalDate": null
+    },
+    {
+      "id": "bumpr",
+      "name": "BumpR.js",
+      "kind": "library",
+      "summary": "2D physics, collision detection, raycasting, and spatial broadphase engine written in TypeScript on top of Spock.js.",
+      "capabilities": [
+        "2D AABB, circle, line segment, and polygon collision detection and resolution",
+        "Spatial grid and broadphase queries for fast entity collision culling",
+        "2D raycasting, line-of-sight, and sweep tests against level geometry",
+        "Kinematic and dynamic body movement with sliding wall response"
+      ],
+      "keywords": [
+        "physics",
+        "collision",
+        "2d physics",
+        "aabb",
+        "circle",
+        "hitbox",
+        "raycast",
+        "line of sight",
+        "broadphase",
+        "spatial grid",
+        "kinematic",
+        "rigidbody",
+        "bumpr"
+      ],
+      "owner": "1pizzateam",
+      "version": "1.2.0",
+      "maturity": "stable",
+      "status": "active",
+      "releasedAt": "2026-10-30",
+      "interface": {
+        "type": "TypeScript ESM/UMD Library",
+        "docs": "https://1pizzateam.github.io/BumpR.js",
+        "integrationGuide": "https://github.com/1pizzateam/BumpR.js#readme",
+        "contract": "TypeScript declarations exported from src/index.ts and published in @1pizzateam/bumpr"
+      },
+      "artifacts": [
+        { "type": "npm-package", "ref": "@1pizzateam/bumpr" },
+        { "type": "git-repository", "ref": "https://github.com/1pizzateam/BumpR.js" }
+      ],
+      "docs": "https://1pizzateam.github.io/BumpR.js",
+      "repository": "https://github.com/1pizzateam/BumpR.js",
+      "license": "MIT",
+      "tests": {
+        "ci": "https://github.com/1pizzateam/BumpR.js/actions/workflows/ci.yml"
+      },
+      "composesWith": ["spock", "loopr", "roostr"],
+      "replacement": null,
+      "removalDate": null
+    },
+    {
+      "id": "loopr",
+      "name": "LoopR.js",
+      "kind": "library",
+      "summary": "Lightweight animation loop manager with fixed-timestep simulation ticks, FPS capping, delta-time clock, and adaptive quality scaling.",
+      "capabilities": [
+        "RequestAnimationFrame loop lifecycle management (start, stop, pause, resume)",
+        "Delta-time clock, FPS measurement, and frame-rate capping",
+        "Fixed-timestep accumulator with render interpolation alpha",
+        "Adaptive quality scaler responding to frame-time budgets"
+      ],
+      "keywords": [
+        "game loop",
+        "animation loop",
+        "requestanimationframe",
+        "fps",
+        "frame rate",
+        "delta time",
+        "fixed timestep",
+        "clock",
+        "adaptive quality",
+        "loopr"
+      ],
+      "owner": "1pizzateam",
+      "version": "2.2.0",
+      "maturity": "stable",
+      "status": "active",
+      "releasedAt": "2026-10-30",
+      "interface": {
+        "type": "TypeScript ESM/UMD Library",
+        "docs": "https://1pizzateam.github.io/LoopR.js",
+        "integrationGuide": "https://github.com/1pizzateam/LoopR.js#readme",
+        "contract": "TypeScript declarations exported from src/index.ts and published in @1pizzateam/loopr"
+      },
+      "artifacts": [
+        { "type": "npm-package", "ref": "@1pizzateam/loopr" },
+        { "type": "git-repository", "ref": "https://github.com/1pizzateam/LoopR.js" }
+      ],
+      "docs": "https://1pizzateam.github.io/LoopR.js",
+      "repository": "https://github.com/1pizzateam/LoopR.js",
+      "license": "MIT",
+      "tests": {
+        "ci": "https://github.com/1pizzateam/LoopR.js/actions/workflows/ci.yml"
+      },
+      "composesWith": ["spock", "bumpr", "roostr", "groovr"],
+      "replacement": null,
+      "removalDate": null
+    },
+    {
+      "id": "roostr",
+      "name": "RoostR.js",
+      "kind": "library",
+      "summary": "WebGL 3D and 2D rendering engine written in TypeScript with scene graph, camera controllers, procedural texture/material pipelines, mesh builders, and post-processing shaders.",
+      "capabilities": [
+        "WebGL scene graph, perspective/orthographic cameras, and draw call batching",
+        "3D primitive and custom mesh builders, skeletal/hierarchical transforms, and billboarding",
+        "Procedural texture atlas generation, surface stamps, and custom GLSL shader materials",
+        "Post-processing render passes, framebuffers, HUD overlay rendering, and particle systems"
+      ],
+      "keywords": [
+        "webgl",
+        "3d engine",
+        "renderer",
+        "scene graph",
+        "camera",
+        "mesh",
+        "shader",
+        "glsl",
+        "texture",
+        "atlas",
+        "procedural texture",
+        "post processing",
+        "billboard",
+        "particles",
+        "roostr"
+      ],
+      "owner": "1pizzateam",
+      "version": "0.9.0",
+      "maturity": "beta",
+      "status": "active",
+      "releasedAt": "2026-10-30",
+      "interface": {
+        "type": "TypeScript ESM/UMD Library",
+        "docs": "https://1pizzateam.github.io/RoostR.js",
+        "integrationGuide": "https://github.com/1pizzateam/RoostR.js#readme",
+        "contract": "TypeScript declarations exported from src/index.ts and published in @1pizzateam/roostr"
+      },
+      "artifacts": [
+        { "type": "npm-package", "ref": "@1pizzateam/roostr" },
+        { "type": "git-repository", "ref": "https://github.com/1pizzateam/RoostR.js" }
+      ],
+      "docs": "https://1pizzateam.github.io/RoostR.js",
+      "repository": "https://github.com/1pizzateam/RoostR.js",
+      "license": "MIT",
+      "tests": {
+        "ci": "https://github.com/1pizzateam/RoostR.js/actions/workflows/ci.yml"
+      },
+      "composesWith": ["spock", "bumpr", "loopr", "pixelgun", "polygun", "shadergun"],
+      "replacement": null,
+      "removalDate": null
+    },
+    {
+      "id": "groovr",
+      "name": "GroovR.js",
+      "kind": "library",
+      "summary": "Procedural Web Audio synthesizer, rack-instrument patch player, and compact song/SFX playback engine for browser games.",
+      "capabilities": [
+        "Procedural Web Audio synthesis for chiptune, synth, percussion, and game SFX",
+        "Multi-track pattern sequencer and song format playback authored in Cadenza",
+        "Rack instrument routing, envelopes, filters, and spatial/panning mix controls",
+        "Zero-asset runtime audio generation without external MP3/WAV files"
+      ],
+      "keywords": [
+        "audio",
+        "web audio",
+        "sound",
+        "sfx",
+        "music",
+        "synthesizer",
+        "sequencer",
+        "song",
+        "rack instrument",
+        "groovr"
+      ],
+      "owner": "1pizzateam",
+      "version": "0.1.0-alpha.3",
+      "maturity": "alpha",
+      "status": "active",
+      "releasedAt": "2026-10-30",
+      "interface": {
+        "type": "TypeScript ESM/UMD Library",
+        "docs": "https://1pizzateam.github.io/GroovR.js",
+        "integrationGuide": "https://github.com/1pizzateam/GroovR.js#readme",
+        "contract": "TypeScript declarations exported from src/index.ts and published in @1pizzateam/groovr"
+      },
+      "artifacts": [
+        { "type": "npm-package", "ref": "@1pizzateam/groovr" },
+        { "type": "git-repository", "ref": "https://github.com/1pizzateam/GroovR.js" }
+      ],
+      "docs": "https://1pizzateam.github.io/GroovR.js",
+      "repository": "https://github.com/1pizzateam/GroovR.js",
+      "license": "MIT",
+      "tests": {
+        "ci": "https://github.com/1pizzateam/GroovR.js/actions/workflows/ci.yml"
+      },
+      "composesWith": ["cadenza", "loopr"],
+      "replacement": null,
+      "removalDate": null
+    },
+    {
+      "id": "cadenza",
+      "name": "Cadenza",
+      "kind": "shared-service",
+      "summary": "Browser-based music sequencer, rack-instrument patch designer, and SFX studio producing songs and sound banks for the GroovR.js engine.",
+      "capabilities": [
+        "Pattern, track, and arrangement authoring for GroovR.js songs",
+        "Interactive Web Audio rack instrument and SFX patch editing",
+        "JSON song and SFX bank export/import compatible with DoomR.js and GroovR.js"
+      ],
+      "keywords": [
+        "music editor",
+        "audio studio",
+        "sfx editor",
+        "sequencer",
+        "cadenza",
+        "groovr",
+        "song schema"
+      ],
+      "owner": "1pizzateam",
+      "version": "0.1.0",
+      "maturity": "alpha",
+      "status": "active",
+      "releasedAt": "2026-10-30",
+      "interface": {
+        "type": "Web Studio & JSON Asset Schema",
+        "docs": "https://1pizzateam.github.io/Cadenza",
+        "integrationGuide": "https://github.com/1pizzateam/Cadenza#readme",
+        "contract": "GroovR.js song and SFX JSON schema exported by Cadenza"
+      },
+      "artifacts": [
+        { "type": "git-repository", "ref": "https://github.com/1pizzateam/Cadenza" }
+      ],
+      "docs": "https://1pizzateam.github.io/Cadenza",
+      "repository": "https://github.com/1pizzateam/Cadenza",
+      "license": "MIT",
+      "tests": {
+        "ci": "https://github.com/1pizzateam/Cadenza/actions/workflows/ci.yml"
+      },
+      "composesWith": ["groovr"],
+      "replacement": null,
+      "removalDate": null
+    },
+    {
+      "id": "mappr",
+      "name": "MappR",
+      "kind": "shared-service",
+      "summary": "ASCII, 2D tactical grid, progression linter, and 3D WebGL level studio for authoring and validating DoomR.js maps.",
+      "capabilities": [
+        "2D tactical grid and ASCII glyph map editing with zone, door, pickup, and spawn placement",
+        "Automated progression, reachability, and keycard/lock linting for game levels",
+        "Live 3D WebGL preview powered by RoostR.js and level JSON/TS export"
+      ],
+      "keywords": [
+        "map editor",
+        "level editor",
+        "ascii map",
+        "tile glyph",
+        "level linter",
+        "progression",
+        "mappr",
+        "doomr"
+      ],
+      "owner": "1pizzateam",
+      "version": "0.1.0",
+      "maturity": "alpha",
+      "status": "active",
+      "releasedAt": "2026-10-30",
+      "interface": {
+        "type": "Web Studio & Level Schema",
+        "docs": "https://1pizzateam.github.io/MappR",
+        "integrationGuide": "https://github.com/1pizzateam/MappR#readme",
+        "contract": "DoomR.js map definition, tile glyph legend, and level validator contract"
+      },
+      "artifacts": [
+        { "type": "git-repository", "ref": "https://github.com/1pizzateam/MappR" }
+      ],
+      "docs": "https://1pizzateam.github.io/MappR",
+      "repository": "https://github.com/1pizzateam/MappR",
+      "license": "MIT",
+      "tests": {
+        "ci": "https://github.com/1pizzateam/MappR/actions/workflows/ci.yml"
+      },
+      "composesWith": ["roostr", "bumpr", "spock"],
+      "replacement": null,
+      "removalDate": null
+    },
+    {
+      "id": "pixelgun",
+      "name": "PixelGun",
+      "kind": "shared-service",
+      "summary": "2D texture atlas, procedural surface stamp, and sprite studio built on the RoostR.js engine.",
+      "capabilities": [
+        "Procedural texture recipe authoring, layering, and surface stamp composition",
+        "Sprite sheet and 2D texture atlas packing with real-time WebGL preview",
+        "Export of procedural texture presets compatible with RoostR.js and DoomR.js"
+      ],
+      "keywords": [
+        "texture editor",
+        "pixel art",
+        "sprite studio",
+        "texture atlas",
+        "procedural texture",
+        "surface stamp",
+        "pixelgun"
+      ],
+      "owner": "1pizzateam",
+      "version": "0.1.0",
+      "maturity": "alpha",
+      "status": "active",
+      "releasedAt": "2026-10-30",
+      "interface": {
+        "type": "Web Studio & Texture Recipe Schema",
+        "docs": "https://1pizzateam.github.io/PixelGun",
+        "integrationGuide": "https://github.com/1pizzateam/PixelGun#readme",
+        "contract": "RoostR.js procedural texture atlas and stamp recipe schema"
+      },
+      "artifacts": [
+        { "type": "git-repository", "ref": "https://github.com/1pizzateam/PixelGun" }
+      ],
+      "docs": "https://1pizzateam.github.io/PixelGun",
+      "repository": "https://github.com/1pizzateam/PixelGun",
+      "license": "MIT",
+      "tests": {
+        "ci": "https://github.com/1pizzateam/PixelGun/actions/workflows/ci.yml"
+      },
+      "composesWith": ["roostr", "shadergun"],
+      "replacement": null,
+      "removalDate": null
+    },
+    {
+      "id": "polygun",
+      "name": "PolyGun",
+      "kind": "shared-service",
+      "summary": "3D low-poly mesh, primitive hierarchy, UV/atlas binding, and keyframe animation studio built on the RoostR.js engine.",
+      "capabilities": [
+        "3D primitive composition, node hierarchy, and pivot/transform editing",
+        "Keyframe pose and animation clip authoring for enemies, weapons, and props",
+        "Export of 3D model and animation descriptors consumed by RoostR.js and DoomR.js"
+      ],
+      "keywords": [
+        "3d editor",
+        "mesh editor",
+        "model studio",
+        "animation editor",
+        "low poly",
+        "hierarchy",
+        "polygun"
+      ],
+      "owner": "1pizzateam",
+      "version": "0.1.0",
+      "maturity": "alpha",
+      "status": "active",
+      "releasedAt": "2026-10-30",
+      "interface": {
+        "type": "Web Studio & 3D Model Schema",
+        "docs": "https://1pizzateam.github.io/PolyGun",
+        "integrationGuide": "https://github.com/1pizzateam/PolyGun#readme",
+        "contract": "RoostR.js 3D model hierarchy and animation clip schema"
+      },
+      "artifacts": [
+        { "type": "git-repository", "ref": "https://github.com/1pizzateam/PolyGun" }
+      ],
+      "docs": "https://1pizzateam.github.io/PolyGun",
+      "repository": "https://github.com/1pizzateam/PolyGun",
+      "license": "MIT",
+      "tests": {
+        "ci": "https://github.com/1pizzateam/PolyGun/actions/workflows/ci.yml"
+      },
+      "composesWith": ["roostr", "spock", "pixelgun"],
+      "replacement": null,
+      "removalDate": null
+    },
+    {
+      "id": "shadergun",
+      "name": "ShaderGun",
+      "kind": "shared-service",
+      "summary": "Browser-based WebGL GLSL shader, uniform controller, and multi-pass post-processing studio.",
+      "capabilities": [
+        "Live GLSL vertex and fragment shader authoring with uniform inspection",
+        "Multi-layer shader composition and post-processing effect prototyping",
+        "Shader preset export compatible with RoostR.js and PixelGun"
+      ],
+      "keywords": [
+        "shader editor",
+        "glsl",
+        "webgl shader",
+        "fragment shader",
+        "post processing",
+        "uniforms",
+        "shadergun"
+      ],
+      "owner": "1pizzateam",
+      "version": "1.0.1",
+      "maturity": "stable",
+      "status": "active",
+      "releasedAt": "2026-10-30",
+      "interface": {
+        "type": "Web Studio & GLSL Shader Preset Schema",
+        "docs": "https://1pizzateam.github.io/ShaderGun",
+        "integrationGuide": "https://github.com/1pizzateam/ShaderGun#readme",
+        "contract": "GLSL shader source and uniform descriptor schema"
+      },
+      "artifacts": [
+        { "type": "git-repository", "ref": "https://github.com/1pizzateam/ShaderGun" }
+      ],
+      "docs": "https://1pizzateam.github.io/ShaderGun",
+      "repository": "https://github.com/1pizzateam/ShaderGun",
+      "license": "MIT",
+      "tests": {
+        "ci": "https://github.com/1pizzateam/ShaderGun/actions/workflows/ci.yml"
+      },
+      "composesWith": ["roostr", "pixelgun"],
+      "replacement": null,
+      "removalDate": null
+    }
+  ]
+}

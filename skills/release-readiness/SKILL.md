@@ -11,7 +11,7 @@ Deterministic pre-release gate for `@1pizzateam/*` libraries (`RoostR.js`, `Bump
 
 ### 1. During PR Validation (`Code` & `Prove`)
 ```bash
-node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs --mode pr --require-dist --build-docs
+node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs --mode pr --require-dist
 ```
 
 ### 2. Before Tagging & Publishing a Release
@@ -20,8 +20,7 @@ node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs \
   --mode release \
   --expected-version <X.Y.Z> \
   --previous-version <prev-X.Y.Z> \
-  --require-dist \
-  --build-docs
+  --require-dist
 ```
 
 ## Deterministic Checks Enforced

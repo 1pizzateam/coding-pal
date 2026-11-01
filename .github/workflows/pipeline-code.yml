@@ -298,9 +298,27 @@ jobs:
           [ -d website ] && [ -f /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md ] && cp /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md .github/instructions/
           [ -d website ] && [ -d /tmp/alten-coding-pal/skills/vitepress-docs-examples ] && cp -R /tmp/alten-coding-pal/skills/vitepress-docs-examples .agents/skills/vitepress-docs-examples
           cp /tmp/alten-coding-pal/agents/code.agent.md .github/agents/
-          for skill in pr-record scope-guard secret-guard dependency-guard task-gate control-guard test-probe preview-smoke criteria-verify; do
+          for skill in forge pr-record scope-guard secret-guard dependency-guard task-gate control-guard test-probe preview-smoke criteria-verify; do
             cp -R "/tmp/alten-coding-pal/skills/${skill}" ".agents/skills/${skill}"
           done
+          cp /tmp/1pizza-coding-pal/forge-catalog.json .agents/skills/forge/catalog.json
+          for repo_cat in docs/forge/catalog.json .github/forge-catalog.json forge-catalog.json; do
+            if [ -f "$repo_cat" ]; then
+              jq -s '.[0] as $base | .[1] as $ext | ($base * $ext) | .assets = (((($base.assets // []) + ($ext.assets // [])) | group_by(.id) | map(reduce .[] as $item ({}; . * $item))))' \
+                .agents/skills/forge/catalog.json "$repo_cat" > .agents/skills/forge/catalog.json.tmp && mv .agents/skills/forge/catalog.json.tmp .agents/skills/forge/catalog.json
+            fi
+          done
+          if [ -f package.json ]; then
+            jq --slurpfile pkg package.json '
+              (($pkg[0].dependencies // {}) + ($pkg[0].devDependencies // {})) as $deps |
+              .assets |= map(
+                . as $a |
+                ($deps["@1pizzateam/" + $a.id] // $deps[$a.id] // "") |
+                sub("^[~^>=<v]+"; "") as $v |
+                if ($v | test("^[0-9]+\\.[0-9]+\\.[0-9]+")) then ($a | .version = $v) else $a end
+              )
+            ' .agents/skills/forge/catalog.json > .agents/skills/forge/catalog.json.tmp && mv .agents/skills/forge/catalog.json.tmp .agents/skills/forge/catalog.json
+          fi
           rm -rf /tmp/alten-coding-pal /tmp/1pizza-coding-pal
 
           printf "%s\n" \
@@ -328,15 +346,27 @@ jobs:
             Cadenza|MappR|PixelGun|PolyGun|ShaderGun)
               if [ ! -d ../DoomR.js ]; then
                 git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/1pizzateam/DoomR.js.git ../DoomR.js
-                npm --prefix ../DoomR.js ci
               fi
               ;;
           esac
 
       - if: steps.resolve.outputs.skip != 'true'
         run: npm ci
-      - if: steps.resolve.outputs.skip != 'true'
-        run: npm install -g @github/copilot
+
+      - name: Cache Copilot CLI
+        if: steps.resolve.outputs.skip != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.copilot-cli
+          key: copilot-cli-${{ runner.os }}-node22
+
+      - name: Install Copilot CLI
+        if: steps.resolve.outputs.skip != 'true'
+        run: |
+          if [ ! -x "$HOME/.copilot-cli/bin/copilot" ]; then
+            npm install --prefix "$HOME/.copilot-cli" -g @github/copilot
+          fi
+          echo "$HOME/.copilot-cli/bin" >> "$GITHUB_PATH"
 
       - name: Run Code Agent to implement plan.md and prepare pr-body.md
         if: steps.resolve.outputs.skip != 'true'
@@ -392,12 +422,8 @@ jobs:
 
           Follow .agents/skills/pr-record/SKILL.md.
           1. Think and Plan may predate intervening merges. Check their assumptions against the current base before implementing; if they are no longer valid, stop with an explicit blocking explanation rather than changing specs or broadening scope.
-          2. Implement each step in ${PLAN_FILE} in order:
-             - Apply Step <n>'s New Code (writing only files in Step <n>'s Files and within In Scope; if an in-scope test file has an existing assertion superseded by Step <n>'s behavior change, update that assertion so the test suite passes).
-             - Ensure every acceptance criterion test includes its AC-<n> token in the test name so it passes criteria-verify in Prove.
-             - Run Step <n>'s Verification and Bootable Check commands ('npm test' and 'npm run build').
-             - Stage and commit Step <n>'s modified files with a commit message referencing Step <n> and #${ISSUE_NUMBER} (do not stage or commit files under ${SPEC_DIR}).
-          3. If this is a published @1pizzateam/* library, follow .agents/skills/release-readiness/SKILL.md and ensure library documentation and package exports stay in sync.
+          2. Implement all steps in ${PLAN_FILE} in order across the in-scope files (writing only files listed in ${PLAN_FILE}'s Files and within In Scope; if an in-scope test file has an existing assertion superseded by a behavior change, update that assertion; ensure every acceptance criterion test includes its AC-<n> token in the test name so it passes criteria-verify in Prove).
+          3. Once all steps are implemented, run the full verification and build checks once ('npm test' and 'npm run build'; if this is a published @1pizzateam/* library, also follow .agents/skills/release-readiness/SKILL.md and run 'node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs --mode pr' so library documentation and package exports are already in sync), fix any failures, and stage and commit all modified in-scope files in a single clean commit referencing #${ISSUE_NUMBER} (do not stage or commit files under ${SPEC_DIR}).
           4. Author the pull request body at pr-body.md following .agents/skills/pr-record/references/pr-record-contract.md (with ## Links including - **Closes:** #${ISSUE_NUMBER}, ## Acceptance Criteria Traceability, ## Dependencies, ## Blast Radius, and ## Human Validation with Client Intent, Behavioral Experience, and Safety & Blast Radius set to Pending)."
 
           STEP_COST_JSON=$(
@@ -407,28 +433,38 @@ jobs:
               done
             } | jq -sc --arg step "Code" '
               def num(x): if (x | type) == "number" then x elif (x | type) == "string" then (x | tonumber? // 0) else 0 end;
-              def tok_in: [.. | objects | (.input_tokens? // .prompt_tokens? // .inputTokens? // .promptTokens? // ."gen_ai.usage.input_tokens"? // empty) | num(.)] | add // 0;
-              def tok_out: [.. | objects | (.output_tokens? // .completion_tokens? // .outputTokens? // .completionTokens? // ."gen_ai.usage.output_tokens"? // empty) | num(.)] | add // 0;
-              def tok_cache: [.. | objects | (.cache_read_tokens? // .cached_tokens? // .cacheReadTokens? // ."gen_ai.usage.cache_read.input_tokens"? // empty) | num(.)] | add // 0;
-              def reqs: [.. | objects | select(.type? == "assistant.usage" or .type? == "assistant.turn_end" or .type? == "session.metrics" or ."gen_ai.usage.input_tokens"? != null or .input_tokens? != null or .prompt_tokens? != null)] | length;
-              def explicit_cost: [.. | objects | (.cost_usd? // .total_cost_usd? // .costUsd? // .totalCostUsd? // ."gen_ai.usage.cost"? // empty) | num(.)] | add // 0;
-              def models: [.. | objects | (.model? // ."gen_ai.response.model"? // ."gen_ai.request.model"? // empty) | select(type == "string" and length > 0 and . != "auto")] | unique;
+              ([.[] | select(.type? == "session.usage_record") | .data.usage | select(type == "object")]) as $urec |
+              ([.[] | select(.type? == "assistant.usage")]) as $ausg |
+              ([.[] | select(.type? == null and (."gen_ai.usage.input_tokens"? != null or .input_tokens? != null or .prompt_tokens? != null))]) as $otel |
+              (if ($urec | length) > 0 then $urec elif ($ausg | length) > 0 then $ausg else $otel end) as $recs |
+              def tok_in: [$recs[] | (.inputTokens? // .input_tokens? // .promptTokens? // .prompt_tokens? // ."gen_ai.usage.input_tokens"? // 0) | num(.)] | add // 0;
+              def tok_out: [$recs[] | (.outputTokens? // .output_tokens? // .completionTokens? // .completion_tokens? // ."gen_ai.usage.output_tokens"? // 0) | num(.)] | add // 0;
+              def tok_cache: [$recs[] | (.cacheReadTokens? // .cache_read_tokens? // .cached_tokens? // ."gen_ai.usage.cache_read.input_tokens"? // 0) | num(.)] | add // 0;
+              def tok_cache_write: [$recs[] | (.cacheWriteTokens? // .cache_write_tokens? // ."gen_ai.usage.cache_creation.input_tokens"? // 0) | num(.)] | add // 0;
+              def nano_aiu: [$recs[] | (.copilotUsage.totalNanoAiu? // .copilotUsage.total_nano_aiu? // .totalNanoAiu? // 0) | num(.)] | add // 0;
+              def explicit_cost: [$recs[] | (.cost_usd? // .total_cost_usd? // .costUsd? // .totalCostUsd? // ."gen_ai.usage.cost"? // 0) | num(.)] | add // 0;
+              def models: [$recs[] | (.model? // ."gen_ai.response.model"? // ."gen_ai.request.model"? // empty) | select(type == "string" and length > 0 and . != "auto")] | unique;
               def model_str: (models | if length == 0 then "auto" else join(", ") end);
-              def rate_in(m): if (m | test("opus"; "i")) then 15.0 elif (m | test("haiku|mini|flash"; "i")) then 0.25 else 3.0 end;
-              def rate_out(m): if (m | test("opus"; "i")) then 75.0 elif (m | test("haiku|mini|flash"; "i")) then 1.25 else 15.0 end;
-              (tok_in) as $in | (tok_out) as $out | (tok_cache) as $cache | (model_str) as $m |
-              (if explicit_cost > 0 then explicit_cost else (($in * rate_in($m) + $out * rate_out($m)) / 1000000.0) end) as $cost |
+              def rate_in(m): if (m | test("opus"; "i")) then 15.0 elif (m | test("haiku|mini|flash|nano|luna"; "i")) then 0.25 else 3.0 end;
+              def rate_out(m): if (m | test("opus"; "i")) then 75.0 elif (m | test("haiku|mini|flash|nano|luna"; "i")) then 1.25 else 15.0 end;
+              (tok_in) as $in | (tok_out) as $out | (tok_cache) as $cache | (tok_cache_write) as $cwrite | (nano_aiu) as $naiu | (model_str) as $m |
+              ([($in - $cache - $cwrite), 0] | max) as $uncached_in |
+              (if explicit_cost > 0 then explicit_cost
+               elif $naiu > 0 then (($naiu / 1000000000.0) * 0.01)
+               else (($uncached_in * rate_in($m) + $cwrite * (rate_in($m) * 1.25) + $cache * (rate_in($m) * 0.1) + $out * rate_out($m)) / 1000000.0)
+               end) as $cost |
               {
                 step: $step,
                 model: $m,
                 input_tokens: $in,
                 output_tokens: $out,
                 cached_tokens: $cache,
-                requests: (if reqs > 0 then reqs else 1 end),
+                requests: (if ($recs | length) > 0 then ($recs | length) else 1 end),
                 cost_usd: (($cost * 10000 | round) / 10000)
               }
             ' 2>/dev/null || echo '{"step":"Code","model":"auto","input_tokens":0,"output_tokens":0,"cached_tokens":0,"requests":1,"cost_usd":0}'
           )
+          rm -rf "${COPILOT_HOME:-$HOME/.copilot}"/session-state/* "${COPILOT_OTEL_FILE_EXPORTER_PATH}"
           echo "$STEP_COST_JSON" >> "${SPEC_DIR}/ai-cost.jsonl"
           echo "$STEP_COST_JSON" > "${SPEC_DIR}/ai-cost-pending.jsonl"
           PRIOR_COST=$(echo "$ISSUE_JSON" | jq -r '.comments[].body // empty' 2>/dev/null | sed -n 's/.*<!-- ai-cost-step:\({.*}\) -->.*/\1/p' | jq -sr '([.[].cost_usd // 0] | add // 0)' 2>/dev/null || echo "0")

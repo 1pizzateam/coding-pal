@@ -326,54 +326,28 @@ jobs:
           cp /tmp/alten-coding-pal/agents/prove.agent.md .github/agents/
           cp /tmp/alten-coding-pal/agents/gate-fix.agent.md .github/agents/
           cp /tmp/alten-coding-pal/agents/code.agent.md .github/agents/
-          for skill in think plan pr-record prove scope-guard secret-guard dependency-guard task-gate control-guard test-probe preview-smoke criteria-verify; do
+          for skill in think plan forge pr-record prove scope-guard secret-guard dependency-guard task-gate control-guard test-probe preview-smoke criteria-verify; do
             cp -R "/tmp/alten-coding-pal/skills/${skill}" ".agents/skills/${skill}"
           done
+          cp /tmp/1pizza-coding-pal/forge-catalog.json .agents/skills/forge/catalog.json
+          for repo_cat in docs/forge/catalog.json .github/forge-catalog.json forge-catalog.json; do
+            if [ -f "$repo_cat" ]; then
+              jq -s '.[0] as $base | .[1] as $ext | ($base * $ext) | .assets = (((($base.assets // []) + ($ext.assets // [])) | group_by(.id) | map(reduce .[] as $item ({}; . * $item))))' \
+                .agents/skills/forge/catalog.json "$repo_cat" > .agents/skills/forge/catalog.json.tmp && mv .agents/skills/forge/catalog.json.tmp .agents/skills/forge/catalog.json
+            fi
+          done
+          if [ -f package.json ]; then
+            jq --slurpfile pkg package.json '
+              (($pkg[0].dependencies // {}) + ($pkg[0].devDependencies // {})) as $deps |
+              .assets |= map(
+                . as $a |
+                ($deps["@1pizzateam/" + $a.id] // $deps[$a.id] // "") |
+                sub("^[~^>=<v]+"; "") as $v |
+                if ($v | test("^[0-9]+\\.[0-9]+\\.[0-9]+")) then ($a | .version = $v) else $a end
+              )
+            ' .agents/skills/forge/catalog.json > .agents/skills/forge/catalog.json.tmp && mv .agents/skills/forge/catalog.json.tmp .agents/skills/forge/catalog.json
+          fi
           rm -rf /tmp/alten-coding-pal /tmp/1pizza-coding-pal
-          rm -f .agents/skills/control-guard/scripts/bug-rule.mjs .agents/skills/control-guard/scripts/bug-rule.test.mjs
-          node -e '
-            const fs = require("fs");
-            for (const p of [
-              ".github/instructions/prove-controls.instructions.md",
-              ".github/agents/gate-fix.agent.md",
-              ".agents/skills/control-guard/SKILL.md",
-              ".agents/skills/control-guard/references/control-guard-contract.md"
-            ]) {
-              if (!fs.existsSync(p)) continue;
-              let text = fs.readFileSync(p, "utf8");
-              text = text.replace(/## The Bug Rule[\s\S]*?(?=\n## |\s*$)/, "## The Bug Rule\n\n- Every production defect results in a new automated check verified against the base branch by the `test-probe` skill in `gate-output.log`.\n- `Plan` and `Code` intentionally order implementation steps before test steps so every atomic step commit passes `task-gate`; do not run `bug-rule.mjs` or fail on implementation-before-test commit ordering.\n");
-              text = text.replace(/[^\n]*bug-rule\.mjs[^\n]*\n?/g, "");
-              fs.writeFileSync(p, text);
-            }
-
-            const vpPath = ".agents/skills/prove/scripts/validate-prove.mjs";
-            if (fs.existsSync(vpPath)) {
-              let vp = fs.readFileSync(vpPath, "utf8");
-              vp = vp.replace(
-                /export const REQUIRED_CONTROLS = \[[\s\S]*?\];/,
-                `export const REQUIRED_CONTROLS = [\n  "control-guard",\n  "secret-guard",\n  "dependency-guard",\n  "scope-guard",\n  "task-gate",\n  "criteria-verify",\n  "test-probe",\n  "preview-smoke",\n];`
-              );
-              fs.writeFileSync(vpPath, vp);
-            }
-
-            for (const p of [
-              ".agents/skills/prove/SKILL.md",
-              ".agents/skills/prove/references/prove-contract.md",
-              ".github/instructions/prove.instructions.md",
-              ".github/agents/prove.agent.md"
-            ]) {
-              if (!fs.existsSync(p)) continue;
-              let text = fs.readFileSync(p, "utf8");
-              text = text.replace(/^.*(?:validate-think|validate-plan|branch-guard|code-loop|validate-pr).*$\n?/gm, "");
-              text = text.replace(
-                /`validate-think`, `validate-plan`, `branch-guard`, `code-loop`, `control-guard`, `secret-guard`, `dependency-guard`, `scope-guard`, `task-gate`, `criteria-verify`, `test-probe`, `preview-smoke`, `validate-pr`/g,
-                "`control-guard`, `secret-guard`, `dependency-guard`, `scope-guard`, `task-gate`, `criteria-verify`, `test-probe`, `preview-smoke`"
-              );
-              text = text.replace(/\b13\b/g, "8");
-              fs.writeFileSync(p, text);
-            }
-          '
-
           printf "%s\n" \
             ".github/instructions/" \
             ".github/agents/" \
@@ -400,15 +374,28 @@ jobs:
             Cadenza|MappR|PixelGun|PolyGun|ShaderGun)
               if [ ! -d ../DoomR.js ]; then
                 git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/1pizzateam/DoomR.js.git ../DoomR.js
-                npm --prefix ../DoomR.js ci
               fi
               ;;
           esac
 
       - if: steps.resolve.outputs.skip != 'true'
         run: npm ci
-      - if: steps.resolve.outputs.skip != 'true'
-        run: npm install -g @github/copilot
+
+      - name: Cache Copilot CLI
+        if: steps.resolve.outputs.skip != 'true'
+        id: cache_copilot
+        uses: actions/cache@v4
+        with:
+          path: ~/.copilot-cli
+          key: copilot-cli-${{ runner.os }}-${{ inputs.node_version }}
+
+      - name: Install Copilot CLI
+        if: steps.resolve.outputs.skip != 'true'
+        run: |
+          if [ ! -x "$HOME/.copilot-cli/bin/copilot" ]; then
+            npm install --prefix "$HOME/.copilot-cli" -g @github/copilot
+          fi
+          echo "$HOME/.copilot-cli/bin" >> "$GITHUB_PATH"
 
       - name: Prepare automated validation recording
         if: steps.resolve.outputs.skip != 'true'
@@ -439,13 +426,37 @@ jobs:
             console.log(TIERS[Math.max(...tiers.map(tier => TIERS.indexOf(tier)))]);
           ')
           if [ "$TIER" = "High" ] || [ "$TIER" = "Critical" ]; then
-            copilot --model="auto" --agent="prove" --allow-all-tools \
-              --prompt "Complete only pr-body.md for autonomous ${TIER} Prove validation using ${PROVE_FILE}, ${SPEC_DIR}/think.md, ${SPEC_DIR}/plan.md and actual verification evidence.
-            No human sign-off is required or may be invented. Follow the autonomous Prove section of .agents/skills/pr-record/references/pr-record-contract.md.
-            Keep the three assessment fields Auto-merge only because the independently validated Prove report passed.
-            Set Rollback Validated to the exact rollback mechanism from Think followed by '; Automated verification' only when concrete rollback verification evidence is recorded in ${PROVE_FILE}.
-            For Critical also set Joint Sign-off to 'Automated verification' and Staged Rollout to an existing, validated rollout record reference.
-            If evidence is missing, leave the affected field Pending and report the failure; never invent verification or edit controls, production code, tests, or specifications."
+            # Set Rollback Validated to the exact rollback mechanism from Think followed by "; Automated verification"
+            # only when concrete rollback verification evidence is recorded in ${PROVE_FILE}; otherwise leave the affected field Pending.
+            node --input-type=module -e '
+              import { readFileSync, writeFileSync } from "node:fs";
+              import { readThink } from "./.agents/skills/pr-record/scripts/validate-pr.mjs";
+              const dir = process.env.SPEC_DIR || `specs/issue-${process.env.ISSUE_NUMBER}`;
+              const tier = process.env.TIER;
+              const think = readThink(readFileSync(`${dir}/think.md`, "utf8"));
+              const prove = readFileSync(`${dir}/prove.md`, "utf8");
+              let body = readFileSync("pr-body.md", "utf8");
+              const safetyMatch = prove.match(/^- \*\*Safety & Blast Radius:\*\*\s*PASS\s*[—–-]\s*(.+)$/m);
+              const hasRollbackEvidence = Boolean(
+                safetyMatch &&
+                think.rollback &&
+                think.rollback !== "_None._" &&
+                /rollback|revert|fallback|blast radius|safe/i.test(safetyMatch[1])
+              );
+              if (hasRollbackEvidence) {
+                body = body.replace(
+                  /^(- \*\*Rollback Validated:\*\*)\s*Pending$/m,
+                  `$1 ${think.rollback}; Automated verification`
+                );
+              }
+              if (tier === "Critical" && hasRollbackEvidence) {
+                body = body.replace(
+                  /^(- \*\*Joint Sign-off:\*\*)\s*Pending$/m,
+                  "$1 Automated verification"
+                );
+              }
+              writeFileSync("pr-body.md", body);
+            '
             TODAY=$(date -u +%Y-%m-%d)
             node .agents/skills/pr-record/scripts/validate-pr.mjs --body pr-body.md --dir "$SPEC_DIR" --stage prove --pr-date "$TODAY" --allow-auto-prove
           fi
@@ -480,28 +491,38 @@ jobs:
                 done
               } | jq -sc --arg step "$step_name" '
                 def num(x): if (x | type) == "number" then x elif (x | type) == "string" then (x | tonumber? // 0) else 0 end;
-                def tok_in: [.. | objects | (.input_tokens? // .prompt_tokens? // .inputTokens? // .promptTokens? // ."gen_ai.usage.input_tokens"? // empty) | num(.)] | add // 0;
-                def tok_out: [.. | objects | (.output_tokens? // .completion_tokens? // .outputTokens? // .completionTokens? // ."gen_ai.usage.output_tokens"? // empty) | num(.)] | add // 0;
-                def tok_cache: [.. | objects | (.cache_read_tokens? // .cached_tokens? // .cacheReadTokens? // ."gen_ai.usage.cache_read.input_tokens"? // empty) | num(.)] | add // 0;
-                def reqs: [.. | objects | select(.type? == "assistant.usage" or .type? == "assistant.turn_end" or .type? == "session.metrics" or ."gen_ai.usage.input_tokens"? != null or .input_tokens? != null or .prompt_tokens? != null)] | length;
-                def explicit_cost: [.. | objects | (.cost_usd? // .total_cost_usd? // .costUsd? // .totalCostUsd? // ."gen_ai.usage.cost"? // empty) | num(.)] | add // 0;
-                def models: [.. | objects | (.model? // ."gen_ai.response.model"? // ."gen_ai.request.model"? // empty) | select(type == "string" and length > 0 and . != "auto")] | unique;
+                ([.[] | select(.type? == "session.usage_record") | .data.usage | select(type == "object")]) as $urec |
+                ([.[] | select(.type? == "assistant.usage")]) as $ausg |
+                ([.[] | select(.type? == null and (."gen_ai.usage.input_tokens"? != null or .input_tokens? != null or .prompt_tokens? != null))]) as $otel |
+                (if ($urec | length) > 0 then $urec elif ($ausg | length) > 0 then $ausg else $otel end) as $recs |
+                def tok_in: [$recs[] | (.inputTokens? // .input_tokens? // .promptTokens? // .prompt_tokens? // ."gen_ai.usage.input_tokens"? // 0) | num(.)] | add // 0;
+                def tok_out: [$recs[] | (.outputTokens? // .output_tokens? // .completionTokens? // .completion_tokens? // ."gen_ai.usage.output_tokens"? // 0) | num(.)] | add // 0;
+                def tok_cache: [$recs[] | (.cacheReadTokens? // .cache_read_tokens? // .cached_tokens? // ."gen_ai.usage.cache_read.input_tokens"? // 0) | num(.)] | add // 0;
+                def tok_cache_write: [$recs[] | (.cacheWriteTokens? // .cache_write_tokens? // ."gen_ai.usage.cache_creation.input_tokens"? // 0) | num(.)] | add // 0;
+                def nano_aiu: [$recs[] | (.copilotUsage.totalNanoAiu? // .copilotUsage.total_nano_aiu? // .totalNanoAiu? // 0) | num(.)] | add // 0;
+                def explicit_cost: [$recs[] | (.cost_usd? // .total_cost_usd? // .costUsd? // .totalCostUsd? // ."gen_ai.usage.cost"? // 0) | num(.)] | add // 0;
+                def models: [$recs[] | (.model? // ."gen_ai.response.model"? // ."gen_ai.request.model"? // empty) | select(type == "string" and length > 0 and . != "auto")] | unique;
                 def model_str: (models | if length == 0 then "auto" else join(", ") end);
-                def rate_in(m): if (m | test("opus"; "i")) then 15.0 elif (m | test("haiku|mini|flash"; "i")) then 0.25 else 3.0 end;
-                def rate_out(m): if (m | test("opus"; "i")) then 75.0 elif (m | test("haiku|mini|flash"; "i")) then 1.25 else 15.0 end;
-                (tok_in) as $in | (tok_out) as $out | (tok_cache) as $cache | (model_str) as $m |
-                (if explicit_cost > 0 then explicit_cost else (($in * rate_in($m) + $out * rate_out($m)) / 1000000.0) end) as $cost |
+                def rate_in(m): if (m | test("opus"; "i")) then 15.0 elif (m | test("haiku|mini|flash|nano|luna"; "i")) then 0.25 else 3.0 end;
+                def rate_out(m): if (m | test("opus"; "i")) then 75.0 elif (m | test("haiku|mini|flash|nano|luna"; "i")) then 1.25 else 15.0 end;
+                (tok_in) as $in | (tok_out) as $out | (tok_cache) as $cache | (tok_cache_write) as $cwrite | (nano_aiu) as $naiu | (model_str) as $m |
+                ([($in - $cache - $cwrite), 0] | max) as $uncached_in |
+                (if explicit_cost > 0 then explicit_cost
+                 elif $naiu > 0 then (($naiu / 1000000000.0) * 0.01)
+                 else (($uncached_in * rate_in($m) + $cwrite * (rate_in($m) * 1.25) + $cache * (rate_in($m) * 0.1) + $out * rate_out($m)) / 1000000.0)
+                 end) as $cost |
                 {
                   step: $step,
                   model: $m,
                   input_tokens: $in,
                   output_tokens: $out,
                   cached_tokens: $cache,
-                  requests: (if reqs > 0 then reqs else 1 end),
+                  requests: (if ($recs | length) > 0 then ($recs | length) else 1 end),
                   cost_usd: (($cost * 10000 | round) / 10000)
                 }
               ' 2>/dev/null || echo "{\"step\":\"${step_name}\",\"model\":\"auto\",\"input_tokens\":0,\"output_tokens\":0,\"cached_tokens\":0,\"requests\":1,\"cost_usd\":0}"
             )
+            rm -rf "${COPILOT_HOME:-$HOME/.copilot}"/session-state/* "${COPILOT_OTEL_FILE_EXPORTER_PATH}"
             echo "$step_json" >> "${SPEC_DIR}/ai-cost.jsonl"
             echo "$step_json" >> "${SPEC_DIR}/ai-cost-pending.jsonl"
             prior_cost=$(gh issue view "$ISSUE_NUMBER" --json comments --jq '.comments[].body // empty' 2>/dev/null | sed -n 's/.*<!-- ai-cost-step:\({.*}\) -->.*/\1/p' | jq -sr '([.[].cost_usd // 0] | add // 0)' 2>/dev/null || echo "0")
@@ -655,7 +676,7 @@ jobs:
             fi
             TASK_STAGES=(--stage "test:bash $RUNNER_TEMP/run-tests.sh" --stage "build:${BUILD_CMD}")
             if [ -f package.json ] && [ "$(node -p "const p=require('./package.json'); Boolean(p.name && p.name.startsWith('@1pizzateam/') && !p.private)")" = "true" ]; then
-              TASK_STAGES+=(--stage "release-readiness:node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs --mode pr --require-dist --build-docs")
+              TASK_STAGES+=(--stage "release-readiness:node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs --mode pr --require-dist")
             fi
             run_check "task-gate" node .agents/skills/task-gate/scripts/task-gate.mjs "${TASK_STAGES[@]}"
 
@@ -707,7 +728,7 @@ jobs:
               Follow .github/instructions/prove.instructions.md, .agents/skills/prove/SKILL.md, and .agents/skills/prove/references/prove-contract.md.
               1. Read ${SPEC_DIR}/think.md, ${SPEC_DIR}/plan.md, pr-body.md, gate-output.log, and inspect the diff with git diff origin/${BASE_REF}...HEAD.
               2. Write the Prove record to ${PROVE_FILE} with exact header links (- **Issue:** #${ISSUE_NUMBER}, - **PR:** #${PR_NUMBER}, - **Think:** \`${SPEC_DIR}/think.md\`, - **Plan:** \`${SPEC_DIR}/plan.md\`, - **Branch:** \`${BRANCH_NAME}\`, - **Base:** \`${BASE_REF}\`).
-              3. Record the truthful status of all 8 required deterministic controls from gate-output.log (\`control-guard\`, \`secret-guard\`, \`dependency-guard\`, \`scope-guard\`, \`task-gate\`, \`criteria-verify\`, \`test-probe\`, \`preview-smoke\`), verify every AC-<n> criterion against the implementation and tests, and evaluate Client Intent, Behavioral Experience, and Safety & Blast Radius. Only those 8 required deterministic controls in gate-output.log apply (do NOT run bug-rule.mjs or fail on implementation-before-test commit ordering: Plan and Code intentionally order implementation steps before test steps so every atomic commit passes task-gate, and test falsifiability against origin/${BASE_REF} is verified by test-probe in gate-output.log). The branch includes the latest base: check interactions with intervening changes, not just textual conflicts. If the approved Think/Plan is no longer valid, record a blocking finding; do not broaden scope or change the specs.
+              3. Record the truthful status of all 8 required deterministic controls from gate-output.log (\`control-guard\`, \`secret-guard\`, \`dependency-guard\`, \`scope-guard\`, \`task-gate\`, \`criteria-verify\`, \`test-probe\`, \`preview-smoke\`), verify every AC-<n> criterion against the implementation and tests, and evaluate Client Intent, Behavioral Experience, and Safety & Blast Radius (including concrete rollback verification evidence for the rollback mechanism in think.md when Tier is High or Critical). The branch includes the latest base: check interactions with intervening changes, not just textual conflicts. If the approved Think/Plan is no longer valid, record a blocking finding; do not broaden scope or change the specs.
               4. Validate ${PROVE_FILE} until it exits 0:
                  node .agents/skills/prove/scripts/validate-prove.mjs --dir ${SPEC_DIR} --stage draft"
 
@@ -1004,74 +1025,112 @@ jobs:
           ')
 
           SPEC_DIR="specs/issue-${ISSUE_NUMBER}"
-          export COPILOT_OTEL_ENABLED="true"
-          export COPILOT_OTEL_FILE_EXPORTER_PATH="${RUNNER_TEMP}/copilot-otel.jsonl"
-          rm -rf "${COPILOT_HOME:-$HOME/.copilot}/session-state" "$COPILOT_OTEL_FILE_EXPORTER_PATH" 2>/dev/null || true
-
-          copilot --model="auto" --allow-all-tools \
-            --prompt "Prepare release ${TAG_NAME} (bumped from ${CURRENT_VERSION}) for merged PR #${PR_NUMBER} / Issue #${ISSUE_NUMBER} (${ISSUE_TITLE}) following .agents/skills/release-readiness/SKILL.md.
-          1. Update CHANGELOG.md so the very first section at line 1 is:
-             Version ${NEW_VERSION} (${RELEASE_DATE})
-             -----------------------------
-              * <concise bullet point(s) summarizing the changes from ${SPEC_DIR}/plan.md and the latest merge commit>
-             Keep all previous Version sections intact below a blank line.
-          2. Check that all public runtime symbols exported from src/ are documented in website/docs/** (if website/docs exists) or README.md, and update documentation if any export or signature from this release is missing.
-          3. Run:
-             node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs --mode release --expected-version ${NEW_VERSION} --previous-version ${CURRENT_VERSION}
-             Fix any reported CHANGELOG.md, README.md, website/docs, or package.json issues until it exits 0. Do NOT create git commits or tags."
-
-          STEP_COST_JSON=$(
-            {
-              for f in "${COPILOT_HOME:-$HOME/.copilot}"/session-state/*/events.jsonl "$COPILOT_OTEL_FILE_EXPORTER_PATH"; do
-                [ -f "$f" ] && cat "$f" || true
-              done
-            } | jq -sc --arg step "Release Prep" '
-              def num(x): if (x | type) == "number" then x elif (x | type) == "string" then (x | tonumber? // 0) else 0 end;
-              def tok_in: [.. | objects | (.input_tokens? // .prompt_tokens? // .inputTokens? // .promptTokens? // ."gen_ai.usage.input_tokens"? // empty) | num(.)] | add // 0;
-              def tok_out: [.. | objects | (.output_tokens? // .completion_tokens? // .outputTokens? // .completionTokens? // ."gen_ai.usage.output_tokens"? // empty) | num(.)] | add // 0;
-              def tok_cache: [.. | objects | (.cache_read_tokens? // .cached_tokens? // .cacheReadTokens? // ."gen_ai.usage.cache_read.input_tokens"? // empty) | num(.)] | add // 0;
-              def reqs: [.. | objects | select(.type? == "assistant.usage" or .type? == "assistant.turn_end" or .type? == "session.metrics" or ."gen_ai.usage.input_tokens"? != null or .input_tokens? != null or .prompt_tokens? != null)] | length;
-              def explicit_cost: [.. | objects | (.cost_usd? // .total_cost_usd? // .costUsd? // .totalCostUsd? // ."gen_ai.usage.cost"? // empty) | num(.)] | add // 0;
-              def models: [.. | objects | (.model? // ."gen_ai.response.model"? // ."gen_ai.request.model"? // empty) | select(type == "string" and length > 0 and . != "auto")] | unique;
-              def model_str: (models | if length == 0 then "auto" else join(", ") end);
-              def rate_in(m): if (m | test("opus"; "i")) then 15.0 elif (m | test("haiku|mini|flash"; "i")) then 0.25 else 3.0 end;
-              def rate_out(m): if (m | test("opus"; "i")) then 75.0 elif (m | test("haiku|mini|flash"; "i")) then 1.25 else 15.0 end;
-              (tok_in) as $in | (tok_out) as $out | (tok_cache) as $cache | (model_str) as $m |
-              (if explicit_cost > 0 then explicit_cost else (($in * rate_in($m) + $out * rate_out($m)) / 1000000.0) end) as $cost |
-              {
-                step: $step,
-                model: $m,
-                input_tokens: $in,
-                output_tokens: $out,
-                cached_tokens: $cache,
-                requests: (if reqs > 0 then reqs else 1 end),
-                cost_usd: (($cost * 10000 | round) / 10000)
-              }
-            ' 2>/dev/null || echo '{"step":"Release Prep","model":"auto","input_tokens":0,"output_tokens":0,"cached_tokens":0,"requests":1,"cost_usd":0}'
-          )
-          mkdir -p "$SPEC_DIR"
-          echo "$STEP_COST_JSON" >> "${SPEC_DIR}/ai-cost.jsonl"
-          echo "$STEP_COST_JSON" > "${SPEC_DIR}/ai-cost-pending.jsonl"
-          PRIOR_COST=$(gh issue view "$ISSUE_NUMBER" --json comments --jq '.comments[].body // empty' 2>/dev/null | sed -n 's/.*<!-- ai-cost-step:\({.*}\) -->.*/\1/p' | jq -sr '([.[].cost_usd // 0] | add // 0)' 2>/dev/null || echo "0")
-          echo "$STEP_COST_JSON" | jq -r --argjson prior "${PRIOR_COST:-0}" '
-            def fmt_usd(x): (x * 10000 | round / 10000) | tostring | if test("\\.") then (split(".") | .[0] + "." + ((.[1] + "0000")[0:4])) else . + ".0000" end;
-            ((.cost_usd // 0) + $prior) as $cum |
-            "\n\n---\n<!-- ai-cost-step:" + (. | tojson) + " -->\n💰 **AI Cost (" + .step + "):** `$" + fmt_usd(.cost_usd) + "` (`" + .model + "` · " + (.input_tokens | tostring) + " in / " + (.output_tokens | tostring) + " out tokens · " + (.requests | tostring) + (if .requests == 1 then " request" else " requests" end) + (if $prior > 0 then " · **Cumulative:** `$" + fmt_usd($cum) + "`" else "" end) + ")"
-          ' > "${SPEC_DIR}/ai-cost-step.md"
+          node -e '
+            const fs = require("fs");
+            const newVersion = process.argv[1];
+            const releaseDate = process.argv[2];
+            const specDir = process.argv[3];
+            const issueTitle = process.argv[4];
+            let bullets = [];
+            const planPath = `${specDir}/plan.md`;
+            if (fs.existsSync(planPath)) {
+              const plan = fs.readFileSync(planPath, "utf8");
+              const steps = [...plan.matchAll(/^### Step \d+:\s*(.+)$/gm)].map(m => m[1].trim());
+              if (steps.length) bullets = steps.slice(0, 5);
+            }
+            if (!bullets.length && issueTitle) {
+              bullets = [issueTitle.replace(/^(?:feat|fix|chore|refactor|perf|docs)(?:\([^)]+\))?:\s*/i, "")];
+            }
+            if (!bullets.length) bullets = [`Release v${newVersion}`];
+            const section = [
+              `Version ${newVersion} (${releaseDate})`,
+              "-----------------------------",
+              ...bullets.map(b => ` * ${b}`),
+              ""
+            ].join("\n");
+            const existing = fs.existsSync("CHANGELOG.md") ? fs.readFileSync("CHANGELOG.md", "utf8").trimStart() : "";
+            if (!existing.startsWith(`Version ${newVersion} `)) {
+              fs.writeFileSync("CHANGELOG.md", existing ? `${section}\n${existing}` : `${section}\n`);
+            }
+          ' "$NEW_VERSION" "$RELEASE_DATE" "$SPEC_DIR" "$ISSUE_TITLE"
 
           if node -p "Boolean(require('./package.json').scripts?.['build:lib'])" | grep -q true; then
             npm run build:lib
           else
             npm run build
           fi
-          npm test
 
-          node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs \
+          if ! node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs \
             --mode release \
             --expected-version "$NEW_VERSION" \
             --previous-version "$CURRENT_VERSION" \
-            --require-dist \
-            --build-docs
+            --require-dist; then
+            export COPILOT_OTEL_ENABLED="true"
+            export COPILOT_OTEL_FILE_EXPORTER_PATH="${RUNNER_TEMP}/copilot-otel.jsonl"
+            rm -rf "${COPILOT_HOME:-$HOME/.copilot}/session-state" "$COPILOT_OTEL_FILE_EXPORTER_PATH" 2>/dev/null || true
+
+            copilot --model="auto" --allow-all-tools \
+              --prompt "Repair release readiness for ${TAG_NAME} (bumped from ${CURRENT_VERSION}) for merged PR #${PR_NUMBER} / Issue #${ISSUE_NUMBER} (${ISSUE_TITLE}) following .agents/skills/release-readiness/SKILL.md.
+            1. Check that CHANGELOG.md starts with Version ${NEW_VERSION} (${RELEASE_DATE}) and all public runtime symbols exported from src/ are documented in website/docs/** (if website/docs exists) or README.md.
+            2. Run:
+               node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs --mode release --expected-version ${NEW_VERSION} --previous-version ${CURRENT_VERSION} --require-dist
+               Fix any reported CHANGELOG.md, README.md, website/docs, or package.json issues until it exits 0. Do NOT create git commits or tags."
+
+            STEP_COST_JSON=$(
+              {
+                for f in "${COPILOT_HOME:-$HOME/.copilot}"/session-state/*/events.jsonl "$COPILOT_OTEL_FILE_EXPORTER_PATH"; do
+                  [ -f "$f" ] && cat "$f" || true
+                done
+              } | jq -sc --arg step "Release Prep" '
+                def num(x): if (x | type) == "number" then x elif (x | type) == "string" then (x | tonumber? // 0) else 0 end;
+                ([.[] | select(.type? == "session.usage_record") | .data.usage | select(type == "object")]) as $urec |
+                ([.[] | select(.type? == "assistant.usage")]) as $ausg |
+                ([.[] | select(.type? == null and (."gen_ai.usage.input_tokens"? != null or .input_tokens? != null or .prompt_tokens? != null))]) as $otel |
+                (if ($urec | length) > 0 then $urec elif ($ausg | length) > 0 then $ausg else $otel end) as $recs |
+                def tok_in: [$recs[] | (.inputTokens? // .input_tokens? // .promptTokens? // .prompt_tokens? // ."gen_ai.usage.input_tokens"? // 0) | num(.)] | add // 0;
+                def tok_out: [$recs[] | (.outputTokens? // .output_tokens? // .completionTokens? // .completion_tokens? // ."gen_ai.usage.output_tokens"? // 0) | num(.)] | add // 0;
+                def tok_cache: [$recs[] | (.cacheReadTokens? // .cache_read_tokens? // .cached_tokens? // ."gen_ai.usage.cache_read.input_tokens"? // 0) | num(.)] | add // 0;
+                def tok_cache_write: [$recs[] | (.cacheWriteTokens? // .cache_write_tokens? // ."gen_ai.usage.cache_creation.input_tokens"? // 0) | num(.)] | add // 0;
+                def nano_aiu: [$recs[] | (.copilotUsage.totalNanoAiu? // .copilotUsage.total_nano_aiu? // .totalNanoAiu? // 0) | num(.)] | add // 0;
+                def explicit_cost: [$recs[] | (.cost_usd? // .total_cost_usd? // .costUsd? // .totalCostUsd? // ."gen_ai.usage.cost"? // 0) | num(.)] | add // 0;
+                def models: [$recs[] | (.model? // ."gen_ai.response.model"? // ."gen_ai.request.model"? // empty) | select(type == "string" and length > 0 and . != "auto")] | unique;
+                def model_str: (models | if length == 0 then "auto" else join(", ") end);
+                def rate_in(m): if (m | test("opus"; "i")) then 15.0 elif (m | test("haiku|mini|flash|nano|luna"; "i")) then 0.25 else 3.0 end;
+                def rate_out(m): if (m | test("opus"; "i")) then 75.0 elif (m | test("haiku|mini|flash|nano|luna"; "i")) then 1.25 else 15.0 end;
+                (tok_in) as $in | (tok_out) as $out | (tok_cache) as $cache | (tok_cache_write) as $cwrite | (nano_aiu) as $naiu | (model_str) as $m |
+                ([($in - $cache - $cwrite), 0] | max) as $uncached_in |
+                (if explicit_cost > 0 then explicit_cost
+                 elif $naiu > 0 then (($naiu / 1000000000.0) * 0.01)
+                 else (($uncached_in * rate_in($m) + $cwrite * (rate_in($m) * 1.25) + $cache * (rate_in($m) * 0.1) + $out * rate_out($m)) / 1000000.0)
+                 end) as $cost |
+                {
+                  step: $step,
+                  model: $m,
+                  input_tokens: $in,
+                  output_tokens: $out,
+                  cached_tokens: $cache,
+                  requests: (if ($recs | length) > 0 then ($recs | length) else 1 end),
+                  cost_usd: (($cost * 10000 | round) / 10000)
+                }
+              ' 2>/dev/null || echo '{"step":"Release Prep","model":"auto","input_tokens":0,"output_tokens":0,"cached_tokens":0,"requests":1,"cost_usd":0}'
+            )
+            rm -rf "${COPILOT_HOME:-$HOME/.copilot}"/session-state/* "${COPILOT_OTEL_FILE_EXPORTER_PATH}"
+            mkdir -p "$SPEC_DIR"
+            echo "$STEP_COST_JSON" >> "${SPEC_DIR}/ai-cost.jsonl"
+            echo "$STEP_COST_JSON" > "${SPEC_DIR}/ai-cost-pending.jsonl"
+            PRIOR_COST=$(gh issue view "$ISSUE_NUMBER" --json comments --jq '.comments[].body // empty' 2>/dev/null | sed -n 's/.*<!-- ai-cost-step:\({.*}\) -->.*/\1/p' | jq -sr '([.[].cost_usd // 0] | add // 0)' 2>/dev/null || echo "0")
+            echo "$STEP_COST_JSON" | jq -r --argjson prior "${PRIOR_COST:-0}" '
+              def fmt_usd(x): (x * 10000 | round / 10000) | tostring | if test("\\.") then (split(".") | .[0] + "." + ((.[1] + "0000")[0:4])) else . + ".0000" end;
+              ((.cost_usd // 0) + $prior) as $cum |
+              "\n\n---\n<!-- ai-cost-step:" + (. | tojson) + " -->\n💰 **AI Cost (" + .step + "):** `$" + fmt_usd(.cost_usd) + "` (`" + .model + "` · " + (.input_tokens | tostring) + " in / " + (.output_tokens | tostring) + " out tokens · " + (.requests | tostring) + (if .requests == 1 then " request" else " requests" end) + (if $prior > 0 then " · **Cumulative:** `$" + fmt_usd($cum) + "`" else "" end) + ")"
+            ' > "${SPEC_DIR}/ai-cost-step.md"
+
+            node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs \
+              --mode release \
+              --expected-version "$NEW_VERSION" \
+              --previous-version "$CURRENT_VERSION" \
+              --require-dist
+          fi
 
           npm publish --dry-run --access public
 

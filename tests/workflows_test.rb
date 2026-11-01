@@ -239,7 +239,7 @@ class WorkflowsTest < Minitest::Test
         end
       end
     end
-    assert_equal 8, calls.length
+    assert_equal 7, calls.length
   end
 
   def test_publish_checks_pipeline_credentials_before_publishing
@@ -881,8 +881,8 @@ class WorkflowsTest < Minitest::Test
     assert_includes script, 'if [ "$TIER" = "High" ] || [ "$TIER" = "Critical" ]'
     assert_includes script, "only when concrete rollback verification evidence is recorded"
     assert_includes script, "leave the affected field Pending"
-    assert_operator script.index('--stage pass'), :<, script.index('copilot --model="auto" --agent="prove"')
-    assert_operator script.index('copilot --model="auto" --agent="prove"'), :<, script.index('--stage prove')
+    refute_includes script, 'copilot --model="auto"'
+    assert_operator script.index('--stage pass'), :<, script.index('--stage prove')
     entries = steps('prove')
     merge = entries.find { |entry| entry['name'] == 'Verify validated revisions and merge' }
     assert_operator entries.index(merge), :>, entries.index { |entry| entry['name'] == 'Run Prove validation and auto-remediation loop' }
@@ -1338,5 +1338,145 @@ class WorkflowsTest < Minitest::Test
     text_mutation = @calls.find { |args| args.include?('fieldId=COST_TXT') }
     refute_nil text_mutation
     assert_includes text_mutation, 'val=$0.1800'
+  end
+
+  def test_ai_cost_uses_copilot_nano_aiu_credits_without_multi_counting_checkpoints
+    copilot_bin = File.join(@directory, 'bin/copilot')
+    session_dir = File.join(@directory, '.copilot/session-state/s1')
+    File.write(copilot_bin, <<~RUBY)
+      #!#{RbConfig.ruby}
+      require 'fileutils'
+      require 'json'
+      dir = #{session_dir.inspect}
+      FileUtils.mkdir_p(dir)
+      File.write(File.join(dir, 'events.jsonl'), [
+        JSON.generate({
+          'type' => 'session.usage_record',
+          'data' => {
+            'usage' => {
+              'model' => 'gpt-6.1-sol',
+              'inputTokens' => 27_741,
+              'outputTokens' => 68,
+              'cacheReadTokens' => 0,
+              'cacheWriteTokens' => 27_738,
+              'copilotUsage' => { 'totalNanoAiu' => 4_902_170_000 }
+            }
+          }
+        }),
+        JSON.generate({
+          'type' => 'session.usage_record',
+          'data' => {
+            'usage' => {
+              'model' => 'gpt-6.1-sol',
+              'inputTokens' => 27_914,
+              'outputTokens' => 26,
+              'cacheReadTokens' => 27_738,
+              'cacheWriteTokens' => 173,
+              'copilotUsage' => { 'totalNanoAiu' => 243_061_000 }
+            }
+          }
+        }),
+        JSON.generate({
+          'type' => 'session.usage_checkpoint',
+          'data' => {
+            'accountingSnapshot' => {
+              'modelMetrics' => {
+                'gpt-6.1-sol' => {
+                  'usage' => { 'inputTokens' => 55_655, 'outputTokens' => 94, 'cacheReadTokens' => 27_738 }
+                }
+              }
+            }
+          }
+        }),
+        JSON.generate({
+          'type' => 'session.shutdown',
+          'data' => {
+            'accountingSnapshot' => {
+              'modelMetrics' => {
+                'gpt-6.1-sol' => {
+                  'usage' => { 'inputTokens' => 55_655, 'outputTokens' => 94, 'cacheReadTokens' => 27_738 }
+                }
+              }
+            }
+          }
+        })
+      ].join("\\n") + "\\n")
+    RUBY
+    File.chmod(0o755, copilot_bin)
+
+    data = scenario(['1-think'])
+    data['issue']['title'] = 'Avoid multi-counting tokens'
+    FileUtils.mkdir_p(File.join(@directory, 'specs/issue-42'))
+    File.write(File.join(@directory, 'specs/issue-42/think.md'), "# Think: Credits\n\n## Problem\nAccurate cost.")
+
+    think_agent_step = steps('think').find { |item| item['name'] == 'Fetch issue context and run Thinker agent' }
+    run_step(think_agent_step, data)
+    cost_step_md = File.read(File.join(@directory, 'specs/issue-42/ai-cost-step.md'))
+    assert_includes cost_step_md, '<!-- ai-cost-step:{"step":"Think","model":"gpt-6.1-sol","input_tokens":55655,"output_tokens":94,"cached_tokens":27738,"requests":2,"cost_usd":0.0515} -->'
+    assert_includes cost_step_md, '💰 **AI Cost (Think):** `$0.0515` (`gpt-6.1-sol` · 55655 in / 94 out tokens · 2 requests)'
+  end
+
+  def test_forge_catalog_is_valid_and_merges_repo_declarations_and_package_versions
+    catalog_path = File.join(ROOT, 'forge-catalog.json')
+    assert File.file?(catalog_path), 'forge-catalog.json must exist at repository root'
+    catalog = JSON.parse(File.read(catalog_path))
+    assert_equal 1, catalog.fetch('version')
+    asset_ids = catalog.fetch('assets').map { |a| a.fetch('id') }
+    assert_equal %w[spock bumpr loopr roostr groovr cadenza mappr pixelgun polygun shadergun].sort, asset_ids.sort
+
+    %w[think plan code prove].each do |phase|
+      content = File.read(File.join(ROOT, ".github/workflows/pipeline-#{phase}.yml"))
+      refute_includes content, 'No Forge catalog in repository', "pipeline-#{phase}.yml must not hardcode missing Forge catalog"
+      assert_includes content, '.agents/skills/forge/catalog.json', "pipeline-#{phase}.yml must install .agents/skills/forge/catalog.json"
+    end
+
+    %w[cp mv].each do |command|
+      executable = ENV.fetch('PATH').split(File::PATH_SEPARATOR)
+                      .map { |dir| File.join(dir, command) }
+                      .find { |candidate| File.executable?(candidate) && !File.directory?(candidate) }
+      File.symlink(executable, File.join(@directory, 'bin', command)) if executable && !File.exist?(File.join(@directory, 'bin', command))
+    end
+
+    FileUtils.mkdir_p(File.join(@directory, '.agents/skills/forge'))
+    FileUtils.cp(catalog_path, File.join(@directory, '.agents/skills/forge/catalog.json'))
+    File.write(File.join(@directory, 'forge-catalog.json'), JSON.generate({
+      'assets' => [
+        {
+          'id' => 'external-glsl-lint',
+          'name' => 'External GLSL Lint',
+          'kind' => 'cli',
+          'maturity' => 'stable',
+          'version' => '2.1.0',
+          'releasedAt' => '2026-03-01',
+          'owner' => 'shader-tools',
+          'summary' => 'Standalone GLSL validator hosted outside 1pizzateam.',
+          'capabilities' => ['glsl-validation', 'shader-linting'],
+          'keywords' => ['glsl', 'shader', 'lint'],
+          'interface' => { 'type' => 'cli', 'entry' => 'npx external-glsl-lint' },
+          'artifact' => { 'type' => 'npm', 'ref' => 'external-glsl-lint@2.1.0' },
+          'docs' => 'https://example.com/external-glsl-lint',
+          'repository' => 'https://github.com/example/external-glsl-lint'
+        }
+      ]
+    }))
+    File.write(File.join(@directory, 'package.json'), JSON.generate({
+      'dependencies' => { '@1pizzateam/roostr' => '^0.12.0' },
+      'devDependencies' => { '@1pizzateam/bumpr' => '~1.4.2' }
+    }))
+
+    install_script = steps('think').find { |item| item['name'] == 'Install ALTEN-group/coding-pal think primitives' }.fetch('run')
+    merge_snippet = install_script[/for repo_cat in .*?^fi/m]
+    refute_nil merge_snippet
+    _, stderr, status = Open3.capture3(
+      @environment, File.join(@directory, 'bin/bash'), '--noprofile', '--norc', '-e', '-o', 'pipefail',
+      stdin_data: merge_snippet, chdir: @directory, unsetenv_others: true
+    )
+    assert status.success?, stderr
+
+    merged = JSON.parse(File.read(File.join(@directory, '.agents/skills/forge/catalog.json')))
+    merged_by_id = merged.fetch('assets').to_h { |a| [a.fetch('id'), a] }
+    assert merged_by_id.key?('external-glsl-lint'), 'Repo-local forge-catalog.json asset must be merged'
+    assert_equal '0.12.0', merged_by_id.dig('roostr', 'version')
+    assert_equal '1.4.2', merged_by_id.dig('bumpr', 'version')
   end
 end

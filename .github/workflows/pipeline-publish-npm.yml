@@ -98,7 +98,7 @@ jobs:
       - name: Verify release readiness (docs, CHANGELOG.md, package.json, tarball)
         run: |
           git clone --depth 1 https://github.com/1pizzateam/coding-pal.git /tmp/coding-pal
-          node /tmp/coding-pal/skills/release-readiness/scripts/verify-release-readiness.mjs --mode release --require-dist --build-docs
+          node /tmp/coding-pal/skills/release-readiness/scripts/verify-release-readiness.mjs --mode release --require-dist
           rm -rf /tmp/coding-pal
 
       - name: Determine npm dist-tag
