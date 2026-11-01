@@ -125,7 +125,7 @@ jobs:
             }' -f owner="$OWNER" -f repo="$REPO" -F number="$ISSUE_NUMBER" -f projectTitle="$PROJECT_TITLE")
 
           ISSUE_ID=$(echo "$DATA" | jq -r '.data.repository.issue.id // empty')
-          PROJECT=$(echo "$DATA" | jq -c --arg title "$PROJECT_TITLE" '.data.repository.owner.projectsV2.nodes[]? | select((.title | ascii_downcase) == ($title | ascii_downcase))' | head -n 1)
+          PROJECT=$(echo "$DATA" | jq -c --arg title "$PROJECT_TITLE" --arg repo "$REPO" '.data.repository.owner.projectsV2.nodes[]? | select((.title | ascii_downcase | sub("\\.js$"; "")) == ($title | ascii_downcase | sub("\\.js$"; "")) or (.title | ascii_downcase) == ($repo | ascii_downcase))' | head -n 1)
           PROJECT_ID=$(echo "$PROJECT" | jq -r '.id // empty')
           FIELD_ID=$(echo "$PROJECT" | jq -r '.field.id // empty')
           OPTION_ID=$(echo "$PROJECT" | jq -r --arg status "$TARGET_STATUS" '.field.options[]? | select((.name | ascii_downcase) == ($status | ascii_downcase)) | .id' | head -n 1)
@@ -285,7 +285,7 @@ jobs:
             }' -f owner="$OWNER" -f repo="$REPO" -F number="$ISSUE_NUMBER" -f projectTitle="$PROJECT_TITLE")
 
           ISSUE_ID=$(echo "$DATA" | jq -r '.data.repository.issue.id // empty')
-          PROJECT=$(echo "$DATA" | jq -c --arg title "$PROJECT_TITLE" '.data.repository.owner.projectsV2.nodes[]? | select((.title | ascii_downcase) == ($title | ascii_downcase))' | head -n 1)
+          PROJECT=$(echo "$DATA" | jq -c --arg title "$PROJECT_TITLE" --arg repo "$REPO" '.data.repository.owner.projectsV2.nodes[]? | select((.title | ascii_downcase | sub("\\.js$"; "")) == ($title | ascii_downcase | sub("\\.js$"; "")) or (.title | ascii_downcase) == ($repo | ascii_downcase))' | head -n 1)
           PROJECT_ID=$(echo "$PROJECT" | jq -r '.id // empty')
           FIELD_ID=$(echo "$PROJECT" | jq -r '.field.id // empty')
           OPTION_ID=$(echo "$PROJECT" | jq -r --arg status "$TARGET_STATUS" '.field.options[]? | select((.name | ascii_downcase) == ($status | ascii_downcase)) | .id' | head -n 1)

@@ -435,7 +435,7 @@ class WorkflowsTest < Minitest::Test
   def test_project_status_matching_is_case_insensitive
     data = project
     board = data['data']['repository']['owner']['projectsV2']['nodes'].first
-    board['title'] = 'TEST BOARD'
+    board['title'] = 'TEST BOARD.js'
     board['field']['options'].each { |option| option['name'] = option['name'].downcase }
     run_step(status_step('think', 'Think'), scenario([], project: data))
     assert @calls.any? { |args| args.include?('optionId=think') }
