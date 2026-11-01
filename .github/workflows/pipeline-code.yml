@@ -327,7 +327,8 @@ jobs:
             ".agents/" \
             "specs/" \
             "reports/" \
-            "pr.md" >> .git/info/exclude
+            "pr.md" \
+            "pr-body.md" >> .git/info/exclude
           echo '[{"path": "/", "status": 200, "maxMs": 2000}]' > /tmp/preview-routes.json
 
       - uses: actions/setup-node@v4

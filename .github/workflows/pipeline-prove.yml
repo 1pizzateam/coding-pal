@@ -355,7 +355,9 @@ jobs:
             "specs/" \
             "reports/" \
             "pr.md" \
-            "gate-output.log" >> .git/info/exclude
+            "pr-body.md" \
+            "gate-output.log" \
+            "failed-gates.log" >> .git/info/exclude
           echo '[{"path": "/", "status": 200, "maxMs": 2000}]' > /tmp/preview-routes.json
 
       - uses: actions/setup-node@v4
@@ -630,7 +632,7 @@ jobs:
             run_check "secret-guard" node .agents/skills/secret-guard/scripts/secret-guard.mjs --git --base "origin/${BASE_REF}"
             run_check "dependency-guard" node .agents/skills/dependency-guard/scripts/dependency-guard.mjs --git --base "origin/${BASE_REF}"
 
-            SCOPE_ARGS=(--scope "${SPEC_DIR}/**" --scope "pr.md" --scope "reports/**")
+            SCOPE_ARGS=(--scope "${SPEC_DIR}/**" --scope "pr.md" --scope "gate-output.log" --scope "failed-gates.log" --scope "reports/**")
             while IFS= read -r scope_glob; do
               [ -n "$scope_glob" ] && SCOPE_ARGS+=(--scope "$scope_glob")
             done < <(node -e '
