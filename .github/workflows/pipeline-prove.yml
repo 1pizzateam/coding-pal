@@ -304,7 +304,7 @@ jobs:
               --jq '[.comments[].body | select(test("^# Plan:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")' > "${SPEC_DIR}/plan.md"
           fi
 
-          gh pr view "$PR_NUMBER" --json body --jq '.body // ""' > pr-body.md
+          gh pr view "$PR_NUMBER" --json body --jq '.body // ""' > pr.md
 
       - name: Install ALTEN-group/coding-pal Prove and Remediation primitives
         if: steps.resolve.outputs.skip != 'true'
@@ -354,7 +354,7 @@ jobs:
             ".agents/" \
             "specs/" \
             "reports/" \
-            "pr-body.md" \
+            "pr.md" \
             "gate-output.log" >> .git/info/exclude
           echo '[{"path": "/", "status": 200, "maxMs": 2000}]' > /tmp/preview-routes.json
 
@@ -412,11 +412,11 @@ jobs:
 
           node -e '
             const fs = require("fs");
-            let body = fs.readFileSync("pr-body.md", "utf8");
+            let body = fs.readFileSync("pr.md", "utf8");
             for (const q of ["Client Intent", "Behavioral Experience", "Safety & Blast Radius"]) {
               body = body.replace(new RegExp(`(- \\*\\*${q}:\\*\\*)\\s*Pending`, "g"), "$1 Auto-merge");
             }
-            fs.writeFileSync("pr-body.md", body);
+            fs.writeFileSync("pr.md", body);
           '
           TIER=$(node --input-type=module -e '
             import { readFileSync } from "node:fs";
@@ -435,7 +435,7 @@ jobs:
               const tier = process.env.TIER;
               const think = readThink(readFileSync(`${dir}/think.md`, "utf8"));
               const prove = readFileSync(`${dir}/prove.md`, "utf8");
-              let body = readFileSync("pr-body.md", "utf8");
+              let body = readFileSync("pr.md", "utf8");
               const safetyMatch = prove.match(/^- \*\*Safety & Blast Radius:\*\*\s*PASS\s*[—–-]\s*(.+)$/m);
               const hasRollbackEvidence = Boolean(
                 safetyMatch &&
@@ -455,12 +455,12 @@ jobs:
                   "$1 Automated verification"
                 );
               }
-              writeFileSync("pr-body.md", body);
+              writeFileSync("pr.md", body);
             '
             TODAY=$(date -u +%Y-%m-%d)
-            node .agents/skills/pr-record/scripts/validate-pr.mjs --body pr-body.md --dir "$SPEC_DIR" --stage prove --pr-date "$TODAY" --allow-auto-prove
+            node .agents/skills/pr-record/scripts/validate-pr.mjs --body pr.md --dir "$SPEC_DIR" --stage prove --pr-date "$TODAY" --allow-auto-prove
           fi
-          gh pr edit "$PR_NUMBER" --body-file pr-body.md
+          gh pr edit "$PR_NUMBER" --body-file pr.md
           RECORD_SCRIPT
 
       - name: Run Prove validation and auto-remediation loop
@@ -630,7 +630,7 @@ jobs:
             run_check "secret-guard" node .agents/skills/secret-guard/scripts/secret-guard.mjs --git --base "origin/${BASE_REF}"
             run_check "dependency-guard" node .agents/skills/dependency-guard/scripts/dependency-guard.mjs --git --base "origin/${BASE_REF}"
 
-            SCOPE_ARGS=(--scope "${SPEC_DIR}/**" --scope "pr-body.md" --scope "reports/**")
+            SCOPE_ARGS=(--scope "${SPEC_DIR}/**" --scope "pr.md" --scope "reports/**")
             while IFS= read -r scope_glob; do
               [ -n "$scope_glob" ] && SCOPE_ARGS+=(--scope "$scope_glob")
             done < <(node -e '
@@ -726,7 +726,7 @@ jobs:
                 --prompt "Run the Prove validation for Pull Request #${PR_NUMBER} (GitHub Issue #${ISSUE_NUMBER}: ${ISSUE_TITLE}) on branch ${BRANCH_NAME} (base: ${BASE_REF}).
 
               Follow .github/instructions/prove.instructions.md, .agents/skills/prove/SKILL.md, and .agents/skills/prove/references/prove-contract.md.
-              1. Read ${SPEC_DIR}/think.md, ${SPEC_DIR}/plan.md, pr-body.md, gate-output.log, and inspect the diff with git diff origin/${BASE_REF}...HEAD.
+              1. Read ${SPEC_DIR}/think.md, ${SPEC_DIR}/plan.md, pr.md, gate-output.log, and inspect the diff with git diff origin/${BASE_REF}...HEAD.
               2. Write the Prove record to ${PROVE_FILE} with exact header links (- **Issue:** #${ISSUE_NUMBER}, - **PR:** #${PR_NUMBER}, - **Think:** \`${SPEC_DIR}/think.md\`, - **Plan:** \`${SPEC_DIR}/plan.md\`, - **Branch:** \`${BRANCH_NAME}\`, - **Base:** \`${BASE_REF}\`).
               3. Record the truthful status of all 8 required deterministic controls from gate-output.log (\`control-guard\`, \`secret-guard\`, \`dependency-guard\`, \`scope-guard\`, \`task-gate\`, \`criteria-verify\`, \`test-probe\`, \`preview-smoke\`), verify every AC-<n> criterion against the implementation and tests, and evaluate Client Intent, Behavioral Experience, and Safety & Blast Radius (including concrete rollback verification evidence for the rollback mechanism in think.md when Tier is High or Critical). The branch includes the latest base: check interactions with intervening changes, not just textual conflicts. If the approved Think/Plan is no longer valid, record a blocking finding; do not broaden scope or change the specs.
               4. Validate ${PROVE_FILE} until it exits 0:
@@ -805,7 +805,7 @@ jobs:
             copilot --model="auto" --agent="code" --allow-all-tools \
               --prompt "Remediate the failing Prove controls and findings for Pull Request #${PR_NUMBER} (Issue #${ISSUE_NUMBER}, attempt ${NEXT}/${FIX_LOOP_LIMIT}).
 
-            Read ${REPAIR_FILE}, gate-output.log, ${SPEC_DIR}/think.md, ${SPEC_DIR}/plan.md and pr-body.md. The repair request includes the current failed commands/output and, only when checks passed, the independent review findings. For failed GitHub checks, inspect their linked run logs with gh run view <run-id> --log-failed before fixing. Ignore stale review records. If the plan is invalid, report a blocking explanation and stop; do not broaden scope.
+            Read ${REPAIR_FILE}, gate-output.log, ${SPEC_DIR}/think.md, ${SPEC_DIR}/plan.md and pr.md. The repair request includes the current failed commands/output and, only when checks passed, the independent review findings. For failed GitHub checks, inspect their linked run logs with gh run view <run-id> --log-failed before fixing. Ignore stale review records. If the plan is invalid, report a blocking explanation and stop; do not broaden scope.
             Follow .github/instructions/prove-controls.instructions.md and .github/agents/code.agent.md:
             1. Fix only the application/test files within the In Scope paths of ${SPEC_DIR}/plan.md.
             2. Never weaken, skip, or edit any control or spec file.
@@ -1224,7 +1224,7 @@ jobs:
           name: prove-spec
           path: |
             specs/issue-${{ env.ISSUE_NUMBER }}/prove.md
-            pr-body.md
+            pr.md
             gate-output.log
             reports/repair-attempt.md
             reports/release.md

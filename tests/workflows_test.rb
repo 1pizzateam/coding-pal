@@ -1226,7 +1226,7 @@ class WorkflowsTest < Minitest::Test
     assert_includes plan_prompt, 'Please play the secret SFX when the door starts opening instead of on room entry.'
     refute_includes plan_prompt, 'Paused after Think for Manual Validation'
 
-    code_step = steps('code').find { |item| item['name'] == 'Run Code Agent to implement plan.md and prepare pr-body.md' }
+    code_step = steps('code').find { |item| item['name'] == 'Run Code Agent to implement plan.md and prepare pr.md' }
     run_step(code_step, data, { 'BRANCH_NAME' => 'feature/issue-42-test', 'BASE_REF' => 'main' })
     code_prompt = JSON.parse(File.read(copilot_args_file)).last
     assert_includes code_prompt, 'Please play the secret SFX when the door starts opening instead of on room entry.'

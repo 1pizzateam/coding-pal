@@ -183,7 +183,7 @@ In the GitHub Project's **Workflows** settings, disable any built-in automation 
 
 1. Restores both specs and prepares the implementation branch.
 2. Sets Project Status to **Code**.
-3. Runs the Code agent to implement the plan, verify tests/builds, and prepare the PR record (`pr-body.md`).
+3. Runs the Code agent to implement the plan, verify tests/builds, and prepare the PR record (`pr.md`).
 4. Enters **Prove**, pushes the branch, and creates or updates the PR (deterministic exit gates run once in Prove rather than being duplicated in Code).
 5. If requested, returns to Code for manual PR review; otherwise, passes the specs and PR number to Prove.
 

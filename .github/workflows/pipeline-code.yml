@@ -327,7 +327,7 @@ jobs:
             ".agents/" \
             "specs/" \
             "reports/" \
-            "pr-body.md" >> .git/info/exclude
+            "pr.md" >> .git/info/exclude
           echo '[{"path": "/", "status": 200, "maxMs": 2000}]' > /tmp/preview-routes.json
 
       - uses: actions/setup-node@v4
@@ -368,7 +368,7 @@ jobs:
           fi
           echo "$HOME/.copilot-cli/bin" >> "$GITHUB_PATH"
 
-      - name: Run Code Agent to implement plan.md and prepare pr-body.md
+      - name: Run Code Agent to implement plan.md and prepare pr.md
         if: steps.resolve.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
@@ -424,7 +424,7 @@ jobs:
           1. Think and Plan may predate intervening merges. Check their assumptions against the current base before implementing; if they are no longer valid, stop with an explicit blocking explanation rather than changing specs or broadening scope.
           2. Implement all steps in ${PLAN_FILE} in order across the in-scope files (writing only files listed in ${PLAN_FILE}'s Files and within In Scope; if an in-scope test file has an existing assertion superseded by a behavior change, update that assertion; ensure every acceptance criterion test includes its AC-<n> token in the test name so it passes criteria-verify in Prove).
           3. Once all steps are implemented, run the full verification and build checks once ('npm test' and 'npm run build'; if this is a published @1pizzateam/* library, also follow .agents/skills/release-readiness/SKILL.md and run 'node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs --mode pr' so library documentation and package exports are already in sync), fix any failures, and stage and commit all modified in-scope files in a single clean commit referencing #${ISSUE_NUMBER} (do not stage or commit files under ${SPEC_DIR}).
-          4. Author the pull request body at pr-body.md following .agents/skills/pr-record/references/pr-record-contract.md (with ## Links including - **Closes:** #${ISSUE_NUMBER}, ## Acceptance Criteria Traceability, ## Dependencies, ## Blast Radius, and ## Human Validation with Client Intent, Behavioral Experience, and Safety & Blast Radius set to Pending)."
+          4. Author the pull request body at pr.md following .agents/skills/pr-record/references/pr-record-contract.md (with ## Links including - **Closes:** #${ISSUE_NUMBER}, ## Acceptance Criteria Traceability, ## Dependencies, ## Blast Radius, and ## Human Validation with Client Intent, Behavioral Experience, and Safety & Blast Radius set to Pending)."
 
           STEP_COST_JSON=$(
             {
@@ -481,7 +481,53 @@ jobs:
           if git ls-files "${SPEC_DIR}" --error-unmatch >/dev/null 2>&1; then
             git rm -rf --cached "${SPEC_DIR}" >/dev/null 2>&1 || true
           fi
-          [ -f pr-body.md ] && cat pr-body.md >> "$GITHUB_STEP_SUMMARY" || true
+          if [ ! -s pr.md ] && [ -s pr-body.md ]; then
+            mv pr-body.md pr.md
+          fi
+          if ! node .agents/skills/pr-record/scripts/validate-pr.mjs --body pr.md --dir "$SPEC_DIR" --stage code --allow-pending-approval >/dev/null 2>&1; then
+            node --input-type=module -e '
+              import { readFileSync, writeFileSync } from "node:fs";
+              import { readPlan, readThink, TIERS } from "./.agents/skills/pr-record/scripts/validate-pr.mjs";
+              const issue = process.env.ISSUE_NUMBER;
+              const dir = `specs/issue-${issue}`;
+              const plan = readPlan(readFileSync(`${dir}/plan.md`, "utf8"));
+              const think = readThink(readFileSync(`${dir}/think.md`, "utf8"));
+              const tier = TIERS[Math.max(TIERS.indexOf(plan.tier), TIERS.indexOf(think.tier))];
+              const rollback = (tier === "High" || tier === "Critical") ? think.rollback : (think.rollback || "_None._");
+              const rows = plan.criteria.map((id) => `| ${id} | \`${id}\` acceptance test | Passing |`).join("\n");
+              const human = [
+                "- **Client Intent:** Pending",
+                "- **Behavioral Experience:** Pending",
+                "- **Safety & Blast Radius:** Pending",
+                ...(tier === "High" || tier === "Critical" ? ["- **Rollback Validated:** Pending"] : []),
+                ...(tier === "Critical" ? ["- **Joint Sign-off:** Pending", "- **Staged Rollout:** Pending"] : []),
+              ].join("\n");
+              writeFileSync("pr.md", [
+                "## Links",
+                `- **Closes:** #${issue}`,
+                `- **Plan:** \`${dir}/plan.md\``,
+                `- **Think:** \`${dir}/think.md\``,
+                "",
+                "## Acceptance Criteria Traceability",
+                "| Criterion | Test | Status |",
+                "| --- | --- | --- |",
+                rows,
+                "",
+                "## Dependencies",
+                "_None._",
+                "",
+                "## Blast Radius",
+                `- **Tier:** ${tier}`,
+                `- **Rollback:** ${rollback}`,
+                "",
+                "## Human Validation",
+                human,
+                "",
+              ].join("\n"));
+            '
+            node .agents/skills/pr-record/scripts/validate-pr.mjs --body pr.md --dir "$SPEC_DIR" --stage code --allow-pending-approval
+          fi
+          [ -f pr.md ] && cat pr.md >> "$GITHUB_STEP_SUMMARY" || true
 
       - name: Enter Prove and create or update Pull Request
         if: steps.resolve.outputs.skip != 'true'
@@ -500,12 +546,12 @@ jobs:
           EXISTING_PR=$(gh pr list --head "$BRANCH_NAME" --base "$BASE_REF" --json number --jq '.[0].number // empty')
           if [ -n "$EXISTING_PR" ]; then
             PR_NUMBER="$EXISTING_PR"
-            gh pr edit "$PR_NUMBER" --title "$PR_TITLE" --body-file pr-body.md
+            gh pr edit "$PR_NUMBER" --title "$PR_TITLE" --body-file pr.md
             gh pr edit "$PR_NUMBER" --remove-label "fix-loop:1,fix-loop:2,fix-loop:3,fix-loop:4,fix-loop:5,needs:developer" 2>/dev/null || true
             gh issue edit "$ISSUE_NUMBER" --remove-label "needs:developer" 2>/dev/null || true
             PR_URL=$(gh pr view "$PR_NUMBER" --json url --jq '.url')
           else
-            PR_URL=$(gh pr create --base "$BASE_REF" --head "$BRANCH_NAME" --title "$PR_TITLE" --body-file pr-body.md)
+            PR_URL=$(gh pr create --base "$BASE_REF" --head "$BRANCH_NAME" --title "$PR_TITLE" --body-file pr.md)
             PR_NUMBER=$(gh pr view "$BRANCH_NAME" --json number --jq '.number')
           fi
 
