@@ -222,6 +222,7 @@ jobs:
           ${LIBRARY_DOCS_HINT}
           Every test in ## Test Plan and in test steps' New Code must include its acceptance criterion ID (`AC-1`, `AC-2`, etc.) in the test name (for example `test('AC-1: ...', ...)` or `it('AC-1: ...', ...)`) and start the Test Plan `Test` cell with the relative test file path (`tests/<file>: AC-1 ...` or `scripts/<file>: AC-1 ...`) so `criteria-verify` can verify every criterion with `--require-test-files`.
           Do not modify any production or test files; only write ${PLAN_FILE}.
+          Do not post comments or edit labels on GitHub issues; only write ${PLAN_FILE}.
           Validate and cross-check the generated file with: node .agents/skills/plan/scripts/validate-plan.mjs --plan ${PLAN_FILE} --think ${THINK_FILE} and fix any validation errors until it exits with code 0."
 
       - name: Validate plan.md contract and cross-check against think.md

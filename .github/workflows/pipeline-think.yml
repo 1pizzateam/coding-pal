@@ -252,6 +252,7 @@ jobs:
           ${ESCALATION_HINT}
           ${EDITOR_HINT}
           ${LIBRARY_DOCS_HINT}
+          Do not post comments or edit labels on GitHub issues; only write local files under ${SPEC_DIR}.
           Validate the generated file with: node .agents/skills/think/scripts/validate-think.mjs --think ${THINK_FILE} and fix any validation errors until it exits with code 0."
 
       - name: Validate think.md contract
