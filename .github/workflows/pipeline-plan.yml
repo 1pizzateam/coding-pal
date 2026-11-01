@@ -127,11 +127,13 @@ jobs:
                             options { id name }
                           }
                         }
-                        costField: field(name: "AI Cost") {
-                          ... on ProjectV2Field {
-                            id
-                            name
-                            dataType
+                        fields(first: 50) {
+                          nodes {
+                            ... on ProjectV2Field {
+                              id
+                              name
+                              dataType
+                            }
                           }
                         }
                       }
@@ -146,8 +148,8 @@ jobs:
           PROJECT_ID=$(echo "$PROJECT" | jq -r '.id // empty')
           FIELD_ID=$(echo "$PROJECT" | jq -r '.field.id // empty')
           OPTION_ID=$(echo "$PROJECT" | jq -r --arg status "$TARGET_STATUS" '.field.options[]? | select((.name | ascii_downcase) == ($status | ascii_downcase)) | .id' | head -n 1)
-          COST_FIELD_ID=$(echo "$PROJECT" | jq -r '.costField.id // empty')
-          COST_FIELD_TYPE=$(echo "$PROJECT" | jq -r '.costField.dataType // "NUMBER"')
+          COST_FIELD_ID=$(echo "$PROJECT" | jq -r '(.costField.id // ([.fields.nodes[]? | select((.name // "" | ascii_downcase) == "ai cost")][0].id)) // empty')
+          COST_FIELD_TYPE=$(echo "$PROJECT" | jq -r '(.costField.dataType // ([.fields.nodes[]? | select((.name // "" | ascii_downcase) == "ai cost")][0].dataType)) // "NUMBER"')
 
           if [ -z "$ISSUE_ID" ] || [ -z "$PROJECT_ID" ] || [ -z "$FIELD_ID" ] || [ -z "$OPTION_ID" ]; then
             echo "::error::Could not find issue, project, Status field, or '$TARGET_STATUS' option for ${OWNER}/${REPO} in Project '$PROJECT_TITLE'."
@@ -195,7 +197,7 @@ jobs:
                     projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
                     value: { text: $cost }
                   }) { projectV2Item { id } }
-                }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$COST_FIELD_ID" -f cost="$TOTAL_COST_TEXT" >/dev/null
+                }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$COST_FIELD_ID" -f cost="$TOTAL_COST_TEXT" >/dev/null 2>&1 || true
             else
               gh api graphql -f query='
                 mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $cost: Float!) {
@@ -203,7 +205,7 @@ jobs:
                     projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
                     value: { number: $cost }
                   }) { projectV2Item { id } }
-                }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$COST_FIELD_ID" -F cost="$TOTAL_COST" >/dev/null
+                }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$COST_FIELD_ID" -F cost="$TOTAL_COST" >/dev/null 2>&1 || true
             fi
           fi
 
@@ -399,7 +401,7 @@ jobs:
                     projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
                     value: { text: $cost }
                   }) { projectV2Item { id } }
-                }' -f projectId="$PROJECT_ID" -f itemId="$PROJECT_ITEM_ID" -f fieldId="$COST_FIELD_ID" -f cost="$TOTAL_COST_TEXT" >/dev/null
+                }' -f projectId="$PROJECT_ID" -f itemId="$PROJECT_ITEM_ID" -f fieldId="$COST_FIELD_ID" -f cost="$TOTAL_COST_TEXT" >/dev/null 2>&1 || true
             else
               gh api graphql -f query='
                 mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $cost: Float!) {
@@ -407,7 +409,7 @@ jobs:
                     projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
                     value: { number: $cost }
                   }) { projectV2Item { id } }
-                }' -f projectId="$PROJECT_ID" -f itemId="$PROJECT_ITEM_ID" -f fieldId="$COST_FIELD_ID" -F cost="$TOTAL_COST" >/dev/null
+                }' -f projectId="$PROJECT_ID" -f itemId="$PROJECT_ITEM_ID" -f fieldId="$COST_FIELD_ID" -F cost="$TOTAL_COST" >/dev/null 2>&1 || true
             fi
           fi
 

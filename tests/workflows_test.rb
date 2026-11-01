@@ -1312,19 +1312,28 @@ class WorkflowsTest < Minitest::Test
   end
 
   def test_project_board_syncs_cumulative_ai_cost_custom_field
+    %w[think plan code prove release].each do |workflow|
+      refute_includes File.read(File.join(ROOT, ".github/workflows/pipeline-#{workflow}.yml")), 'field(name: "AI Cost")',
+        "pipeline-#{workflow}.yml must not use field(name: \"AI Cost\") which throws a GraphQL error when a project lacks the AI Cost field"
+    end
+
     comments = [
       "# Think: Spec\n\n---\n<!-- ai-cost-step:{\"step\":\"Think\",\"model\":\"claude-sonnet-4.5\",\"input_tokens\":10000,\"output_tokens\":2000,\"cached_tokens\":0,\"requests\":2,\"cost_usd\":0.06} -->",
       "# Plan: Spec\n\n---\n<!-- ai-cost-step:{\"step\":\"Plan\",\"model\":\"claude-sonnet-4.5\",\"input_tokens\":20000,\"output_tokens\":4000,\"cached_tokens\":0,\"requests\":3,\"cost_usd\":0.12} -->"
     ]
     proj_num = project
-    proj_num['data']['repository']['owner']['projectsV2']['nodes'].first['costField'] = { 'id' => 'COST_NUM', 'name' => 'AI Cost', 'dataType' => 'NUMBER' }
+    proj_num['data']['repository']['owner']['projectsV2']['nodes'].first['fields'] = {
+      'nodes' => [{}, { 'id' => 'COST_NUM', 'name' => 'AI Cost', 'dataType' => 'NUMBER' }]
+    }
     run_step(status_step('code', 'Code'), scenario(['4-release'], comments: comments, project: proj_num))
     cost_mutation = @calls.find { |args| args.include?('fieldId=COST_NUM') }
     refute_nil cost_mutation
     assert_includes cost_mutation, 'val=0.18'
 
     proj_text = project
-    proj_text['data']['repository']['owner']['projectsV2']['nodes'].first['costField'] = { 'id' => 'COST_TXT', 'name' => 'AI Cost', 'dataType' => 'TEXT' }
+    proj_text['data']['repository']['owner']['projectsV2']['nodes'].first['fields'] = {
+      'nodes' => [{ 'id' => 'COST_TXT', 'name' => 'AI Cost', 'dataType' => 'TEXT' }]
+    }
     run_step(status_step('release', 'Done'), scenario(['4-release'], comments: comments, project: proj_text))
     text_mutation = @calls.find { |args| args.include?('fieldId=COST_TXT') }
     refute_nil text_mutation

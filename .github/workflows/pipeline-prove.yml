@@ -176,11 +176,13 @@ jobs:
                             options { id name }
                           }
                         }
-                        costField: field(name: "AI Cost") {
-                          ... on ProjectV2Field {
-                            id
-                            name
-                            dataType
+                        fields(first: 50) {
+                          nodes {
+                            ... on ProjectV2Field {
+                              id
+                              name
+                              dataType
+                            }
                           }
                         }
                       }
@@ -195,8 +197,8 @@ jobs:
           PROJECT_ID=$(echo "$PROJECT" | jq -r '.id // empty')
           FIELD_ID=$(echo "$PROJECT" | jq -r '.field.id // empty')
           OPTION_ID=$(echo "$PROJECT" | jq -r --arg status "$TARGET_STATUS" '.field.options[]? | select((.name | ascii_downcase) == ($status | ascii_downcase)) | .id' | head -n 1)
-          COST_FIELD_ID=$(echo "$PROJECT" | jq -r '.costField.id // empty')
-          COST_FIELD_TYPE=$(echo "$PROJECT" | jq -r '.costField.dataType // empty')
+          COST_FIELD_ID=$(echo "$PROJECT" | jq -r '(.costField.id // ([.fields.nodes[]? | select((.name // "" | ascii_downcase) == "ai cost")][0].id)) // empty')
+          COST_FIELD_TYPE=$(echo "$PROJECT" | jq -r '(.costField.dataType // ([.fields.nodes[]? | select((.name // "" | ascii_downcase) == "ai cost")][0].dataType)) // empty')
 
           if [ -z "$ISSUE_ID" ] || [ -z "$PROJECT_ID" ] || [ -z "$FIELD_ID" ] || [ -z "$OPTION_ID" ]; then
             echo "::error::Could not find issue, project, Status field, or '$TARGET_STATUS' option for ${OWNER}/${REPO} in Project '$PROJECT_TITLE'."
