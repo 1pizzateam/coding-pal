@@ -457,7 +457,7 @@ jobs:
           export COPILOT_OTEL_FILE_EXPORTER_PATH="${RUNNER_TEMP}/copilot-otel.jsonl"
           rm -rf "${COPILOT_HOME:-$HOME/.copilot}/session-state" "$COPILOT_OTEL_FILE_EXPORTER_PATH" 2>/dev/null || true
 
-          copilot --model="auto" --agent="code" --allow-all-tools \
+          copilot --model="claude-sonnet-5.5" --agent="code" --allow-all-tools \
             --prompt "Implement the validated Plan record at ${PLAN_FILE} (with ${THINK_FILE}) for GitHub Issue #${ISSUE_NUMBER} (${ISSUE_TITLE}) on the current branch ${BRANCH_NAME} (base: ${BASE_REF}).
           Issue Body:
           ${ISSUE_BODY}

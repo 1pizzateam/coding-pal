@@ -102,7 +102,7 @@ jobs:
           SCOPE: ${{ inputs.scope }}
           EXTRA_PROMPT: ${{ inputs.prompt }}
         run: |
-          copilot --model="auto" --agent="$AGENT" --allow-all-tools \
+          copilot --model="claude-sonnet-5.5" --agent="$AGENT" --allow-all-tools \
             --prompt "Scope: ${SCOPE}. ${EXTRA_PROMPT} Write a brief Markdown summary of changes to audit-report.md. If an upstream @1pizzateam/* library (`@1pizzateam/roostr` -> `1pizzateam/RoostR.js`, `@1pizzateam/bumpr` -> `1pizzateam/BumpR.js`, `@1pizzateam/loopr` -> `1pizzateam/LoopR.js`, `@1pizzateam/spock` -> `1pizzateam/Spock.js`, `@1pizzateam/groovr` -> `1pizzateam/GroovR.js`, `@1pizzateam/facer` -> `1pizzateam/FaceR.js`) should be updated instead of (or prior to) changing this repository, write the structured request array to upstream-requests.json. If a change in DoomR.js requires a companion update in one of the 1PizzaTeam game editors (`cadenza` -> `1pizzateam/Cadenza`, `facegun` -> `1pizzateam/FaceGun`, `mappr` -> `1pizzateam/MappR`, `pixelgun` -> `1pizzateam/PixelGun`, `polygun` -> `1pizzateam/PolyGun`, `shadergun` -> `1pizzateam/ShaderGun`), write a JSON array to editor-requests.json with objects `{ \"editor\": \"<cadenza|facegun|mappr|pixelgun|polygun|shadergun>\", \"repo\": \"1pizzateam/<Editor>\", \"title\": \"<issue title>\", \"body\": \"<markdown body describing the editor update>\" }`."
 
       - name: Escalate upstream @1pizzateam/* library requests

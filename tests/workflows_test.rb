@@ -225,7 +225,16 @@ class WorkflowsTest < Minitest::Test
     assert_equal '${{ secrets.PIPELINE_GITHUB_TOKEN }}', checkout.dig('with', 'token')
   end
 
-  def test_every_copilot_invocation_uses_auto
+  def test_every_copilot_invocation_uses_expected_step_model
+    expected_models = {
+      'pipeline-think.yml: Fetch issue context and run Thinker agent' => ['claude-opus-5.5'],
+      'pipeline-plan.yml: Fetch issue context and run Planner agent' => ['claude-opus-5.5'],
+      'pipeline-code.yml: Run Code Agent to implement plan.md and prepare pr.md' => ['claude-sonnet-5.5'],
+      'pipeline-prove.yml: Run Prove validation and auto-remediation loop' => ['claude-sonnet-5.5', 'claude-opus-5.5'],
+      'pipeline-prove.yml: Auto-release merged @1pizzateam/* library version' => ['gpt-6-luna'],
+      'audit-runner.yml: Run ${{ inputs.agent }} agent' => ['claude-sonnet-5.5']
+    }
+    actual_models = Hash.new { |h, k| h[k] = [] }
     calls = []
     Dir.glob(File.join(ROOT, '.github/workflows/*.yml')).each do |path|
       YAML.load_file(path).fetch('jobs').each_value do |job|
@@ -233,13 +242,16 @@ class WorkflowsTest < Minitest::Test
           entry.fetch('run', '').each_line do |line|
             next unless line.match?(/^\s*copilot\s/)
             calls << line
-            assert_match(/^\s*copilot --model="auto"(?:\s|$)/, line, "#{path}: #{entry['name']}")
+            match = line.match(/^\s*copilot --model="([^"]+)"(?:\s|$)/)
+            refute_nil match, "#{path}: #{entry['name']}"
+            actual_models["#{File.basename(path)}: #{entry['name']}"] << match[1]
             refute_match(/--(?:fusion-tier|auto-tier|reasoning-effort)\b/, line)
           end
         end
       end
     end
     assert_equal 7, calls.length
+    assert_equal expected_models, actual_models
   end
 
   def test_publish_checks_pipeline_credentials_before_publishing
