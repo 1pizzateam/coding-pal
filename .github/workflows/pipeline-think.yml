@@ -59,14 +59,24 @@ jobs:
           HAS_PROVE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("4-prove") != null')
           HAS_RELEASE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("5-release") != null')
           EXISTING_THINK=$(echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")')
-          EXISTING_PLAN=$(echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Plan:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")')
+          EXISTING_PLAN=$(echo "$ISSUE_VIEW" | jq -r '
+            (.comments | map(.body) | to_entries) as $all |
+            ([ $all[] | select(.value | test("^# Think:"; "m")) | .key ] | last // -1) as $last_think_idx |
+            [ $all[] | select(.key > $last_think_idx and (.value | test("^# Plan:"; "m"))) | .value ] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")
+          ')
+          EXISTING_PR_STALE_SPEC=$(echo "$ISSUE_VIEW" | jq -r '
+            (.comments | map(.body) | to_entries) as $all |
+            ([ $all[] | select(.value | test("^# (Think|Plan):"; "m")) | .key ] | last // -1) as $last_spec_idx |
+            ([ $all[] | select(.value | test("^Pull request opened for #"; "m")) | .key ] | last // -1) as $last_pr_idx |
+            ($last_pr_idx >= 0 and $last_spec_idx > $last_pr_idx)
+          ')
           EXISTING_PR_JSON=$(gh pr list --state open --json number,headRefName,mergeable,labels \
             --jq "[.[] | select(.headRefName | test(\"^(feature|fix|chore)/issue-${ISSUE_NUMBER}-\"))][0] // empty" 2>/dev/null || true)
           EXISTING_PR=$(echo "$EXISTING_PR_JSON" | jq -r '.number // empty')
           EXISTING_PR_CONFLICT=$(echo "$EXISTING_PR_JSON" | jq -r '(.mergeable // "") == "CONFLICTING" or ([.labels[]?.name] | index("needs:rebase") != null)')
 
           # Smart Resume 0: An open PR already exists and the issue was explicitly marked for prove or release.
-          if [ -n "$EXISTING_PR" ] && { [ "$HAS_PROVE_TRIGGER" = "true" ] || [ "$HAS_RELEASE_TRIGGER" = "true" ]; } && [ "$EXISTING_PR_CONFLICT" != "true" ]; then
+          if [ -n "$EXISTING_PR" ] && [ -n "$EXISTING_THINK" ] && [ -n "$EXISTING_PLAN" ] && [ "$EXISTING_PR_STALE_SPEC" != "true" ] && [ "$HAS_THINK_TRIGGER" != "true" ] && [ "$HAS_PLAN_TRIGGER" != "true" ] && { [ "$HAS_PROVE_TRIGGER" = "true" ] || [ "$HAS_RELEASE_TRIGGER" = "true" ]; } && [ "$EXISTING_PR_CONFLICT" != "true" ]; then
             echo "Found open PR #${EXISTING_PR} for issue #${ISSUE_NUMBER}; dispatching Pipeline - Prove directly."
             gh pr edit "$EXISTING_PR" --remove-assignee "@me" 2>/dev/null || true
             gh workflow run prove.yml -f pr_number="$EXISTING_PR" -f issue_number="$ISSUE_NUMBER"

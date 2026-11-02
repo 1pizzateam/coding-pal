@@ -307,7 +307,11 @@ jobs:
           fi
           if [ ! -s "${SPEC_DIR}/plan.md" ]; then
             gh issue view "$ISSUE_NUMBER" --json comments \
-              --jq '[.comments[].body | select(test("^# Plan:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")' > "${SPEC_DIR}/plan.md"
+              --jq '
+                (.comments | map(.body) | to_entries) as $all |
+                ([ $all[] | select(.value | test("^# Think:"; "m")) | .key ] | last // -1) as $last_think_idx |
+                [ $all[] | select(.key > $last_think_idx and (.value | test("^# Plan:"; "m"))) | .value ] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")
+              ' > "${SPEC_DIR}/plan.md"
           fi
 
           gh pr view "$PR_NUMBER" --json body --jq '.body // ""' > pr.md

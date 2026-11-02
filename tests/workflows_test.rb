@@ -413,6 +413,16 @@ class WorkflowsTest < Minitest::Test
     assert_equal [['workflow', 'run', 'think.yml', '-f', 'issue_number=42']], dispatches
     prove_resolve = run_step(step('prove', 'resolve'), scenario(['5-release'], prs: [{ 'number' => 99, 'headRefName' => 'feature/issue-42-test', 'labels' => [] }], pr: { 'number' => 99, 'state' => 'OPEN', 'headRefName' => 'feature/issue-42-test', 'baseRefName' => 'main', 'body' => '- **Closes:** #42', 'title' => 'feat: test' }), { 'INPUT_ISSUE_NUMBER' => '42', 'INPUT_PR_NUMBER' => '', 'RUN_ID' => '' })
     assert_equal 'false', prove_resolve.fetch('skip')
+
+    # Reopened or re-thought issue: a newer # Think: invalidates an older # Plan:
+    reopened_comments = ['# Think: v1', '# Plan: v1', '# Think: v2']
+    assert_equal 'plan', run_step(fifo, scenario(['5-release'], comments: reopened_comments)).fetch('resumed_stage')
+    assert_equal "# Think: v2\n", File.read(File.join(@directory, 'specs/issue-42/think.md'))
+    assert_empty dispatches
+
+    reopened_code = run_step(step('code', 'resolve'), scenario(['5-release'], comments: reopened_comments), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
+    assert_equal 'true', reopened_code.fetch('skip')
+    assert_equal [['workflow', 'run', 'plan.yml', '-f', 'issue_number=42']], dispatches
   end
 
   def test_existing_pr_is_proven_only_for_release
@@ -437,6 +447,14 @@ class WorkflowsTest < Minitest::Test
         assert @calls.any? { |args| args.first(3) == ['pr', 'edit', '99'] && args.include?('--remove-assignee') && args.include?('@me') }
       end
     end
+
+    # Stale PR relative to a newer Think or Plan spec must not skip Code
+    stale_plan_comments = ['# Think: v1', '# Plan: v1', 'Pull request opened for #42: https://example.test/pr/99', '# Think: v2', '# Plan: v2']
+    assert_equal 'code', run_step(step('think', 'resume'), scenario(['5-release'], comments: stale_plan_comments, prs: prs)).fetch('resumed_stage')
+    assert_equal [['workflow', 'run', 'code.yml', '-f', 'issue_number=42']], dispatches
+    stale_pr_code_out = run_step(step('code', 'resolve'), scenario(['5-release'], comments: stale_plan_comments, prs: prs), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
+    assert_equal 'false', stale_pr_code_out.fetch('skip')
+    assert_empty dispatches
 
     [
       [{ 'number' => 99, 'headRefName' => 'feature/issue-42-test', 'mergeable' => 'CONFLICTING', 'labels' => [] }],
