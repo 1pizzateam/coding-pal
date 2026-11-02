@@ -557,7 +557,7 @@ jobs:
               const fs = require("fs");
               const md = fs.readFileSync(process.argv[1], "utf8");
               const paths = new Set();
-              const boundary = md.match(/^##\s+File Scope & Boundaries\s*\n([\s\S]*?)(?:\n##\s+|$)/m);
+              const boundary = md.match(/(?:^|\n)##\s+File Scope & Boundaries\s*\n([\s\S]*?)(?:\n##\s+|$)/);
               if (boundary) {
                 let collecting = false;
                 let buf = "";
@@ -579,7 +579,7 @@ jobs:
                   if (p && p !== "_None._") paths.add(p);
                 }
               }
-              const legacy = md.match(/^##\s+In Scope\s*\n([\s\S]*?)(?:\n##\s+|$)/m);
+              const legacy = md.match(/(?:^|\n)##\s+In Scope\s*\n([\s\S]*?)(?:\n##\s+|$)/);
               if (legacy) {
                 for (const m of legacy[1].matchAll(/`([^`\n]+)`/g)) {
                   const p = m[1].trim();

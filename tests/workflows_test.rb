@@ -1184,16 +1184,39 @@ class WorkflowsTest < Minitest::Test
       - **Out of Scope:** `src/audio/engine.ts`
       - **Irreversible Changes:** _None._
     MARKDOWN
+    multiline_plan_md = <<~MARKDOWN
+      # Plan: Player-configurable controls page
+
+      ## File Scope & Boundaries
+
+      - **In Scope:**
+        - `src/keymap.js`
+        - `src/controls.js`
+        - `tests/sim.test.mjs`
+      - **Out of Scope:**
+        - `index.html`
+      - **Irreversible Changes:** _None._
+
+      ## Prerequisites & Context
+      - Reference: `specs/issue-26/think.md`
+    MARKDOWN
     plan_file = File.join(@directory, 'plan.md')
+    multiline_plan_file = File.join(@directory, 'multiline_plan.md')
     File.write(plan_file, plan_md)
+    File.write(multiline_plan_file, multiline_plan_md)
     [
-      steps('prove').find { |item| item['name'] == 'Run Prove validation and auto-remediation loop' }.fetch('run')
+      steps('prove').find { |item| item['name'] == 'Run Prove validation and auto-remediation loop' }.fetch('run'),
+      steps('code').find { |item| item['name'] == 'Run deterministic Code exit gates' }.fetch('run')
     ].each do |script|
       snippet = script[/node -e '\s*(const fs = require\("fs"\);.*?)' "\$\{SPEC_DIR\}\/plan\.md"/m, 1]
       refute_nil snippet
       out, status = Open3.capture2('node', '-e', snippet, plan_file)
       assert status.success?
       assert_equal %w[src/levels/door.ts tests/door.test.ts], out.lines.map(&:strip).reject(&:empty?)
+
+      multiline_out, multiline_status = Open3.capture2('node', '-e', snippet, multiline_plan_file)
+      assert multiline_status.success?
+      assert_equal %w[src/keymap.js src/controls.js tests/sim.test.mjs], multiline_out.lines.map(&:strip).reject(&:empty?)
     end
   end
 
