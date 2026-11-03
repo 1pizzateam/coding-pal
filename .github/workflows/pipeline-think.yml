@@ -77,7 +77,7 @@ jobs:
           EXISTING_PR_CONFLICT=$(echo "$EXISTING_PR_JSON" | jq -r '(.mergeable // "") == "CONFLICTING" or ([.labels[]?.name] | index("needs:rebase") != null)')
 
           # Smart Resume 0: An open PR already exists and the issue was explicitly marked for prove or release.
-          if [ -n "$EXISTING_PR" ] && [ -n "$EXISTING_THINK" ] && [ -n "$EXISTING_PLAN" ] && [ "$EXISTING_PR_STALE_SPEC" != "true" ] && [ "$HAS_THINK_TRIGGER" != "true" ] && [ "$HAS_PLAN_TRIGGER" != "true" ] && { [ "$HAS_PROVE_TRIGGER" = "true" ] || [ "$HAS_RELEASE_TRIGGER" = "true" ]; } && [ "$EXISTING_PR_CONFLICT" != "true" ]; then
+          if [ -n "$EXISTING_PR" ] && { [ -n "$EXISTING_THINK" ] || [ "$HAS_AUDIT_LABEL" = "true" ]; } && [ -n "$EXISTING_PLAN" ] && [ "$EXISTING_PR_STALE_SPEC" != "true" ] && [ "$HAS_THINK_TRIGGER" != "true" ] && [ "$HAS_PLAN_TRIGGER" != "true" ] && { [ "$HAS_PROVE_TRIGGER" = "true" ] || [ "$HAS_RELEASE_TRIGGER" = "true" ]; } && [ "$EXISTING_PR_CONFLICT" != "true" ]; then
             echo "Found open PR #${EXISTING_PR} for issue #${ISSUE_NUMBER}; dispatching Pipeline - Prove directly."
             gh pr edit "$EXISTING_PR" --remove-assignee "@me" 2>/dev/null || true
             gh workflow run prove.yml -f pr_number="$EXISTING_PR" -f issue_number="$ISSUE_NUMBER"
@@ -85,9 +85,9 @@ jobs:
             exit 0
           fi
 
-          # Smart Resume 1: Reuse both specs for Code unless Think or Plan was explicitly requested.
-          if [ -n "$EXISTING_THINK" ] && [ -n "$EXISTING_PLAN" ] && [ "$HAS_THINK_TRIGGER" != "true" ] && [ "$HAS_PLAN_TRIGGER" != "true" ]; then
-            echo "Found validated # Think: and # Plan: comments on issue #${ISSUE_NUMBER}; dispatching Pipeline - Code directly."
+          # Smart Resume 1: Reuse specs for Code unless Think or Plan was explicitly requested.
+          if { [ -n "$EXISTING_THINK" ] || [ "$HAS_AUDIT_LABEL" = "true" ]; } && [ -n "$EXISTING_PLAN" ] && [ "$HAS_THINK_TRIGGER" != "true" ] && [ "$HAS_PLAN_TRIGGER" != "true" ]; then
+            echo "Found validated # Plan: comment on issue #${ISSUE_NUMBER}; dispatching Pipeline - Code directly."
             gh workflow run code.yml -f issue_number="$ISSUE_NUMBER"
             echo "resumed_stage=code" >> "$GITHUB_OUTPUT"
             exit 0
@@ -103,9 +103,9 @@ jobs:
             exit 0
           fi
 
-          # Smart Resume 3: Audit finding issues skip the Think agent and start directly at Plan.
-          if [ "$HAS_AUDIT_LABEL" = "true" ]; then
-            echo "Audit finding issue #${ISSUE_NUMBER} detected; synthesizing think.md directly to skip Pipeline - Think and start Plan."
+          # Smart Resume 3: Audit finding issues skip the Think agent unless explicitly tagged 1-think.
+          if [ "$HAS_AUDIT_LABEL" = "true" ] && { [ "$HAS_THINK_TRIGGER" != "true" ] || [ "$HAS_PLAN_TRIGGER" = "true" ] || [ "$HAS_CODE_TRIGGER" = "true" ] || [ "$HAS_PROVE_TRIGGER" = "true" ] || [ "$HAS_RELEASE_TRIGGER" = "true" ]; }; then
+            echo "Audit finding issue #${ISSUE_NUMBER} detected without explicit 1-think; skipping Pipeline - Think and starting Plan."
             mkdir -p "specs/issue-${ISSUE_NUMBER}"
             TODAY=$(date -u +%Y-%m-%d 2>/dev/null || echo "2026-01-01")
             echo "$ISSUE_VIEW" | jq -r --arg issue_number "$ISSUE_NUMBER" --arg today "$TODAY" '
@@ -171,12 +171,7 @@ jobs:
               "## Ambiguities & Open Questions\n" +
               "_None._"
             ' > "specs/issue-${ISSUE_NUMBER}/think.md"
-            if [ -z "$EXISTING_THINK" ]; then
-              gh issue comment "$ISSUE_NUMBER" --body-file "specs/issue-${ISSUE_NUMBER}/think.md"
-            fi
-            if [ "$HAS_THINK_TRIGGER" = "true" ] && [ "$HAS_PLAN_TRIGGER" != "true" ] && [ "$HAS_CODE_TRIGGER" != "true" ] && [ "$HAS_PROVE_TRIGGER" != "true" ] && [ "$HAS_RELEASE_TRIGGER" != "true" ]; then
-              gh issue edit "$ISSUE_NUMBER" --add-label "2-plan" --remove-label "1-think" 2>/dev/null || true
-            elif [ "$HAS_THINK_TRIGGER" = "true" ]; then
+            if [ "$HAS_THINK_TRIGGER" = "true" ]; then
               gh issue edit "$ISSUE_NUMBER" --remove-label "1-think" 2>/dev/null || true
             fi
             echo "$ISSUE_NUMBER" > specs/issue_number.txt

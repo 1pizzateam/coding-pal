@@ -147,7 +147,6 @@ jobs:
                   "## Ambiguities & Open Questions\n" +
                   "_None._"
                 ' > "$THINK_FILE"
-                gh issue comment "$ISSUE_NUMBER" --body-file "$THINK_FILE"
               elif [ -z "$RUN_ID" ]; then
                 HAS_STAGE_LABEL=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | any(. == "2-plan" or . == "3-code" or . == "4-prove" or . == "5-release")')
                 if [ "$HAS_STAGE_LABEL" = "true" ]; then
