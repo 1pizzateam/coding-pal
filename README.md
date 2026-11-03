@@ -280,11 +280,16 @@ DoomR changes can require updates to Cadenza, FaceGun, MappR, PixelGun, PolyGun,
 
 [The audit runner](.github/workflows/audit-runner.yml) temporarily loads this repository's instructions and specialist audit agents, runs Copilot (`gemini-3.8-flash`) in read-only analysis mode, restores the application's original instructions, and creates **1 GitHub Issue per finding** (labeled `audit:<agent>`, deduplicated against existing open issues) and attaches each created issue to the repository's GitHub Project V2 board without setting a pipeline trigger label—leaving findings in the default Project column for manual triage before adding `1-think` or `5-release`.
 
+Audits can be triggered in three ways:
+1. **Activity-Gated Weekly Schedule (Public Repositories Only):** Each repository's `audits.yml` runs on a staggered weekly schedule (`Mon 06:00 UTC` for `dependency-audit` & `dead-code-audit`, `Wed 06:00 UTC` for `vector-first-audit` & `perf-audit`, `Fri 06:00 UTC` for `test-gap-audit` & `docs-sync-audit`). Private repositories (`github.event.repository.private`) are skipped at the job level (`!github.event.repository.private`) and in the runner preflight gate so they never trigger automatically or consume private runner minutes. Public scheduled runs also skip before invoking Copilot if the repository has had no commits in the last 7 days or already has 10+ open `audit:<agent>` issues awaiting triage.
+2. **Per-Repository `workflow_dispatch`:** Trigger `Audit - Run audit` (`audits.yml`) in any repository (public or private) and select `all` (to run every applicable audit in parallel) or a single specialist audit.
+3. **Central Fleet Dispatcher ([`audit-fleet.yml`](.github/workflows/audit-fleet.yml)):** Trigger `Audit - Fleet dispatch` from `coding-pal` with `target` (`all`, `libraries`, `editors`, or a specific repo) and `audit` (`all` or a specific audit) to dispatch `audits.yml` across multiple repositories at once. Group targets (`all`, `libraries`, `editors`) automatically skip private repositories.
+
 | Path | Contains |
 |---|---|
 | [instructions/](instructions/) | Engineering style, ecosystem synchronization, vector-first APIs, and hot-loop performance rules |
 | [agents/](agents/) | Dependency reuse, vector-first, performance, dead-code, test-gap, and documentation audits |
-| [.github/workflows/](.github/workflows/) | Six audit workflows, their shared runner, and seven delivery/release workflows |
+| [.github/workflows/](.github/workflows/) | Six audit workflows, their shared runner, central fleet dispatcher, and seven delivery/release workflows |
 | [skills/release-readiness/](skills/release-readiness/) | Library documentation, metadata, build, and package checks |
 
 ## Testing the Pipeline Workflows

@@ -47,6 +47,8 @@ class WorkflowsTest < Minitest::Test
       'github.repository_owner' => 'test-owner',
       'github.event.repository.name' => 'test-repo',
       'github.event.repository.default_branch' => 'main',
+      'github.event.repository.private' => 'false',
+      'github.event_name' => 'workflow_dispatch',
       'github.run_id' => '123',
       'inputs.issue_number' => '42',
       'inputs.pr_number' => '99',
@@ -67,6 +69,9 @@ class WorkflowsTest < Minitest::Test
       'inputs.agent' => 'dead-code',
       'inputs.scope' => 'src/',
       'inputs.prompt' => '',
+      'inputs.target' => 'libraries',
+      'inputs.audit' => 'all',
+      'inputs.dependency' => 'all',
       'env.ISSUE_NUMBER' => '42',
       'steps.release.outputs.release_sha' => '',
       'steps.release.outputs.release_tag' => ''
@@ -1161,6 +1166,17 @@ class WorkflowsTest < Minitest::Test
         assert_equal expected_npm_release, prove_wrapper.dig('jobs', 'prove', 'with', 'auto_release_npm'), "#{repository} prove.yml"
         audits = YAML.load_file(File.join(directory, 'audits.yml'))
         assert_equal 'Audit - Run audit', audits.fetch('name')
+        audit_triggers = audits['on'] || audits.fetch(true)
+        assert_equal ['0 6 * * 1', '0 6 * * 3', '0 6 * * 5'],
+                     audit_triggers.fetch('schedule').map { |item| item.fetch('cron') },
+                     "#{repository} audits.yml schedule"
+        audit_options = audit_triggers.dig('workflow_dispatch', 'inputs', 'audit', 'options')
+        assert_equal 'all', audit_options.first, "#{repository} audits.yml must support 'all' option"
+        assert_equal 'all', audit_triggers.dig('workflow_dispatch', 'inputs', 'audit', 'default'), "#{repository} audits.yml default"
+        audits.fetch('jobs').each do |job_name, audit_job|
+          assert_includes audit_job.fetch('if'), '!github.event.repository.private',
+                          "#{repository} audits.yml #{job_name} must block scheduled runs on private repositories"
+        end
         resume = YAML.load_file(File.join(directory, 'upstream-resume.yml'))
         assert_equal 'Pipeline - Resume upstream', resume.fetch('name'), "#{repository} upstream-resume.yml"
         assert_equal '1pizzateam/coding-pal/.github/workflows/pipeline-upstream-resume.yml@main',
@@ -1669,5 +1685,54 @@ class WorkflowsTest < Minitest::Test
     report = File.read(File.join(@directory, 'audit-report.md'))
     assert_includes report, 'chore(dead-code): remove unused parseLegacyConfig helper'
     refute File.exist?(File.join(@directory, 'audit-findings.json'))
+  end
+
+  def test_audit_preflight_skips_scheduled_runs_when_idle_or_backlog_full_and_fleet_dispatches
+    audit = YAML.load_file(File.join(ROOT, '.github/workflows/audit-runner.yml'))
+    preflight = audit.fetch('jobs').fetch('audit').fetch('steps').find { |item| item['id'] == 'preflight' }
+    refute_nil preflight
+
+    git_bin = File.join(@directory, 'bin/git')
+    # 1. Manual workflow_dispatch always runs regardless of git log or backlog
+    File.write(git_bin, "#!#{RbConfig.ruby}\nexit 0\n")
+    File.chmod(0o755, git_bin)
+    out_manual = run_step(preflight, scenario, { 'EVENT_NAME' => 'workflow_dispatch' })
+    assert_equal 'false', out_manual.fetch('skip')
+
+    # 2. Scheduled run with no commits in last 7 days skips immediately
+    out_idle = run_step(preflight, scenario, { 'EVENT_NAME' => 'schedule' })
+    assert_equal 'true', out_idle.fetch('skip')
+    assert_empty @calls
+
+    # 3. Scheduled run on a private repository skips immediately even with recent commits
+    File.write(git_bin, "#!#{RbConfig.ruby}\nputs 'abc1234'\n")
+    File.chmod(0o755, git_bin)
+    out_private = run_step(preflight, scenario, { 'EVENT_NAME' => 'schedule', 'REPO_PRIVATE' => 'true' })
+    assert_equal 'true', out_private.fetch('skip')
+    assert_empty @calls
+
+    # 4. Scheduled run with recent commit but >= 10 open audit issues skips
+    ten_issues = (1..10).map { |n| { 'number' => n } }
+    out_backlog = run_step(preflight, scenario([], issues: ten_issues), { 'EVENT_NAME' => 'schedule' })
+    assert_equal 'true', out_backlog.fetch('skip')
+
+    # 5. Scheduled run with recent commit and < 10 open audit issues proceeds
+    out_active = run_step(preflight, scenario([], issues: [{ 'number' => 1 }]), { 'EVENT_NAME' => 'schedule' })
+    assert_equal 'false', out_active.fetch('skip')
+
+    # 6. Fleet dispatcher triggers audits.yml across target repositories, skips private repos in group dispatches, and filters docs-sync-audit
+    fleet = YAML.load_file(File.join(ROOT, '.github/workflows/audit-fleet.yml'))
+    dispatch_step = fleet.fetch('jobs').fetch('dispatch').fetch('steps').find { |item| item['id'] == 'dispatch_fleet' }
+    refute_nil dispatch_step
+
+    out_libs = run_step(dispatch_step, scenario([], private_repos: ['1pizzateam/FaceR.js']), { 'TARGET' => 'libraries', 'AUDIT' => 'all' })
+    assert_equal '5', out_libs.fetch('dispatched_count')
+    assert_equal 5, dispatches.length
+    assert_includes dispatches.first, '1pizzateam/BumpR.js'
+    refute dispatches.any? { |args| args.include?('1pizzateam/FaceR.js') }
+
+    out_editors_docs = run_step(dispatch_step, scenario, { 'TARGET' => 'editors', 'AUDIT' => 'docs-sync-audit' })
+    assert_equal '1', out_editors_docs.fetch('dispatched_count')
+    assert_equal [['workflow', 'run', 'audits.yml', '--repo', '1pizzateam/FaceGun', '-f', 'audit=docs-sync-audit', '-f', 'scope=src/', '-f', 'dependency=all']], dispatches
   end
 end

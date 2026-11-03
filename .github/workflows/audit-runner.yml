@@ -46,7 +46,48 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
 
+      - name: Check scheduled audit activity and backlog gate
+        id: preflight
+        env:
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          CURRENT_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPO_PRIVATE: ${{ github.event.repository.private }}
+          AGENT: ${{ inputs.agent }}
+        run: |
+          if [ "$EVENT_NAME" != "schedule" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$REPO_PRIVATE" = "true" ]; then
+            echo "::notice::Skipping scheduled ${AGENT} audit: ${CURRENT_REPO} is a private repository."
+            echo "Skipped scheduled \`${AGENT}\` audit: private repository." >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          RECENT_COMMIT=$(git log -1 --since="7 days ago" --format="%H" 2>/dev/null || true)
+          if [ -z "$RECENT_COMMIT" ]; then
+            echo "::notice::Skipping scheduled ${AGENT} audit: no new commits in ${CURRENT_REPO} in the last 7 days."
+            echo "Skipped scheduled \`${AGENT}\` audit: no new commits in the last 7 days." >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          AUDIT_LABEL="audit:${AGENT}"
+          OPEN_AUDIT_COUNT=$(gh issue list --repo "$CURRENT_REPO" --state open --label "$AUDIT_LABEL" --limit 100 --json number 2>/dev/null | jq 'if type == "array" then length else 0 end' || echo "0")
+          if [ "$OPEN_AUDIT_COUNT" -ge 10 ]; then
+            echo "::notice::Skipping scheduled ${AGENT} audit: ${OPEN_AUDIT_COUNT} open ${AUDIT_LABEL} issues already awaiting triage."
+            echo "Skipped scheduled \`${AGENT}\` audit: ${OPEN_AUDIT_COUNT} open \`${AUDIT_LABEL}\` issues already awaiting triage." >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
       - name: Inject 1pizzateam/coding-pal primitives
+        if: steps.preflight.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
         run: |
@@ -59,11 +100,13 @@ jobs:
           rm -rf /tmp/coding-pal
 
       - uses: actions/setup-node@v4
+        if: steps.preflight.outputs.skip != 'true'
         with:
           node-version: 22
           cache: npm
 
       - name: Clone sibling DoomR.js workspace for companion game editors
+        if: steps.preflight.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           REPO_NAME: ${{ github.event.repository.name }}
@@ -80,18 +123,21 @@ jobs:
           esac
 
       - name: Install project dependencies for codebase investigation
+        if: steps.preflight.outputs.skip != 'true'
         run: |
           if [ -f package-lock.json ]; then
             npm ci --ignore-scripts 2>/dev/null || npm ci || true
           fi
 
       - name: Cache Copilot CLI
+        if: steps.preflight.outputs.skip != 'true'
         uses: actions/cache@v4
         with:
           path: ~/.copilot-cli
           key: copilot-cli-${{ runner.os }}-node22
 
       - name: Install Copilot CLI
+        if: steps.preflight.outputs.skip != 'true'
         run: |
           if [ ! -x "$HOME/.copilot-cli/bin/copilot" ]; then
             npm install --prefix "$HOME/.copilot-cli" -g @github/copilot
@@ -99,6 +145,7 @@ jobs:
           echo "$HOME/.copilot-cli/bin" >> "$GITHUB_PATH"
 
       - name: Run ${{ inputs.agent }} agent
+        if: steps.preflight.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
@@ -111,7 +158,7 @@ jobs:
 
       - name: Create issues for audit findings and add to Project
         id: create_findings
-        if: always()
+        if: always() && steps.preflight.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           CURRENT_REPO: ${{ github.repository }}
@@ -211,7 +258,7 @@ jobs:
           rm -f audit-findings.json
 
       - name: Escalate upstream @1pizzateam/* library requests
-        if: always()
+        if: always() && steps.preflight.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           CURRENT_REPO: ${{ github.repository }}
@@ -336,7 +383,7 @@ jobs:
           rm -f upstream-requests.json
 
       - name: Dispatch companion game editor requests
-        if: always()
+        if: always() && steps.preflight.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           CURRENT_REPO: ${{ github.repository }}
@@ -449,7 +496,7 @@ jobs:
           rm -f editor-requests.json
 
       - name: Restore repo primitives and publish summary
-        if: always()
+        if: always() && steps.preflight.outputs.skip != 'true'
         env:
           AGENT: ${{ inputs.agent }}
           SCOPE: ${{ inputs.scope }}
