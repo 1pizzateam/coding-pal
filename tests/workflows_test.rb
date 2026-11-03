@@ -67,7 +67,6 @@ class WorkflowsTest < Minitest::Test
       'inputs.agent' => 'dead-code',
       'inputs.scope' => 'src/',
       'inputs.prompt' => '',
-      'inputs.pr_title' => 'chore: remove dead code in src/',
       'env.ISSUE_NUMBER' => '42',
       'steps.release.outputs.release_sha' => '',
       'steps.release.outputs.release_tag' => ''
@@ -227,12 +226,12 @@ class WorkflowsTest < Minitest::Test
 
   def test_every_copilot_invocation_uses_expected_step_model
     expected_models = {
-      'pipeline-think.yml: Fetch issue context and run Thinker agent' => ['claude-opus-5.5'],
-      'pipeline-plan.yml: Fetch issue context and run Planner agent' => ['claude-opus-5.5'],
+      'pipeline-think.yml: Fetch issue context and run Thinker agent' => ['claude-sonnet-5.5'],
+      'pipeline-plan.yml: Fetch issue context and run Planner agent' => ['claude-sonnet-5.5'],
       'pipeline-code.yml: Run Code Agent to implement plan.md and prepare pr.md' => ['claude-sonnet-5.5'],
-      'pipeline-prove.yml: Run Prove validation and auto-remediation loop' => ['claude-sonnet-5.5', 'claude-opus-5.5'],
+      'pipeline-prove.yml: Run Prove validation and auto-remediation loop' => ['claude-sonnet-5.5', 'claude-sonnet-5.5'],
       'pipeline-prove.yml: Auto-release merged @1pizzateam/* library version' => ['gpt-6-luna'],
-      'audit-runner.yml: Run ${{ inputs.agent }} agent' => ['claude-sonnet-5.5']
+      'audit-runner.yml: Run ${{ inputs.agent }} agent' => ['gemini-3.8-flash']
     }
     actual_models = Hash.new { |h, k| h[k] = [] }
     calls = []
@@ -1627,5 +1626,48 @@ class WorkflowsTest < Minitest::Test
     refute_empty git_command('log', 'refs/remotes/origin/main..HEAD', '--oneline')
     committed_files = git_command('diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD').lines.map(&:strip)
     assert_equal ['src/crate.js'], committed_files
+  end
+
+  def test_audit_runner_creates_one_issue_per_finding_and_adds_to_project
+    audit = YAML.load_file(File.join(ROOT, '.github/workflows/audit-runner.yml'))
+    entry = audit.fetch('jobs').fetch('audit').fetch('steps').find { |item| item['id'] == 'create_findings' }
+    refute_nil entry
+
+    File.write(File.join(@directory, 'audit-findings.json'), JSON.generate([
+      {
+        'title' => 'chore(dead-code): remove unused parseLegacyConfig helper',
+        'body' => "## Problem\n`parseLegacyConfig` in `src/config.js` has zero call sites.\n\n## Affected Files\n- `src/config.js`\n\n## Suggested Remediation\nDelete `parseLegacyConfig`."
+      },
+      {
+        'title' => 'chore(dead-code): remove duplicate open issue',
+        'body' => 'Already tracked.'
+      }
+    ]))
+
+    data = scenario(
+      [],
+      issues: [{ 'number' => 15, 'title' => 'CHORE(DEAD-CODE): REMOVE DUPLICATE OPEN ISSUE' }],
+      project: project
+    )
+    output = run_step(entry, data)
+    assert_equal '1', output.fetch('created_count')
+
+    create_calls = @calls.select { |args| args.first(2) == %w[issue create] }
+    assert_equal 1, create_calls.length
+    create_call = create_calls.first
+    assert_includes create_call, 'chore(dead-code): remove unused parseLegacyConfig helper'
+    assert_includes create_call, 'audit:dead-code'
+    LABELS.each { |label| refute_includes create_call, label }
+
+    add_item_calls = @calls.select { |args| args.any? { |arg| arg.include?('addProjectV2ItemById') } }
+    assert_equal 1, add_item_calls.length
+    assert_includes add_item_calls.first, 'projectId=PROJECT'
+    assert_includes add_item_calls.first, 'contentId=ISSUE'
+    refute @calls.any? { |args| args.any? { |arg| arg.include?('updateProjectV2ItemFieldValue') } },
+           'Audit-created issues must stay in default Project Status until triaged'
+
+    report = File.read(File.join(@directory, 'audit-report.md'))
+    assert_includes report, 'chore(dead-code): remove unused parseLegacyConfig helper'
+    refute File.exist?(File.join(@directory, 'audit-findings.json'))
   end
 end

@@ -11,5 +11,4 @@ jobs:
     with:
       agent: perf-audit
       scope: ${{ inputs.scope }}
-      pr_title: "perf: eliminate hot-loop allocations in ${{ inputs.scope }}"
     secrets: inherit

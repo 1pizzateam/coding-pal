@@ -17,9 +17,10 @@ on:
         required: false
         default: ''
         type: string
-      pr_title:
-        description: 'Commit and Pull Request title'
-        required: true
+      project_title:
+        description: 'GitHub Project V2 board title (defaults to repository name)'
+        required: false
+        default: ''
         type: string
     secrets:
       PIPELINE_GITHUB_TOKEN:
@@ -28,8 +29,7 @@ on:
         required: true
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
   issues: write
 
 jobs:
@@ -79,7 +79,11 @@ jobs:
               ;;
           esac
 
-      - run: npm ci
+      - name: Install project dependencies for codebase investigation
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --ignore-scripts 2>/dev/null || npm ci || true
+          fi
 
       - name: Cache Copilot CLI
         uses: actions/cache@v4
@@ -102,14 +106,117 @@ jobs:
           SCOPE: ${{ inputs.scope }}
           EXTRA_PROMPT: ${{ inputs.prompt }}
         run: |
-          copilot --model="claude-sonnet-5.5" --agent="$AGENT" --allow-all-tools \
-            --prompt "Scope: ${SCOPE}. ${EXTRA_PROMPT} Write a brief Markdown summary of changes to audit-report.md. If an upstream @1pizzateam/* library (`@1pizzateam/roostr` -> `1pizzateam/RoostR.js`, `@1pizzateam/bumpr` -> `1pizzateam/BumpR.js`, `@1pizzateam/loopr` -> `1pizzateam/LoopR.js`, `@1pizzateam/spock` -> `1pizzateam/Spock.js`, `@1pizzateam/groovr` -> `1pizzateam/GroovR.js`, `@1pizzateam/facer` -> `1pizzateam/FaceR.js`) should be updated instead of (or prior to) changing this repository, write the structured request array to upstream-requests.json. If a change in DoomR.js requires a companion update in one of the 1PizzaTeam game editors (`cadenza` -> `1pizzateam/Cadenza`, `facegun` -> `1pizzateam/FaceGun`, `mappr` -> `1pizzateam/MappR`, `pixelgun` -> `1pizzateam/PixelGun`, `polygun` -> `1pizzateam/PolyGun`, `shadergun` -> `1pizzateam/ShaderGun`), write a JSON array to editor-requests.json with objects `{ \"editor\": \"<cadenza|facegun|mappr|pixelgun|polygun|shadergun>\", \"repo\": \"1pizzateam/<Editor>\", \"title\": \"<issue title>\", \"body\": \"<markdown body describing the editor update>\" }`."
+          copilot --model="gemini-3.8-flash" --agent="$AGENT" --allow-all-tools \
+            --prompt "Scope: ${SCOPE}. ${EXTRA_PROMPT} Do not modify repository source, test, or documentation files. Write structured findings to audit-findings.json as a JSON array of objects, where each element has exact keys: { \"title\": \"<concise issue title>\", \"body\": \"<Markdown specification with ## Problem, ## Affected Files, ## Suggested Fix, and - **AC-1:** ... acceptance criteria>\" } (or [] if no findings exist), and write a brief Markdown summary of the audit to audit-report.md. If an upstream @1pizzateam/* library (`@1pizzateam/roostr` -> `1pizzateam/RoostR.js`, `@1pizzateam/bumpr` -> `1pizzateam/BumpR.js`, `@1pizzateam/loopr` -> `1pizzateam/LoopR.js`, `@1pizzateam/spock` -> `1pizzateam/Spock.js`, `@1pizzateam/groovr` -> `1pizzateam/GroovR.js`, `@1pizzateam/facer` -> `1pizzateam/FaceR.js`) should be updated instead of (or prior to) changing this repository, write the structured request array to upstream-requests.json. If a finding in DoomR.js requires a companion update in one of the 1PizzaTeam game editors (`cadenza` -> `1pizzateam/Cadenza`, `facegun` -> `1pizzateam/FaceGun`, `mappr` -> `1pizzateam/MappR`, `pixelgun` -> `1pizzateam/PixelGun`, `polygun` -> `1pizzateam/PolyGun`, `shadergun` -> `1pizzateam/ShaderGun`), write a JSON array to editor-requests.json with objects `{ \"editor\": \"<cadenza|facegun|mappr|pixelgun|polygun|shadergun>\", \"repo\": \"1pizzateam/<Editor>\", \"title\": \"<issue title>\", \"body\": \"<markdown body describing the editor update>\" }`."
+
+      - name: Create issues for audit findings and add to Project
+        id: create_findings
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          CURRENT_REPO: ${{ github.repository }}
+          AGENT: ${{ inputs.agent }}
+          SCOPE: ${{ inputs.scope }}
+          PROJECT_TITLE: ${{ inputs.project_title }}
+        run: |
+          if [ ! -s audit-findings.json ]; then
+            rm -f audit-findings.json
+            echo "created_count=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          COUNT=$(jq 'if type == "array" then length else 0 end' audit-findings.json 2>/dev/null || echo "0")
+          if [ "$COUNT" -eq 0 ]; then
+            rm -f audit-findings.json
+            echo "created_count=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          OWNER="${CURRENT_REPO%%/*}"
+          REPO="${CURRENT_REPO#*/}"
+          PROJECT_TITLE="${PROJECT_TITLE:-$REPO}"
+          AUDIT_LABEL="audit:${AGENT}"
+
+          gh label create "$AUDIT_LABEL" --repo "$CURRENT_REPO" --force --description "Finding reported by ${AGENT} audit" || true
+
+          OPEN_ISSUES=$(gh issue list --repo "$CURRENT_REPO" --state open --limit 200 --json number,title 2>/dev/null || echo '[]')
+
+          CREATED_COUNT=0
+          for ((i = 0; i < COUNT; i++)); do
+            TITLE=$(jq -r ".[$i].title // empty" audit-findings.json)
+            BODY=$(jq -r ".[$i].body // empty" audit-findings.json)
+
+            if [ -z "$TITLE" ] || [ -z "$BODY" ]; then
+              continue
+            fi
+
+            EXISTING_NUM=$(echo "$OPEN_ISSUES" | jq -r --arg t "$TITLE" '.[]? | select((.title // "" | ascii_downcase) == ($t | ascii_downcase)) | .number' | head -n 1)
+            if [ -n "$EXISTING_NUM" ]; then
+              echo "Skipping duplicate finding (already open as #${EXISTING_NUM}): ${TITLE}"
+              continue
+            fi
+
+            ISSUE_URL=$(gh issue create --repo "$CURRENT_REPO" \
+              --title "$TITLE" \
+              --label "$AUDIT_LABEL" \
+              --body "${BODY}
+
+          ---
+          _Reported by \`${AGENT}\` audit in \`${SCOPE}\`._")
+            ISSUE_NUMBER="${ISSUE_URL##*/}"
+            CREATED_COUNT=$((CREATED_COUNT + 1))
+
+            OPEN_ISSUES=$(echo "$OPEN_ISSUES" | jq -c --argjson num "${ISSUE_NUMBER:-0}" --arg title "$TITLE" '. + [{"number": $num, "title": $title}]')
+
+            DATA=$(gh api graphql -f query='
+              query($owner: String!, $repo: String!, $number: Int!, $projectTitle: String!) {
+                repository(owner: $owner, name: $repo) {
+                  issue(number: $number) { id }
+                  owner {
+                    ... on Organization {
+                      projectsV2(first: 20, query: $projectTitle) {
+                        nodes { id title }
+                      }
+                    }
+                    ... on User {
+                      projectsV2(first: 20, query: $projectTitle) {
+                        nodes { id title }
+                      }
+                    }
+                  }
+                }
+              }' -f owner="$OWNER" -f repo="$REPO" -F number="$ISSUE_NUMBER" -f projectTitle="$PROJECT_TITLE")
+
+            ISSUE_ID=$(echo "$DATA" | jq -r '.data.repository.issue.id // empty')
+            PROJECT=$(echo "$DATA" | jq -c --arg title "$PROJECT_TITLE" --arg repo "$REPO" '.data.repository.owner.projectsV2.nodes[]? | select((.title | ascii_downcase | sub("\\.js$"; "")) == ($title | ascii_downcase | sub("\\.js$"; "")) or (.title | ascii_downcase) == ($repo | ascii_downcase))' | head -n 1)
+            PROJECT_ID=$(echo "$PROJECT" | jq -r '.id // empty')
+
+            if [ -n "$ISSUE_ID" ] && [ -n "$PROJECT_ID" ]; then
+              gh api graphql -f query='
+                mutation($projectId: ID!, $contentId: ID!) {
+                  addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) { item { id } }
+                }' -f projectId="$PROJECT_ID" -f contentId="$ISSUE_ID" >/dev/null
+            fi
+
+            {
+              if [ "$CREATED_COUNT" -eq 1 ]; then
+                echo ""
+                echo "### Created Audit Finding Issues"
+              fi
+              echo "- ${ISSUE_URL}: ${TITLE}"
+            } >> audit-report.md
+          done
+
+          echo "created_count=${CREATED_COUNT}" >> "$GITHUB_OUTPUT"
+          rm -f audit-findings.json
 
       - name: Escalate upstream @1pizzateam/* library requests
         if: always()
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           CURRENT_REPO: ${{ github.repository }}
+          AGENT: ${{ inputs.agent }}
+          PROJECT_TITLE: ${{ inputs.project_title }}
         run: |
           if [ ! -s upstream-requests.json ]; then
             rm -f upstream-requests.json
@@ -122,8 +229,47 @@ jobs:
             exit 0
           fi
 
+          AUDIT_LABEL="audit:${AGENT}"
           gh label create "blocked:upstream" --repo "$CURRENT_REPO" --force --description "Waiting on an upstream @1pizzateam library release" || true
           gh label create "upstream-escalated:1" --repo "$CURRENT_REPO" --force --description "Escalated once to an upstream @1pizzateam library" || true
+          gh label create "$AUDIT_LABEL" --repo "$CURRENT_REPO" --force --description "Finding reported by ${AGENT} audit" || true
+
+          add_to_project() {
+            local target_full="$1"
+            local issue_num="$2"
+            local custom_title="${3:-}"
+            local owner="${target_full%%/*}"
+            local repo="${target_full#*/}"
+            local ptitle="${custom_title:-$repo}"
+            local data
+            data=$(gh api graphql -f query='
+              query($owner: String!, $repo: String!, $number: Int!, $projectTitle: String!) {
+                repository(owner: $owner, name: $repo) {
+                  issue(number: $number) { id }
+                  owner {
+                    ... on Organization {
+                      projectsV2(first: 20, query: $projectTitle) {
+                        nodes { id title }
+                      }
+                    }
+                    ... on User {
+                      projectsV2(first: 20, query: $projectTitle) {
+                        nodes { id title }
+                      }
+                    }
+                  }
+                }
+              }' -f owner="$owner" -f repo="$repo" -F number="$issue_num" -f projectTitle="$ptitle")
+            local issue_id project_id
+            issue_id=$(echo "$data" | jq -r '.data.repository.issue.id // empty')
+            project_id=$(echo "$data" | jq -c --arg title "$ptitle" --arg repo "$repo" '.data.repository.owner.projectsV2.nodes[]? | select((.title | ascii_downcase | sub("\\.js$"; "")) == ($title | ascii_downcase | sub("\\.js$"; "")) or (.title | ascii_downcase) == ($repo | ascii_downcase))' | head -n 1 | jq -r '.id // empty')
+            if [ -n "$issue_id" ] && [ -n "$project_id" ]; then
+              gh api graphql -f query='
+                mutation($projectId: ID!, $contentId: ID!) {
+                  addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) { item { id } }
+                }' -f projectId="$project_id" -f contentId="$issue_id" >/dev/null
+            fi
+          }
 
           MAX=$((COUNT > 3 ? 3 : COUNT))
           for ((i = 0; i < MAX; i++)); do
@@ -141,11 +287,12 @@ jobs:
               continue
             fi
 
-            # 1. Create the blocked tracking issue in the consumer repo (e.g. DoomR.js)
+            # 1. Create the blocked tracking issue in the consumer repo (e.g. DoomR.js) and add to Project
             CONSUMER_ISSUE_URL=$(gh issue create --repo "$CURRENT_REPO" \
               --title "$CONSUMER_TITLE" \
               --label "blocked:upstream" \
               --label "upstream-escalated:1" \
+              --label "$AUDIT_LABEL" \
               --body "${CONSUMER_BODY}
 
           ---
@@ -153,15 +300,16 @@ jobs:
           - **Waiting-Package:** \`${PKG}\`
           - **Waiting-Repo:** \`${TARGET_REPO}\`")
             CONSUMER_ISSUE_NUMBER="${CONSUMER_ISSUE_URL##*/}"
+            add_to_project "$CURRENT_REPO" "$CONSUMER_ISSUE_NUMBER" "$PROJECT_TITLE"
 
-            # 2. Create the upstream issue and label it '5-release' to start delivery
-            gh label create "5-release" --repo "$TARGET_REPO" --force --description "Run the autonomous Think -> Plan -> Code -> Prove -> Release pipeline" || true
+            # 2. Create the upstream issue for triage on the upstream library Project board
             gh label create "upstream-escalated:1" --repo "$TARGET_REPO" --force --description "Triggered by downstream consumer audit" || true
+            gh label create "$AUDIT_LABEL" --repo "$TARGET_REPO" --force --description "Finding reported by ${AGENT} audit" || true
 
             LIB_ISSUE_URL=$(gh issue create --repo "$TARGET_REPO" \
               --title "$LIB_TITLE" \
-              --label "5-release" \
               --label "upstream-escalated:1" \
+              --label "$AUDIT_LABEL" \
               --body "${LIB_BODY}
 
           ---
@@ -170,6 +318,7 @@ jobs:
           - **Downstream-Issue:** #${CONSUMER_ISSUE_NUMBER}
           - **Upstream-Escalated:** 1")
             LIB_ISSUE_NUMBER="${LIB_ISSUE_URL##*/}"
+            add_to_project "$TARGET_REPO" "$LIB_ISSUE_NUMBER"
 
             # 3. Record the exact upstream issue reference on the consumer issue
             gh issue comment "$CONSUMER_ISSUE_NUMBER" --repo "$CURRENT_REPO" \
@@ -179,7 +328,7 @@ jobs:
               echo ""
               echo "### Escalated Upstream Library Issue"
               echo "- **Library:** \`${PKG}\` (\`${TARGET_REPO}\`)"
-              echo "- **Upstream Issue:** ${LIB_ISSUE_URL} (labeled \`5-release\`)"
+              echo "- **Upstream Issue:** ${LIB_ISSUE_URL}"
               echo "- **Downstream Tracking Issue:** ${CONSUMER_ISSUE_URL} (labeled \`blocked:upstream\`)"
             } >> audit-report.md
           done
@@ -191,6 +340,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           CURRENT_REPO: ${{ github.repository }}
+          AGENT: ${{ inputs.agent }}
         run: |
           if [ ! -s editor-requests.json ]; then
             rm -f editor-requests.json
@@ -203,6 +353,7 @@ jobs:
             exit 0
           fi
 
+          AUDIT_LABEL="audit:${AGENT}"
           MAX=$((COUNT > 5 ? 5 : COUNT))
           for ((i = 0; i < MAX; i++)); do
             EDITOR_NAME=$(jq -r "(.[$i].editor // empty) | ascii_downcase" editor-requests.json)
@@ -244,66 +395,70 @@ jobs:
               continue
             fi
 
-            gh label create "5-release" --repo "$TARGET_REPO" --force --description "Run the autonomous Think -> Plan -> Code -> Prove -> Release pipeline" || true
             gh label create "downstream:doomr" --repo "$TARGET_REPO" --force --description "Triggered by DoomR.js companion editor sync" || true
+            gh label create "$AUDIT_LABEL" --repo "$TARGET_REPO" --force --description "Finding reported by ${AGENT} audit" || true
 
             ED_ISSUE_URL=$(gh issue create --repo "$TARGET_REPO" \
               --title "$ED_TITLE" \
-              --label "5-release" \
               --label "downstream:doomr" \
+              --label "$AUDIT_LABEL" \
               --body "${ED_BODY}
 
           ---
           ### Triggered by Companion Game Repository
           - **Source-Repo:** \`${CURRENT_REPO}\`")
+            ED_ISSUE_NUMBER="${ED_ISSUE_URL##*/}"
+
+            ED_OWNER="${TARGET_REPO%%/*}"
+            ED_REPO="${TARGET_REPO#*/}"
+            ED_DATA=$(gh api graphql -f query='
+              query($owner: String!, $repo: String!, $number: Int!, $projectTitle: String!) {
+                repository(owner: $owner, name: $repo) {
+                  issue(number: $number) { id }
+                  owner {
+                    ... on Organization {
+                      projectsV2(first: 20, query: $projectTitle) {
+                        nodes { id title }
+                      }
+                    }
+                    ... on User {
+                      projectsV2(first: 20, query: $projectTitle) {
+                        nodes { id title }
+                      }
+                    }
+                  }
+                }
+              }' -f owner="$ED_OWNER" -f repo="$ED_REPO" -F number="$ED_ISSUE_NUMBER" -f projectTitle="$ED_REPO")
+            ED_ISSUE_ID=$(echo "$ED_DATA" | jq -r '.data.repository.issue.id // empty')
+            ED_PROJECT_ID=$(echo "$ED_DATA" | jq -c --arg title "$ED_REPO" --arg repo "$ED_REPO" '.data.repository.owner.projectsV2.nodes[]? | select((.title | ascii_downcase | sub("\\.js$"; "")) == ($title | ascii_downcase | sub("\\.js$"; "")) or (.title | ascii_downcase) == ($repo | ascii_downcase))' | head -n 1 | jq -r '.id // empty')
+            if [ -n "$ED_ISSUE_ID" ] && [ -n "$ED_PROJECT_ID" ]; then
+              gh api graphql -f query='
+                mutation($projectId: ID!, $contentId: ID!) {
+                  addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) { item { id } }
+                }' -f projectId="$ED_PROJECT_ID" -f contentId="$ED_ISSUE_ID" >/dev/null
+            fi
 
             {
               echo ""
               echo "### Triggered Companion Game Editor Issue"
               echo "- **Editor Repository:** \`${TARGET_REPO}\`"
-              echo "- **Issue:** ${ED_ISSUE_URL} (labeled \`5-release\`)"
+              echo "- **Issue:** ${ED_ISSUE_URL}"
             } >> audit-report.md
           done
 
           rm -f editor-requests.json
 
-      - name: Restore repo primitives, publish summary & verify gate
+      - name: Restore repo primitives and publish summary
         if: always()
         env:
           AGENT: ${{ inputs.agent }}
           SCOPE: ${{ inputs.scope }}
         run: |
           git clean -fd .github/instructions .github/agents .github/prompts .github/skills .agents .claude .cursor .gemini
-          git checkout -- .github/instructions .github/agents .github/prompts .github/skills .github/copilot-instructions.md .agents .claude .cursor .gemini CLAUDE.md GEMINI.md AGENTS.md .cursorrules .windsurfrules 2>/dev/null || true
+          git checkout -- . 2>/dev/null || true
           if [ -f audit-report.md ]; then
             cat audit-report.md >> "$GITHUB_STEP_SUMMARY"
-            mv audit-report.md /tmp/report.md
+            rm -f audit-report.md
           else
-            echo "Automated \`${AGENT}\` audit in \`${SCOPE}\`." > /tmp/report.md
+            echo "Automated \`${AGENT}\` audit in \`${SCOPE}\`." >> "$GITHUB_STEP_SUMMARY"
           fi
-          npm test --if-present
-          npm run build --if-present
-
-      - name: Open Pull Request if code changed
-        env:
-          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
-          AGENT: ${{ inputs.agent }}
-          PR_TITLE: ${{ inputs.pr_title }}
-        run: |
-          BASE="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
-          [ -z "$(git status --porcelain)" ] && [ -z "$(git log origin/${BASE}..HEAD --oneline 2>/dev/null)" ] && exit 0
-          SLUG=$(echo "$AGENT" | tr '[:upper:] ' '[:lower:]-')
-          BRANCH="copilot/${SLUG}-${GITHUB_RUN_ID}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B "$BRANCH"
-          if [ -n "$(git status --porcelain)" ]; then
-            git add -A
-            git commit -m "$PR_TITLE"
-          fi
-          git push -u origin "$BRANCH"
-          gh pr create \
-            --title "$PR_TITLE" \
-            --body-file /tmp/report.md \
-            --head "$BRANCH" \
-            --base "$BASE"

@@ -817,7 +817,7 @@ jobs:
 
             BEFORE=$(git rev-parse HEAD)
             rm -rf "${COPILOT_HOME:-$HOME/.copilot}/session-state" "$COPILOT_OTEL_FILE_EXPORTER_PATH" 2>/dev/null || true
-            copilot --model="claude-opus-5.5" --agent="code" --allow-all-tools \
+            copilot --model="claude-sonnet-5.5" --agent="code" --allow-all-tools \
               --prompt "Remediate the failing Prove controls and findings for Pull Request #${PR_NUMBER} (Issue #${ISSUE_NUMBER}, attempt ${NEXT}/${FIX_LOOP_LIMIT}).
 
             Read ${REPAIR_FILE}, gate-output.log, ${SPEC_DIR}/think.md, ${SPEC_DIR}/plan.md and pr.md. The repair request includes the current failed commands/output and, only when checks passed, the independent review findings. For failed GitHub checks, inspect their linked run logs with gh run view <run-id> --log-failed before fixing. Ignore stale review records. If the plan is invalid, report a blocking explanation and stop; do not broaden scope.

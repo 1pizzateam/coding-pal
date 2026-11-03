@@ -11,5 +11,4 @@ jobs:
     with:
       agent: docs-sync
       scope: ${{ inputs.scope }}
-      pr_title: "docs: sync documentation with ${{ inputs.scope }}"
     secrets: inherit

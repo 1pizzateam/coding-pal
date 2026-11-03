@@ -13,5 +13,4 @@ jobs:
       agent: dependency-leverage
       scope: ${{ inputs.scope }}
       prompt: "Dependency filter: ${{ inputs.dependency }}."
-      pr_title: "refactor: leverage dependencies (${{ inputs.dependency }}) in ${{ inputs.scope }}"
     secrets: inherit

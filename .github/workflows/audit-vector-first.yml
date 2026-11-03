@@ -11,5 +11,4 @@ jobs:
     with:
       agent: vector-first
       scope: ${{ inputs.scope }}
-      pr_title: "refactor: enforce vector-first architecture in ${{ inputs.scope }}"
     secrets: inherit

@@ -371,7 +371,7 @@ jobs:
 
           export COPILOT_OTEL_ENABLED="true"
           export COPILOT_OTEL_FILE_EXPORTER_PATH="${RUNNER_TEMP}/copilot-otel.jsonl"
-          copilot --model="claude-opus-5.5" --agent="plan" --allow-all-tools \
+          copilot --model="claude-sonnet-5.5" --agent="plan" --allow-all-tools \
             --prompt "Produce a validated Plan record at ${PLAN_FILE} derived strictly from ${THINK_FILE} for GitHub Issue #${ISSUE_NUMBER}.
           Issue Title: ${ISSUE_TITLE}
           Issue Body:

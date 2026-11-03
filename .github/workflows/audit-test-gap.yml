@@ -11,5 +11,4 @@ jobs:
     with:
       agent: test-gap
       scope: ${{ inputs.scope }}
-      pr_title: "test: cover missing edge cases for ${{ inputs.scope }}"
     secrets: inherit

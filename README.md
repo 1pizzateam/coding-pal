@@ -6,7 +6,7 @@ The delivery pipeline turns an issue into a merged PR:
 
 **Think -> Plan -> Code -> Prove**
 
-Audits find and fix specific problems. Separate workflows publish npm packages and deploy documentation.
+Audits scan repositories for findings and create one GitHub Issue per finding on the repository's GitHub Project V2 board. Separate workflows publish npm packages and deploy documentation.
 
 ## Setup
 
@@ -20,9 +20,16 @@ Applications do not install this repository through `apm.yml`. Workflows load th
 
 ## Model selection
 
-Every Copilot call uses **`--model="auto"`**: Think, Plan, Code, Prove, automatic fixes, release preparation, and audits. Copilot selects the model within your account and organization policies.
+Each workflow step pins an explicit Copilot CLI `--model` flag:
 
-No model variables or issue selections are required. Per-issue Standard/High effort selection is not implemented: the verified CLI release exposes `--auto-tier`, but its catalog-specific profile IDs have not been verified. Fusion's documented `--fusion-tier` flag is unavailable in CLI 1.0.105 and prerelease 1.0.106-0. `--reasoning-effort` is a separate setting, not a substitute for Fusion tiers.
+| Workflow / Step | Model |
+|---|---|
+| `pipeline-think.yml` (Thinker agent) | `claude-sonnet-5.5` |
+| `pipeline-plan.yml` (Planner agent) | `claude-sonnet-5.5` |
+| `pipeline-code.yml` (Code agent) | `claude-sonnet-5.5` |
+| `pipeline-prove.yml` (Prove repair + Prove reviewer) | `claude-sonnet-5.5` |
+| `pipeline-prove.yml` (Auto-release `@1pizzateam/*` library version) | `gpt-6-luna` |
+| `audit-runner.yml` (All 6 audit workflows) | `gemini-3.8-flash` |
 
 ## Pipeline authentication
 
@@ -271,7 +278,7 @@ DoomR changes can require updates to Cadenza, FaceGun, MappR, PixelGun, PolyGun,
 
 ## Audits and repository contents
 
-[The audit runner](.github/workflows/audit-runner.yml) temporarily loads this repository's instructions and agents, runs Copilot, restores the application's original instructions, checks tests/build, and opens a PR if code changed.
+[The audit runner](.github/workflows/audit-runner.yml) temporarily loads this repository's instructions and specialist audit agents, runs Copilot (`gemini-3.8-flash`) in read-only analysis mode, restores the application's original instructions, and creates **1 GitHub Issue per finding** (labeled `audit:<agent>`, deduplicated against existing open issues) and attaches each created issue to the repository's GitHub Project V2 board without setting a pipeline trigger label—leaving findings in the default Project column for manual triage before adding `1-think` or `5-release`.
 
 | Path | Contains |
 |---|---|

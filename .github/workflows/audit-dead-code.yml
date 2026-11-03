@@ -11,5 +11,4 @@ jobs:
     with:
       agent: dead-code
       scope: ${{ inputs.scope }}
-      pr_title: "chore: remove dead code in ${{ inputs.scope }}"
     secrets: inherit
