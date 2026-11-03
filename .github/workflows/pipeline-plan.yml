@@ -77,15 +77,85 @@ jobs:
 
           if [ ! -s "$THINK_FILE" ]; then
             echo "Fetching latest think.md from issue #${ISSUE_NUMBER} comments..."
-            ISSUE_VIEW=$(gh issue view "$ISSUE_NUMBER" --json labels,comments)
+            ISSUE_VIEW=$(gh issue view "$ISSUE_NUMBER" --json title,body,labels,comments)
             echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")' > "$THINK_FILE"
-            if [ ! -s "$THINK_FILE" ] && [ -z "$RUN_ID" ]; then
-              HAS_STAGE_LABEL=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | any(. == "2-plan" or . == "3-code" or . == "4-prove" or . == "5-release")')
-              if [ "$HAS_STAGE_LABEL" = "true" ]; then
-                echo "No think.md found on issue #${ISSUE_NUMBER}; dispatching Pipeline - Think first."
-                gh workflow run think.yml -f issue_number="$ISSUE_NUMBER"
-                echo "skip=true" >> "$GITHUB_OUTPUT"
-                exit 0
+            if [ ! -s "$THINK_FILE" ]; then
+              HAS_AUDIT_LABEL=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | any(startswith("audit:"))')
+              if [ "$HAS_AUDIT_LABEL" = "true" ]; then
+                echo "Audit finding issue #${ISSUE_NUMBER} detected; synthesizing think.md directly to skip Pipeline - Think."
+                TODAY=$(date -u +%Y-%m-%d 2>/dev/null || echo "2026-01-01")
+                echo "$ISSUE_VIEW" | jq -r --arg issue_number "$ISSUE_NUMBER" --arg today "$TODAY" '
+                  ((.title // "") | gsub("[\\r\\n]+"; " ") | sub("^\\s+"; "") | sub("\\s+$"; "") | if length > 0 then . else "Audit Finding Remediation" end) as $title |
+                  ([.labels[]?.name // empty | select(startswith("audit:"))] | first // "audit:finding") as $audit_label |
+                  ((.body // "")
+                    | gsub("```[\\s\\S]*?```"; " ")
+                    | gsub("~~~[\\s\\S]*?~~~"; " ")
+                    | sub("\\n*---\\n+_Reported by[\\s\\S]*$"; "")
+                    | gsub("(?m)^\\s*#+\\s*"; "")
+                    | gsub("(?m)^\\s*[-*+]\\s*(\\[[ xX]\\]\\s*)?"; "")
+                    | gsub("[`*_~]+"; "")
+                    | gsub("[\\r\\n\\t ]+"; " ")
+                    | sub("^\\s+"; "")
+                    | sub("\\s+$"; "")
+                    | if length > 400 then .[0:400] + "..." elif length > 0 then . else $title end
+                  ) as $summary |
+                  ([(.body // "") | scan("`([A-Za-z0-9_][A-Za-z0-9_./-]*\\.[A-Za-z0-9]+)`") | .[0] | select((startswith("/") or test("(^|/)\\.\\.(/|$)")) | not)] | unique | if length > 0 then (map("`" + . + "`") | join(", ")) else "Repository source and test modules identified in issue #" + $issue_number end) as $affected |
+                  "# Think: " + $title + "\n\n" +
+                  "## Business Need & Outcome\n" +
+                  "- **Backlog Issue:** #" + $issue_number + " — " + $title + " (" + $audit_label + ")\n" +
+                  "- **Problem Statement:** " + $summary + "\n" +
+                  "- **Consumer:** Repository maintainers and downstream consumers relying on verified codebase quality.\n" +
+                  "- **Desired Outcome:** Resolve the reported " + $audit_label + " finding in #" + $issue_number + " with deterministic automated verification and zero regressions.\n\n" +
+                  "## Options Considered\n" +
+                  "### Option 1: Targeted In-Place Remediation\n" +
+                  "- **Approach:** Address the audit finding directly within the affected files (" + $affected + ") while preserving existing public contracts and runtime behavior.\n" +
+                  "- **Source:** Custom build\n" +
+                  "- **Trade-offs:** Keeps scope strictly bounded to the reported finding without broader architectural churn.\n" +
+                  "- **Cost:** Low\n" +
+                  "- **Risk:** Low\n\n" +
+                  "### Option 2: Broad Subsystem Refactor\n" +
+                  "- **Approach:** Re-architect surrounding modules beyond the immediate audit finding scope.\n" +
+                  "- **Source:** Custom build\n" +
+                  "- **Trade-offs:** Expands blast radius and review surface area unnecessarily for a targeted audit remediation.\n" +
+                  "- **Cost:** Medium\n" +
+                  "- **Risk:** Medium\n\n" +
+                  "## Chosen Approach\n" +
+                  "- **Selected:** Option 1\n" +
+                  "- **Reasoning:** Automated audit findings already pinpoint the exact file scope, root cause, and remediation direction, making a targeted in-place fix the lowest-risk path.\n" +
+                  "- **Approved By:** Automated by coding-pal-audit on " + $today + "\n" +
+                  "- **Custom Build Reason:** Remediation applies directly to repository-specific source and test files identified by the audit.\n\n" +
+                  "## Forge Asset Bindings\n" +
+                  "- **None:** Repository-internal audit remediation does not require external Forge asset composition.\n\n" +
+                  "## System Flow & Responsibilities\n" +
+                  "- **Request Tracing:** Execution flows through the affected module(s) (" + $affected + ") and their corresponding unit tests.\n" +
+                  "- **Component Responsibilities:** Target files identified in issue #" + $issue_number + " own the localized remediation and regression test coverage.\n" +
+                  "- **Boundaries:** Changes remain strictly within the files and module boundaries implicated by the audit finding.\n\n" +
+                  "## Constraints & Invariants\n" +
+                  "- **Decision Records:** _None._\n" +
+                  "- **Non-Negotiable Rules:** Preserve existing public APIs, build outputs, and unrelated runtime behavior while resolving the audit finding.\n" +
+                  "- **Side-Effect Constraints:** No unintended state mutations, external network calls, or out-of-scope file modifications.\n\n" +
+                  "## Blast Radius\n" +
+                  "- **Tier:** Low\n" +
+                  "- **Affected:** " + $affected + "\n" +
+                  "- **Rationale:** Scoped remediation of a single automated audit finding within existing module boundaries.\n" +
+                  "- **Rollback:** Revert the pull request commit if any regression is detected.\n\n" +
+                  "## Decision Record\n" +
+                  "- **Required:** no\n" +
+                  "- **Reason:** Low-blast-radius audit remediation within existing architectural boundaries does not require an ADR.\n\n" +
+                  "## Persistent Context Updates\n" +
+                  "_None._\n\n" +
+                  "## Ambiguities & Open Questions\n" +
+                  "_None._"
+                ' > "$THINK_FILE"
+                gh issue comment "$ISSUE_NUMBER" --body-file "$THINK_FILE"
+              elif [ -z "$RUN_ID" ]; then
+                HAS_STAGE_LABEL=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | any(. == "2-plan" or . == "3-code" or . == "4-prove" or . == "5-release")')
+                if [ "$HAS_STAGE_LABEL" = "true" ]; then
+                  echo "No think.md found on issue #${ISSUE_NUMBER}; dispatching Pipeline - Think first."
+                  gh workflow run think.yml -f issue_number="$ISSUE_NUMBER"
+                  echo "skip=true" >> "$GITHUB_OUTPUT"
+                  exit 0
+                fi
               fi
             fi
           fi

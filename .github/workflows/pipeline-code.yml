@@ -83,6 +83,7 @@ jobs:
 
           if [ -z "$RUN_ID" ]; then
             ISSUE_VIEW=$(gh issue view "$ISSUE_NUMBER" --json labels,comments)
+            HAS_AUDIT_LABEL=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | any(startswith("audit:"))')
             HAS_CODE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("3-code") != null')
             HAS_PROVE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("4-prove") != null')
             HAS_RELEASE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("5-release") != null')
@@ -155,13 +156,13 @@ jobs:
           fi
 
           if [ -z "$RUN_ID" ] && { [ "${HAS_CODE_TRIGGER:-false}" = "true" ] || [ "${HAS_PROVE_TRIGGER:-false}" = "true" ] || [ "${HAS_RELEASE_TRIGGER:-false}" = "true" ]; }; then
-            if [ ! -s "$THINK_FILE" ]; then
+            if [ ! -s "$THINK_FILE" ] && [ "${HAS_AUDIT_LABEL:-false}" != "true" ]; then
               echo "No think.md found on issue #${ISSUE_NUMBER}; dispatching Pipeline - Think first."
               gh workflow run think.yml -f issue_number="$ISSUE_NUMBER"
               echo "skip=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            if [ ! -s "$PLAN_FILE" ]; then
+            if [ ! -s "$PLAN_FILE" ] || [ ! -s "$THINK_FILE" ]; then
               echo "No plan.md found on issue #${ISSUE_NUMBER}; dispatching Pipeline - Plan first."
               gh workflow run plan.yml -f issue_number="$ISSUE_NUMBER"
               echo "skip=true" >> "$GITHUB_OUTPUT"

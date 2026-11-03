@@ -1744,4 +1744,37 @@ class WorkflowsTest < Minitest::Test
     assert_equal '1', out_editors_docs.fetch('dispatched_count')
     assert_equal [['workflow', 'run', 'audits.yml', '--repo', '1pizzateam/FaceGun', '-f', 'audit=docs-sync-audit', '-f', 'scope=src/', '-f', 'dependency=all']], dispatches
   end
+
+  def test_audit_finding_issues_skip_think_and_synthesize_valid_think_spec
+    # 1. pipeline-plan.yml on an audit:* issue labeled 2-plan synthesizes think.md directly instead of dispatching think.yml
+    plan_resolve = step('plan', 'resolve')
+    audit_plan_data = scenario(%w[audit:test-gap 2-plan], comments: [])
+    audit_plan_data['issue']['title'] = 'Add unit tests for Raycaster'
+    audit_plan_data['issue']['body'] = "## Problem\nMissing test coverage in `src/engine/Raycaster.js`.\n\n---\n_Reported by `test-gap` audit in `src/`._"
+    out_plan = run_step(plan_resolve, audit_plan_data)
+    assert_equal 'false', out_plan.fetch('skip')
+    assert_empty dispatches
+    synthesized_think = File.read('/tmp/specs/issue-42/think.md')
+    assert_includes synthesized_think, '# Think: Add unit tests for Raycaster'
+    assert_includes synthesized_think, 'audit:test-gap'
+    assert_includes synthesized_think, '`src/engine/Raycaster.js`'
+    assert_includes synthesized_think, 'Automated by coding-pal-audit on '
+    assert @calls.any? { |args| args.first(3) == %w[issue comment 42] && args.include?('/tmp/specs/issue-42/think.md') }
+
+    # 2. pipeline-code.yml on an audit:* issue labeled 5-release without think.md/plan.md dispatches plan.yml directly (skipping think.yml)
+    code_resolve = step('code', 'resolve')
+    audit_code_data = scenario(%w[audit:test-gap 5-release], comments: [])
+    out_code = run_step(code_resolve, audit_code_data)
+    assert_equal 'true', out_code.fetch('skip')
+    assert_equal [['workflow', 'run', 'plan.yml', '-f', 'issue_number=42']], dispatches
+
+    # 3. pipeline-think.yml on an audit:* issue labeled 1-think synthesizes think.md, swaps 1-think for 2-plan, and fast-forwards to plan
+    think_resume = step('think', 'resume')
+    audit_think_data = scenario(%w[audit:dead-code 1-think], comments: [])
+    audit_think_data['issue']['title'] = 'Remove dead helper'
+    out_think = run_step(think_resume, audit_think_data)
+    assert_equal 'plan', out_think.fetch('resumed_stage')
+    assert File.exist?(File.join(@directory, 'specs/issue-42/think.md'))
+    assert @calls.any? { |args| args.first(3) == %w[issue edit 42] && args.include?('--add-label') && args.include?('2-plan') }
+  end
 end
