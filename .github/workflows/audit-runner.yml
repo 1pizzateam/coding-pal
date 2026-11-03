@@ -218,16 +218,42 @@ jobs:
             DATA=$(gh api graphql -f query='
               query($owner: String!, $repo: String!, $number: Int!, $projectTitle: String!) {
                 repository(owner: $owner, name: $repo) {
-                  issue(number: $number) { id }
+                  issue(number: $number) {
+                    id
+                    projectItems(first: 20) {
+                      nodes {
+                        id
+                        project { id }
+                      }
+                    }
+                  }
                   owner {
                     ... on Organization {
                       projectsV2(first: 20, query: $projectTitle) {
-                        nodes { id title }
+                        nodes {
+                          id
+                          title
+                          field(name: "Status") {
+                            ... on ProjectV2SingleSelectField {
+                              id
+                              options { id name }
+                            }
+                          }
+                        }
                       }
                     }
                     ... on User {
                       projectsV2(first: 20, query: $projectTitle) {
-                        nodes { id title }
+                        nodes {
+                          id
+                          title
+                          field(name: "Status") {
+                            ... on ProjectV2SingleSelectField {
+                              id
+                              options { id name }
+                            }
+                          }
+                        }
                       }
                     }
                   }
@@ -237,12 +263,26 @@ jobs:
             ISSUE_ID=$(echo "$DATA" | jq -r '.data.repository.issue.id // empty')
             PROJECT=$(echo "$DATA" | jq -c --arg title "$PROJECT_TITLE" --arg repo "$REPO" '.data.repository.owner.projectsV2.nodes[]? | select((.title | ascii_downcase | sub("\\.js$"; "")) == ($title | ascii_downcase | sub("\\.js$"; "")) or (.title | ascii_downcase) == ($repo | ascii_downcase))' | head -n 1)
             PROJECT_ID=$(echo "$PROJECT" | jq -r '.id // empty')
+            FIELD_ID=$(echo "$PROJECT" | jq -r '.field.id // empty')
+            OPTION_ID=$(echo "$PROJECT" | jq -r '.field.options[]? | select((.name | ascii_downcase) == "triage") | .id' | head -n 1)
 
             if [ -n "$ISSUE_ID" ] && [ -n "$PROJECT_ID" ]; then
-              gh api graphql -f query='
+              ITEM_ID=$(gh api graphql -f query='
                 mutation($projectId: ID!, $contentId: ID!) {
                   addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) { item { id } }
-                }' -f projectId="$PROJECT_ID" -f contentId="$ISSUE_ID" >/dev/null 2>&1 || true
+                }' -f projectId="$PROJECT_ID" -f contentId="$ISSUE_ID" --jq '.data.addProjectV2ItemById.item.id' 2>/dev/null || true)
+              if [ -z "$ITEM_ID" ]; then
+                ITEM_ID=$(echo "$DATA" | jq -r --arg pid "$PROJECT_ID" '.data.repository.issue.projectItems.nodes[]? | select(.project.id == $pid) | .id' | head -n 1)
+              fi
+              if [ -n "$ITEM_ID" ] && [ -n "$FIELD_ID" ] && [ -n "$OPTION_ID" ]; then
+                gh api graphql -f query='
+                  mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                    updateProjectV2ItemFieldValue(input: {
+                      projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
+                      value: { singleSelectOptionId: $optionId }
+                    }) { projectV2Item { id } }
+                  }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$FIELD_ID" -f optionId="$OPTION_ID" >/dev/null 2>&1 || true
+              fi
             fi
 
             {
@@ -292,29 +332,70 @@ jobs:
             data=$(gh api graphql -f query='
               query($owner: String!, $repo: String!, $number: Int!, $projectTitle: String!) {
                 repository(owner: $owner, name: $repo) {
-                  issue(number: $number) { id }
+                  issue(number: $number) {
+                    id
+                    projectItems(first: 20) {
+                      nodes {
+                        id
+                        project { id }
+                      }
+                    }
+                  }
                   owner {
                     ... on Organization {
                       projectsV2(first: 20, query: $projectTitle) {
-                        nodes { id title }
+                        nodes {
+                          id
+                          title
+                          field(name: "Status") {
+                            ... on ProjectV2SingleSelectField {
+                              id
+                              options { id name }
+                            }
+                          }
+                        }
                       }
                     }
                     ... on User {
                       projectsV2(first: 20, query: $projectTitle) {
-                        nodes { id title }
+                        nodes {
+                          id
+                          title
+                          field(name: "Status") {
+                            ... on ProjectV2SingleSelectField {
+                              id
+                              options { id name }
+                            }
+                          }
+                        }
                       }
                     }
                   }
                 }
               }' -f owner="$owner" -f repo="$repo" -F number="$issue_num" -f projectTitle="$ptitle" 2>/dev/null || echo '{}')
-            local issue_id project_id
+            local issue_id project project_id field_id option_id item_id
             issue_id=$(echo "$data" | jq -r '.data.repository.issue.id // empty')
-            project_id=$(echo "$data" | jq -c --arg title "$ptitle" --arg repo "$repo" '.data.repository.owner.projectsV2.nodes[]? | select((.title | ascii_downcase | sub("\\.js$"; "")) == ($title | ascii_downcase | sub("\\.js$"; "")) or (.title | ascii_downcase) == ($repo | ascii_downcase))' | head -n 1 | jq -r '.id // empty')
+            project=$(echo "$data" | jq -c --arg title "$ptitle" --arg repo "$repo" '.data.repository.owner.projectsV2.nodes[]? | select((.title | ascii_downcase | sub("\\.js$"; "")) == ($title | ascii_downcase | sub("\\.js$"; "")) or (.title | ascii_downcase) == ($repo | ascii_downcase))' | head -n 1)
+            project_id=$(echo "$project" | jq -r '.id // empty')
+            field_id=$(echo "$project" | jq -r '.field.id // empty')
+            option_id=$(echo "$project" | jq -r '.field.options[]? | select((.name | ascii_downcase) == "triage") | .id' | head -n 1)
             if [ -n "$issue_id" ] && [ -n "$project_id" ]; then
-              gh api graphql -f query='
+              item_id=$(gh api graphql -f query='
                 mutation($projectId: ID!, $contentId: ID!) {
                   addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) { item { id } }
-                }' -f projectId="$project_id" -f contentId="$issue_id" >/dev/null 2>&1 || true
+                }' -f projectId="$project_id" -f contentId="$issue_id" --jq '.data.addProjectV2ItemById.item.id' 2>/dev/null || true)
+              if [ -z "$item_id" ]; then
+                item_id=$(echo "$data" | jq -r --arg pid "$project_id" '.data.repository.issue.projectItems.nodes[]? | select(.project.id == $pid) | .id' | head -n 1)
+              fi
+              if [ -n "$item_id" ] && [ -n "$field_id" ] && [ -n "$option_id" ]; then
+                gh api graphql -f query='
+                  mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                    updateProjectV2ItemFieldValue(input: {
+                      projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
+                      value: { singleSelectOptionId: $optionId }
+                    }) { projectV2Item { id } }
+                  }' -f projectId="$project_id" -f itemId="$item_id" -f fieldId="$field_id" -f optionId="$option_id" >/dev/null 2>&1 || true
+              fi
             fi
           }
 
@@ -461,28 +542,69 @@ jobs:
             ED_DATA=$(gh api graphql -f query='
               query($owner: String!, $repo: String!, $number: Int!, $projectTitle: String!) {
                 repository(owner: $owner, name: $repo) {
-                  issue(number: $number) { id }
+                  issue(number: $number) {
+                    id
+                    projectItems(first: 20) {
+                      nodes {
+                        id
+                        project { id }
+                      }
+                    }
+                  }
                   owner {
                     ... on Organization {
                       projectsV2(first: 20, query: $projectTitle) {
-                        nodes { id title }
+                        nodes {
+                          id
+                          title
+                          field(name: "Status") {
+                            ... on ProjectV2SingleSelectField {
+                              id
+                              options { id name }
+                            }
+                          }
+                        }
                       }
                     }
                     ... on User {
                       projectsV2(first: 20, query: $projectTitle) {
-                        nodes { id title }
+                        nodes {
+                          id
+                          title
+                          field(name: "Status") {
+                            ... on ProjectV2SingleSelectField {
+                              id
+                              options { id name }
+                            }
+                          }
+                        }
                       }
                     }
                   }
                 }
               }' -f owner="$ED_OWNER" -f repo="$ED_REPO" -F number="$ED_ISSUE_NUMBER" -f projectTitle="$ED_REPO" 2>/dev/null || echo '{}')
             ED_ISSUE_ID=$(echo "$ED_DATA" | jq -r '.data.repository.issue.id // empty')
-            ED_PROJECT_ID=$(echo "$ED_DATA" | jq -c --arg title "$ED_REPO" --arg repo "$ED_REPO" '.data.repository.owner.projectsV2.nodes[]? | select((.title | ascii_downcase | sub("\\.js$"; "")) == ($title | ascii_downcase | sub("\\.js$"; "")) or (.title | ascii_downcase) == ($repo | ascii_downcase))' | head -n 1 | jq -r '.id // empty')
+            ED_PROJECT=$(echo "$ED_DATA" | jq -c --arg title "$ED_REPO" --arg repo "$ED_REPO" '.data.repository.owner.projectsV2.nodes[]? | select((.title | ascii_downcase | sub("\\.js$"; "")) == ($title | ascii_downcase | sub("\\.js$"; "")) or (.title | ascii_downcase) == ($repo | ascii_downcase))' | head -n 1)
+            ED_PROJECT_ID=$(echo "$ED_PROJECT" | jq -r '.id // empty')
+            ED_FIELD_ID=$(echo "$ED_PROJECT" | jq -r '.field.id // empty')
+            ED_OPTION_ID=$(echo "$ED_PROJECT" | jq -r '.field.options[]? | select((.name | ascii_downcase) == "triage") | .id' | head -n 1)
             if [ -n "$ED_ISSUE_ID" ] && [ -n "$ED_PROJECT_ID" ]; then
-              gh api graphql -f query='
+              ED_ITEM_ID=$(gh api graphql -f query='
                 mutation($projectId: ID!, $contentId: ID!) {
                   addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) { item { id } }
-                }' -f projectId="$ED_PROJECT_ID" -f contentId="$ED_ISSUE_ID" >/dev/null 2>&1 || true
+                }' -f projectId="$ED_PROJECT_ID" -f contentId="$ED_ISSUE_ID" --jq '.data.addProjectV2ItemById.item.id' 2>/dev/null || true)
+              if [ -z "$ED_ITEM_ID" ]; then
+                ED_ITEM_ID=$(echo "$ED_DATA" | jq -r --arg pid "$ED_PROJECT_ID" '.data.repository.issue.projectItems.nodes[]? | select(.project.id == $pid) | .id' | head -n 1)
+              fi
+              if [ -n "$ED_ITEM_ID" ] && [ -n "$ED_FIELD_ID" ] && [ -n "$ED_OPTION_ID" ]; then
+                gh api graphql -f query='
+                  mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                    updateProjectV2ItemFieldValue(input: {
+                      projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
+                      value: { singleSelectOptionId: $optionId }
+                    }) { projectV2Item { id } }
+                  }' -f projectId="$ED_PROJECT_ID" -f itemId="$ED_ITEM_ID" -f fieldId="$ED_FIELD_ID" -f optionId="$ED_OPTION_ID" >/dev/null 2>&1 || true
+              fi
             fi
 
             {

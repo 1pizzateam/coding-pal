@@ -488,10 +488,10 @@ class WorkflowsTest < Minitest::Test
 
   def project
     { 'data' => { 'repository' => {
-      'issue' => { 'id' => 'ISSUE' },
+      'issue' => { 'id' => 'ISSUE', 'projectItems' => { 'nodes' => [{ 'id' => 'ITEM', 'project' => { 'id' => 'PROJECT' } }] } },
       'owner' => { 'projectsV2' => { 'nodes' => [{
         'id' => 'PROJECT', 'title' => 'Test board',
-        'field' => { 'id' => 'STATUS', 'options' => %w[Think Plan Code Prove Release Done].map { |name| { 'name' => name, 'id' => name.downcase } } }
+        'field' => { 'id' => 'STATUS', 'options' => %w[Triage Think Plan Code Prove Release Done].map { |name| { 'name' => name, 'id' => name.downcase } } }
       }] } }
     } } }
   end
@@ -1679,8 +1679,9 @@ class WorkflowsTest < Minitest::Test
     assert_equal 1, add_item_calls.length
     assert_includes add_item_calls.first, 'projectId=PROJECT'
     assert_includes add_item_calls.first, 'contentId=ISSUE'
-    refute @calls.any? { |args| args.any? { |arg| arg.include?('updateProjectV2ItemFieldValue') } },
-           'Audit-created issues must stay in default Project Status until triaged'
+    status_calls = @calls.select { |args| args.any? { |arg| arg.include?('updateProjectV2ItemFieldValue') } }
+    assert_equal 1, status_calls.length, 'Audit-created issues must be placed in Triage status on the Project board'
+    %w[projectId=PROJECT itemId=ITEM fieldId=STATUS optionId=triage].each { |arg| assert_includes status_calls.first, arg }
 
     report = File.read(File.join(@directory, 'audit-report.md'))
     assert_includes report, 'chore(dead-code): remove unused parseLegacyConfig helper'
@@ -1694,6 +1695,9 @@ class WorkflowsTest < Minitest::Test
     data_auto_added = scenario([], issues: [], project: project).merge('content_already_exists' => true)
     output_auto_added = run_step(entry, data_auto_added)
     assert_equal '2', output_auto_added.fetch('created_count')
+    auto_status_calls = @calls.select { |args| args.any? { |arg| arg.include?('updateProjectV2ItemFieldValue') } }
+    assert_equal 2, auto_status_calls.length
+    %w[projectId=PROJECT itemId=ITEM fieldId=STATUS optionId=triage].each { |arg| assert_includes auto_status_calls.first, arg }
   end
 
   def test_audit_preflight_skips_scheduled_runs_when_idle_or_backlog_full_and_fleet_dispatches
