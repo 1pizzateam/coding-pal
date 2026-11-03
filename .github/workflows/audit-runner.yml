@@ -154,7 +154,7 @@ jobs:
           EXTRA_PROMPT: ${{ inputs.prompt }}
         run: |
           copilot --model="gemini-3.8-flash" --agent="$AGENT" --allow-all-tools \
-            --prompt "Scope: ${SCOPE}. ${EXTRA_PROMPT} Do not modify repository source, test, or documentation files. Write structured findings to audit-findings.json as a JSON array of objects, where each element has exact keys: { \"title\": \"<concise issue title>\", \"body\": \"<Markdown specification with ## Problem, ## Affected Files, ## Suggested Fix, and - **AC-1:** ... acceptance criteria>\" } (or [] if no findings exist), and write a brief Markdown summary of the audit to audit-report.md. If an upstream @1pizzateam/* library (`@1pizzateam/roostr` -> `1pizzateam/RoostR.js`, `@1pizzateam/bumpr` -> `1pizzateam/BumpR.js`, `@1pizzateam/loopr` -> `1pizzateam/LoopR.js`, `@1pizzateam/spock` -> `1pizzateam/Spock.js`, `@1pizzateam/groovr` -> `1pizzateam/GroovR.js`, `@1pizzateam/facer` -> `1pizzateam/FaceR.js`) should be updated instead of (or prior to) changing this repository, write the structured request array to upstream-requests.json. If a finding in DoomR.js requires a companion update in one of the 1PizzaTeam game editors (`cadenza` -> `1pizzateam/Cadenza`, `facegun` -> `1pizzateam/FaceGun`, `mappr` -> `1pizzateam/MappR`, `pixelgun` -> `1pizzateam/PixelGun`, `polygun` -> `1pizzateam/PolyGun`, `shadergun` -> `1pizzateam/ShaderGun`), write a JSON array to editor-requests.json with objects `{ \"editor\": \"<cadenza|facegun|mappr|pixelgun|polygun|shadergun>\", \"repo\": \"1pizzateam/<Editor>\", \"title\": \"<issue title>\", \"body\": \"<markdown body describing the editor update>\" }`."
+            --prompt "Scope: ${SCOPE}. ${EXTRA_PROMPT} Do not modify repository source, test, or documentation files. Write structured findings to audit-findings.json as a JSON array of objects, where each element has exact keys: { \"title\": \"<concise issue title>\", \"body\": \"<Markdown specification with ## Problem, ## Affected Files, ## Suggested Fix, and - **AC-1:** ... acceptance criteria>\" } (or [] if no findings exist), and write a brief Markdown summary of the audit to audit-report.md. If an upstream @1pizzateam/* library (`@1pizzateam/roostr` -> `1pizzateam/RoostR.js`, `@1pizzateam/bumpr` -> `1pizzateam/BumpR.js`, `@1pizzateam/loopr` -> `1pizzateam/LoopR.js`, `@1pizzateam/spock` -> `1pizzateam/Spock.js`, `@1pizzateam/groovr` -> `1pizzateam/GroovR.js`, `@1pizzateam/facer` -> `1pizzateam/FaceR.js`) should be updated instead of (or prior to) changing this repository, write the structured request array to upstream-requests.json with objects `{ \"package\": \"@1pizzateam/<pkg>\", \"repo\": \"1pizzateam/<Repo>\", \"library_issue_title\": \"<upstream issue title>\", \"library_issue_body\": \"<upstream markdown spec>\", \"consumer_issue_title\": \"<blocked consumer issue title>\", \"consumer_issue_body\": \"<consumer markdown spec>\" }`. If a finding in DoomR.js requires a companion update in one of the 1PizzaTeam game editors (`cadenza` -> `1pizzateam/Cadenza`, `facegun` -> `1pizzateam/FaceGun`, `mappr` -> `1pizzateam/MappR`, `pixelgun` -> `1pizzateam/PixelGun`, `polygun` -> `1pizzateam/PolyGun`, `shadergun` -> `1pizzateam/ShaderGun`), write a JSON array to editor-requests.json with objects `{ \"editor\": \"<cadenza|facegun|mappr|pixelgun|polygun|shadergun>\", \"repo\": \"1pizzateam/<Editor>\", \"title\": \"<issue title>\", \"body\": \"<markdown body describing the editor update>\" }`."
 
       - name: Create issues for audit findings and add to Project
         id: create_findings
@@ -399,6 +399,8 @@ jobs:
             fi
           }
 
+          OPEN_CONSUMER_ISSUES=$(gh issue list --repo "$CURRENT_REPO" --state open --limit 200 --json number,title 2>/dev/null || echo '[]')
+
           MAX=$((COUNT > 3 ? 3 : COUNT))
           for ((i = 0; i < MAX; i++)); do
             PKG=$(jq -r ".[$i].package // empty" upstream-requests.json)
@@ -415,6 +417,13 @@ jobs:
               continue
             fi
 
+            EXISTING_CONSUMER=$(echo "$OPEN_CONSUMER_ISSUES" | jq -r --arg t "$CONSUMER_TITLE" '.[]? | select((.title // "" | ascii_downcase) == ($t | ascii_downcase)) | .number' | head -n 1)
+            EXISTING_LIB=$(gh issue list --repo "$TARGET_REPO" --state open --limit 200 --json number,title 2>/dev/null | jq -r --arg t "$LIB_TITLE" '.[]? | select((.title // "" | ascii_downcase) == ($t | ascii_downcase)) | .number' | head -n 1)
+            if [ -n "$EXISTING_CONSUMER" ] || [ -n "$EXISTING_LIB" ]; then
+              echo "Skipping duplicate upstream escalation (already open): ${LIB_TITLE}"
+              continue
+            fi
+
             # 1. Create the blocked tracking issue in the consumer repo (e.g. DoomR.js) and add to Project
             CONSUMER_ISSUE_URL=$(gh issue create --repo "$CURRENT_REPO" \
               --title "$CONSUMER_TITLE" \
@@ -428,6 +437,7 @@ jobs:
           - **Waiting-Package:** \`${PKG}\`
           - **Waiting-Repo:** \`${TARGET_REPO}\`")
             CONSUMER_ISSUE_NUMBER="${CONSUMER_ISSUE_URL##*/}"
+            OPEN_CONSUMER_ISSUES=$(echo "$OPEN_CONSUMER_ISSUES" | jq -c --argjson num "${CONSUMER_ISSUE_NUMBER:-0}" --arg title "$CONSUMER_TITLE" '. + [{"number": $num, "title": $title}]')
             add_to_project "$CURRENT_REPO" "$CONSUMER_ISSUE_NUMBER" "$PROJECT_TITLE"
 
             # 2. Create the upstream issue for triage on the upstream library Project board
@@ -520,6 +530,12 @@ jobs:
             esac
 
             if [ -z "$ED_TITLE" ] || [ "$TARGET_REPO" = "$CURRENT_REPO" ]; then
+              continue
+            fi
+
+            EXISTING_ED=$(gh issue list --repo "$TARGET_REPO" --state open --limit 200 --json number,title 2>/dev/null | jq -r --arg t "$ED_TITLE" '.[]? | select((.title // "" | ascii_downcase) == ($t | ascii_downcase)) | .number' | head -n 1)
+            if [ -n "$EXISTING_ED" ]; then
+              echo "Skipping duplicate companion editor request (already open in ${TARGET_REPO} as #${EXISTING_ED}): ${ED_TITLE}"
               continue
             fi
 
