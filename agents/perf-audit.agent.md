@@ -7,4 +7,8 @@ description: "Identify hot-loop and library runtime method violations of the hot
 2. Do not modify source, test, or documentation files.
 3. Write `audit-findings.json` at the repository root as a JSON array where each element represents one distinct performance or Zero-GC finding with fields:
    - `"title"`: concise `perf(<scope>): <summary>` issue title
-   - `"body"`: Markdown specification with `## Problem`, `## Affected Files`, `## Suggested Fix`, and testable `- **AC-1:** ...` acceptance criteria.
+   - `"problem"`: clear explanation of the hot-loop or Zero-GC violation
+   - `"affectedFiles"`: array of affected file paths (e.g. `["src/foo.js"]`)
+   - `"suggestedFix"`: concrete remediation steps
+   - `"acceptanceCriteria"`: array of testable `AC-<n>` criteria strings (e.g. `["- **AC-1:** ..."]`)
+   - `"body"`: multi-line Markdown specification (using `\n\n` between sections and `\n` after every `##` heading) with `## Problem`, `## Affected Files`, `## Suggested Fix`, and `## Acceptance Criteria` (`- **AC-1:** ...`).

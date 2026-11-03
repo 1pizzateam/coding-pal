@@ -7,4 +7,8 @@ description: "Identify mismatches between documentation pages/README and public 
 2. Do not modify source, test, or documentation files.
 3. Write `audit-findings.json` at the repository root as a JSON array where each element represents one distinct documentation mismatch with fields:
    - `"title"`: concise `docs(<scope>): <summary>` issue title
-   - `"body"`: Markdown specification with `## Problem`, `## Affected Files`, `## Suggested Fix`, and testable `- **AC-1:** ...` acceptance criteria.
+   - `"problem"`: clear explanation of the documentation mismatch
+   - `"affectedFiles"`: array of affected documentation and source file paths
+   - `"suggestedFix"`: concrete documentation updates needed
+   - `"acceptanceCriteria"`: array of testable `AC-<n>` criteria strings (e.g. `["- **AC-1:** ..."]`)
+   - `"body"`: multi-line Markdown specification (using `\n\n` between sections and `\n` after every `##` heading) with `## Problem`, `## Affected Files`, `## Suggested Fix`, and `## Acceptance Criteria` (`- **AC-1:** ...`).

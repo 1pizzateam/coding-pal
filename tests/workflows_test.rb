@@ -1688,13 +1688,26 @@ class WorkflowsTest < Minitest::Test
     refute File.exist?(File.join(@directory, 'audit-findings.json'))
 
     # Verify auto-added project items ("gh: Content already exists in this project") do not abort issue creation
+    # and collapsed 1-liner bodies / structured fields are normalized into multi-line Markdown sections
     File.write(File.join(@directory, 'audit-findings.json'), JSON.generate([
-      { 'title' => 'test(gap): add unit test for pause toggle', 'body' => '## Problem\nMissing test.' },
-      { 'title' => 'test(gap): add unit test for door prompt', 'body' => '## Problem\nMissing test.' }
+      {
+        'title' => 'test(gap): add unit test for pause toggle',
+        'body' => '## Problem: Missing pause test. ## Affected Files: - `src/pause.js` ## Suggested Fix: Add pause unit test. - **AC-1:** Pause toggle is covered.'
+      },
+      {
+        'title' => 'test(gap): add unit test for door prompt',
+        'problem' => 'Missing door prompt test.',
+        'affectedFiles' => ['src/door.js'],
+        'suggestedFix' => 'Add door prompt unit test.',
+        'acceptanceCriteria' => ['**AC-1:** Door prompt is covered.']
+      }
     ]))
     data_auto_added = scenario([], issues: [], project: project).merge('content_already_exists' => true)
     output_auto_added = run_step(entry, data_auto_added)
     assert_equal '2', output_auto_added.fetch('created_count')
+    created_bodies = @calls.select { |args| args.first(2) == %w[issue create] }.map { |args| args[args.index('--body') + 1] }
+    assert_includes created_bodies[0], "## Problem\n\nMissing pause test.\n\n## Affected Files\n\n- `src/pause.js`\n\n## Suggested Fix\n\nAdd pause unit test.\n\n## Acceptance Criteria\n\n- **AC-1:** Pause toggle is covered."
+    assert_includes created_bodies[1], "## Problem\n\nMissing door prompt test.\n\n## Affected Files\n\n- `src/door.js`\n\n## Suggested Fix\n\nAdd door prompt unit test.\n\n## Acceptance Criteria\n\n- **AC-1:** Door prompt is covered."
     auto_status_calls = @calls.select { |args| args.any? { |arg| arg.include?('updateProjectV2ItemFieldValue') } }
     assert_equal 2, auto_status_calls.length
     %w[projectId=PROJECT itemId=ITEM fieldId=STATUS optionId=triage].each { |arg| assert_includes auto_status_calls.first, arg }
