@@ -75,7 +75,7 @@ result = case ARGV.first(2)
            when /updateProjectV2ItemFieldValue/
              { 'data' => { 'updateProjectV2ItemFieldValue' => { 'projectV2Item' => { 'id' => 'ITEM' } } } }
            when /addProjectV2ItemById/
-             { 'data' => { 'addProjectV2ItemById' => { 'item' => { 'id' => 'ITEM' } } } }
+             (warn('gh: Content already exists in this project') || exit(1)) if scenario['content_already_exists']; { 'data' => { 'addProjectV2ItemById' => { 'item' => { 'id' => 'ITEM' } } } }
            when /projectsV2/
              scenario.fetch('project')
            when /issues\(states: \[OPEN\]/

@@ -1685,6 +1685,15 @@ class WorkflowsTest < Minitest::Test
     report = File.read(File.join(@directory, 'audit-report.md'))
     assert_includes report, 'chore(dead-code): remove unused parseLegacyConfig helper'
     refute File.exist?(File.join(@directory, 'audit-findings.json'))
+
+    # Verify auto-added project items ("gh: Content already exists in this project") do not abort issue creation
+    File.write(File.join(@directory, 'audit-findings.json'), JSON.generate([
+      { 'title' => 'test(gap): add unit test for pause toggle', 'body' => '## Problem\nMissing test.' },
+      { 'title' => 'test(gap): add unit test for door prompt', 'body' => '## Problem\nMissing test.' }
+    ]))
+    data_auto_added = scenario([], issues: [], project: project).merge('content_already_exists' => true)
+    output_auto_added = run_step(entry, data_auto_added)
+    assert_equal '2', output_auto_added.fetch('created_count')
   end
 
   def test_audit_preflight_skips_scheduled_runs_when_idle_or_backlog_full_and_fleet_dispatches

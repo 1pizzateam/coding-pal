@@ -232,7 +232,7 @@ jobs:
                     }
                   }
                 }
-              }' -f owner="$OWNER" -f repo="$REPO" -F number="$ISSUE_NUMBER" -f projectTitle="$PROJECT_TITLE")
+              }' -f owner="$OWNER" -f repo="$REPO" -F number="$ISSUE_NUMBER" -f projectTitle="$PROJECT_TITLE" 2>/dev/null || echo '{}')
 
             ISSUE_ID=$(echo "$DATA" | jq -r '.data.repository.issue.id // empty')
             PROJECT=$(echo "$DATA" | jq -c --arg title "$PROJECT_TITLE" --arg repo "$REPO" '.data.repository.owner.projectsV2.nodes[]? | select((.title | ascii_downcase | sub("\\.js$"; "")) == ($title | ascii_downcase | sub("\\.js$"; "")) or (.title | ascii_downcase) == ($repo | ascii_downcase))' | head -n 1)
@@ -242,7 +242,7 @@ jobs:
               gh api graphql -f query='
                 mutation($projectId: ID!, $contentId: ID!) {
                   addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) { item { id } }
-                }' -f projectId="$PROJECT_ID" -f contentId="$ISSUE_ID" >/dev/null
+                }' -f projectId="$PROJECT_ID" -f contentId="$ISSUE_ID" >/dev/null 2>&1 || true
             fi
 
             {
@@ -306,7 +306,7 @@ jobs:
                     }
                   }
                 }
-              }' -f owner="$owner" -f repo="$repo" -F number="$issue_num" -f projectTitle="$ptitle")
+              }' -f owner="$owner" -f repo="$repo" -F number="$issue_num" -f projectTitle="$ptitle" 2>/dev/null || echo '{}')
             local issue_id project_id
             issue_id=$(echo "$data" | jq -r '.data.repository.issue.id // empty')
             project_id=$(echo "$data" | jq -c --arg title "$ptitle" --arg repo "$repo" '.data.repository.owner.projectsV2.nodes[]? | select((.title | ascii_downcase | sub("\\.js$"; "")) == ($title | ascii_downcase | sub("\\.js$"; "")) or (.title | ascii_downcase) == ($repo | ascii_downcase))' | head -n 1 | jq -r '.id // empty')
@@ -314,7 +314,7 @@ jobs:
               gh api graphql -f query='
                 mutation($projectId: ID!, $contentId: ID!) {
                   addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) { item { id } }
-                }' -f projectId="$project_id" -f contentId="$issue_id" >/dev/null
+                }' -f projectId="$project_id" -f contentId="$issue_id" >/dev/null 2>&1 || true
             fi
           }
 
@@ -475,14 +475,14 @@ jobs:
                     }
                   }
                 }
-              }' -f owner="$ED_OWNER" -f repo="$ED_REPO" -F number="$ED_ISSUE_NUMBER" -f projectTitle="$ED_REPO")
+              }' -f owner="$ED_OWNER" -f repo="$ED_REPO" -F number="$ED_ISSUE_NUMBER" -f projectTitle="$ED_REPO" 2>/dev/null || echo '{}')
             ED_ISSUE_ID=$(echo "$ED_DATA" | jq -r '.data.repository.issue.id // empty')
             ED_PROJECT_ID=$(echo "$ED_DATA" | jq -c --arg title "$ED_REPO" --arg repo "$ED_REPO" '.data.repository.owner.projectsV2.nodes[]? | select((.title | ascii_downcase | sub("\\.js$"; "")) == ($title | ascii_downcase | sub("\\.js$"; "")) or (.title | ascii_downcase) == ($repo | ascii_downcase))' | head -n 1 | jq -r '.id // empty')
             if [ -n "$ED_ISSUE_ID" ] && [ -n "$ED_PROJECT_ID" ]; then
               gh api graphql -f query='
                 mutation($projectId: ID!, $contentId: ID!) {
                   addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) { item { id } }
-                }' -f projectId="$ED_PROJECT_ID" -f contentId="$ED_ISSUE_ID" >/dev/null
+                }' -f projectId="$ED_PROJECT_ID" -f contentId="$ED_ISSUE_ID" >/dev/null 2>&1 || true
             fi
 
             {
