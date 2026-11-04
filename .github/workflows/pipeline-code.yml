@@ -485,11 +485,12 @@ jobs:
           mkdir -p .github/instructions .github/agents .agents/skills
           cp /tmp/1pizza-coding-pal/instructions/*.md .github/instructions/
           cp -R /tmp/1pizza-coding-pal/skills/* .agents/skills/
+          cp /tmp/alten-coding-pal/instructions/code.instructions.md .github/instructions/
           [ -d tests ] && [ -f /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md ] && cp /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md .github/instructions/
           [ -d website ] && [ -f /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md ] && cp /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md .github/instructions/
-          [ -d website ] && [ -d /tmp/alten-coding-pal/skills/vitepress-docs-examples ] && cp -R /tmp/alten-coding-pal/skills/vitepress-docs-examples .agents/skills/vitepress-docs-examples
+          [ -d website ] && [ -d /tmp/alten-coding-pal/skills/vitepress-docs ] && cp -R /tmp/alten-coding-pal/skills/vitepress-docs .agents/skills/vitepress-docs
           cp /tmp/alten-coding-pal/agents/code.agent.md .github/agents/
-          for skill in think plan forge pr-record scope-guard secret-guard dependency-guard task-gate control-guard test-probe preview-smoke criteria-verify; do
+          for skill in think plan forge code prove; do
             cp -R "/tmp/alten-coding-pal/skills/${skill}" ".agents/skills/${skill}"
           done
           cp /tmp/1pizza-coding-pal/forge-catalog.json .agents/skills/forge/catalog.json
@@ -653,11 +654,11 @@ jobs:
           ${IMAGE_CONTEXT}
           ${FEEDBACK_CONTEXT}
 
-          Follow .agents/skills/pr-record/SKILL.md.
+          Follow .agents/skills/code/SKILL.md.
           1. Always deliver a working implementation and commit within ${PLAN_FILE}'s In Scope files: if your codebase investigation or visual reproduction refines the diagnosis in ${THINK_FILE} or ${PLAN_FILE} (for example, the root cause of the reported bug or visual artifact resides in a different shader, function, or branch within the In Scope files than the one hypothesized in Think/Plan), do NOT stop with zero commits. Instead, adapt and implement the actual root-cause fix inside the allowed In Scope files while satisfying all Acceptance Criteria (AC-1..AC-N) and Test Plan requirements in ${PLAN_FILE}.
           2. Implement all steps in ${PLAN_FILE} across the in-scope files (writing only files listed in ${PLAN_FILE}'s In Scope; if an in-scope test file has an existing assertion superseded by a behavior change, update that assertion; ensure every acceptance criterion test includes its AC-<n> token in the test name so it passes criteria-verify in Prove).
           3. Once all steps are implemented, run the full verification and build checks once ('npm test' and 'npm run build'; if this is a published @1pizzateam/* library, also follow .agents/skills/release-readiness/SKILL.md and run 'node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs --mode pr' so library documentation and package exports are already in sync), fix any failures, and stage and commit all modified in-scope files in a single clean commit referencing #${ISSUE_NUMBER} (do not stage or commit files under ${SPEC_DIR}).
-          4. Author the pull request body at pr.md following .agents/skills/pr-record/references/pr-record-contract.md (with ## Links including - **Closes:** #${ISSUE_NUMBER}, ## Acceptance Criteria Traceability, ## Dependencies, ## Blast Radius, and ## Human Validation with Client Intent, Behavioral Experience, and Safety & Blast Radius set to Pending)."
+          4. Author the pull request body at pr.md following .agents/skills/code/references/code-contract.md (with ## Links including - **Closes:** #${ISSUE_NUMBER}, ## Acceptance Criteria Traceability, ## Dependencies, ## Blast Radius, and ## Human Validation with Client Intent, Behavioral Experience, and Safety & Blast Radius set to Pending)."
 
           STEP_COST_JSON=$(
             {
@@ -786,10 +787,10 @@ jobs:
             node .agents/skills/plan/scripts/validate-plan.mjs --plan "${SPEC_DIR}/plan.md" --think "${SPEC_DIR}/think.md"
           fi
 
-          if ! node .agents/skills/pr-record/scripts/validate-pr.mjs --body pr.md --dir "$SPEC_DIR" --stage code --allow-pending-approval >/dev/null 2>&1; then
+          if ! node .agents/skills/code/scripts/validate-pr.mjs --body pr.md --dir "$SPEC_DIR" --stage code --allow-pending-approval >/dev/null 2>&1; then
             node --input-type=module -e '
               import { readFileSync, writeFileSync } from "node:fs";
-              import { readPlan, readThink, TIERS } from "./.agents/skills/pr-record/scripts/validate-pr.mjs";
+              import { readPlan, readThink, TIERS } from "./.agents/skills/code/scripts/validate-pr.mjs";
               const issue = process.env.ISSUE_NUMBER;
               const dir = `specs/issue-${issue}`;
               const plan = readPlan(readFileSync(`${dir}/plan.md`, "utf8"));
@@ -827,7 +828,7 @@ jobs:
                 "",
               ].join("\n"));
             '
-            node .agents/skills/pr-record/scripts/validate-pr.mjs --body pr.md --dir "$SPEC_DIR" --stage code --allow-pending-approval
+            node .agents/skills/code/scripts/validate-pr.mjs --body pr.md --dir "$SPEC_DIR" --stage code --allow-pending-approval
           fi
           [ -f pr.md ] && cat pr.md >> "$GITHUB_STEP_SUMMARY" || true
 

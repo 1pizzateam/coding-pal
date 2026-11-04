@@ -548,10 +548,10 @@ jobs:
           cp /tmp/alten-coding-pal/instructions/prove.instructions.md .github/instructions/
           [ -d tests ] && [ -f /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md ] && cp /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md .github/instructions/
           [ -d website ] && [ -f /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md ] && cp /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md .github/instructions/
-          [ -d website ] && [ -d /tmp/alten-coding-pal/skills/vitepress-docs-examples ] && cp -R /tmp/alten-coding-pal/skills/vitepress-docs-examples .agents/skills/vitepress-docs-examples
+          [ -d website ] && [ -d /tmp/alten-coding-pal/skills/vitepress-docs ] && cp -R /tmp/alten-coding-pal/skills/vitepress-docs .agents/skills/vitepress-docs
           cp /tmp/alten-coding-pal/agents/prove.agent.md .github/agents/
           cp /tmp/alten-coding-pal/agents/gate-fix.agent.md .github/agents/
-          for skill in think plan forge pr-record prove scope-guard secret-guard dependency-guard task-gate control-guard test-probe preview-smoke criteria-verify; do
+          for skill in think plan forge code prove; do
             cp -R "/tmp/alten-coding-pal/skills/${skill}" ".agents/skills/${skill}"
           done
           cp /tmp/1pizza-coding-pal/forge-catalog.json .agents/skills/forge/catalog.json
@@ -650,7 +650,7 @@ jobs:
           '
           TIER=$(node --input-type=module -e '
             import { readFileSync } from "node:fs";
-            import { readPlan, readThink, TIERS } from "./.agents/skills/pr-record/scripts/validate-pr.mjs";
+            import { readPlan, readThink, TIERS } from "./.agents/skills/code/scripts/validate-pr.mjs";
             const dir = `specs/issue-${process.env.ISSUE_NUMBER}`;
             const tiers = [readPlan(readFileSync(`${dir}/plan.md`, "utf8")).tier, readThink(readFileSync(`${dir}/think.md`, "utf8")).tier];
             console.log(TIERS[Math.max(...tiers.map(tier => TIERS.indexOf(tier)))]);
@@ -660,7 +660,7 @@ jobs:
             # only when concrete rollback verification evidence is recorded in ${PROVE_FILE}; otherwise leave the affected field Pending.
             node --input-type=module -e '
               import { readFileSync, writeFileSync } from "node:fs";
-              import { readThink } from "./.agents/skills/pr-record/scripts/validate-pr.mjs";
+              import { readThink } from "./.agents/skills/code/scripts/validate-pr.mjs";
               const dir = process.env.SPEC_DIR || `specs/issue-${process.env.ISSUE_NUMBER}`;
               const tier = process.env.TIER;
               const think = readThink(readFileSync(`${dir}/think.md`, "utf8"));
@@ -688,7 +688,7 @@ jobs:
               writeFileSync("pr.md", body);
             '
             TODAY=$(date -u +%Y-%m-%d)
-            node .agents/skills/pr-record/scripts/validate-pr.mjs --body pr.md --dir "$SPEC_DIR" --stage prove --pr-date "$TODAY" --allow-auto-prove
+            node .agents/skills/code/scripts/validate-pr.mjs --body pr.md --dir "$SPEC_DIR" --stage prove --pr-date "$TODAY" --allow-auto-prove
           fi
           gh pr edit "$PR_NUMBER" --body-file pr.md
           RECORD_SCRIPT
@@ -856,9 +856,9 @@ jobs:
               fi
             }
 
-            run_check "control-guard" node .agents/skills/control-guard/scripts/control-guard.mjs --git "origin/${BASE_REF}"
-            run_check "secret-guard" node .agents/skills/secret-guard/scripts/secret-guard.mjs --git --base "origin/${BASE_REF}"
-            run_check "dependency-guard" node .agents/skills/dependency-guard/scripts/dependency-guard.mjs --git --base "origin/${BASE_REF}" --plan "${SPEC_DIR}/plan.md" --pr pr.md
+            run_check "control-guard" node .agents/skills/prove/scripts/control-guard.mjs --git "origin/${BASE_REF}"
+            run_check "secret-guard" node .agents/skills/prove/scripts/secret-guard.mjs --git --base "origin/${BASE_REF}"
+            run_check "dependency-guard" node .agents/skills/prove/scripts/dependency-guard.mjs --git --base "origin/${BASE_REF}" --plan "${SPEC_DIR}/plan.md" --pr pr.md
 
             SCOPE_ARGS=(--scope "${SPEC_DIR}/**" --scope "pr.md" --scope "gate-output.log" --scope "failed-gates.log" --scope "reports/**")
             while IFS= read -r scope_glob; do
@@ -898,7 +898,7 @@ jobs:
               }
               for (const p of paths) console.log(p);
             ' "${SPEC_DIR}/plan.md")
-            run_check "scope-guard" node .agents/skills/scope-guard/scripts/scope-guard.mjs --git --base "origin/${BASE_REF}" "${SCOPE_ARGS[@]}"
+            run_check "scope-guard" node .agents/skills/prove/scripts/scope-guard.mjs --git --base "origin/${BASE_REF}" "${SCOPE_ARGS[@]}"
 
             BUILD_CMD="npm run build"
             if [ -f package.json ] && [ "$(node -p "const p=require('./package.json'); Boolean(p.scripts && p.scripts['build:lib'])")" = "true" ]; then
@@ -908,12 +908,12 @@ jobs:
             if [ -f package.json ] && [ "$(node -p "const p=require('./package.json'); Boolean(p.name && p.name.startsWith('@1pizzateam/') && !p.private)")" = "true" ]; then
               TASK_STAGES+=(--stage "release-readiness:node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs --mode pr --require-dist")
             fi
-            run_check "task-gate" node .agents/skills/task-gate/scripts/task-gate.mjs "${TASK_STAGES[@]}"
+            run_check "task-gate" node .agents/skills/prove/scripts/task-gate.mjs "${TASK_STAGES[@]}"
 
             if [ -f "./node_modules/jest/bin/jest.js" ]; then
-              run_check "criteria-verify" node .agents/skills/criteria-verify/scripts/verify-criteria.mjs --plan "${SPEC_DIR}/plan.md" --report reports/test-report.json --require-test-files
+              run_check "criteria-verify" node .agents/skills/prove/scripts/verify-criteria.mjs --plan "${SPEC_DIR}/plan.md" --report reports/test-report.json --require-test-files
             else
-              run_check "criteria-verify" node .agents/skills/criteria-verify/scripts/verify-criteria.mjs --plan "${SPEC_DIR}/plan.md" --report reports/test-report.log --require-test-files
+              run_check "criteria-verify" node .agents/skills/prove/scripts/verify-criteria.mjs --plan "${SPEC_DIR}/plan.md" --report reports/test-report.log --require-test-files
             fi
 
             MODIFIED_SRCS=$(git diff --name-only --diff-filter=AM "origin/${BASE_REF}..HEAD" -- 'src/**')
@@ -922,7 +922,7 @@ jobs:
               for src in $MODIFIED_SRCS; do
                 PROBE_ARGS+=(--source "$src")
               done
-              run_check "test-probe" node .agents/skills/test-probe/scripts/test-probe.mjs --base "origin/${BASE_REF}" --test-cmd "npm test" "${PROBE_ARGS[@]}"
+              run_check "test-probe" node .agents/skills/prove/scripts/test-probe.mjs --base "origin/${BASE_REF}" --test-cmd "npm test" "${PROBE_ARGS[@]}"
             else
               echo "=== Control: test-probe ===" >> gate-output.log
               echo "N/A (no tracked src/** files added or modified)" >> gate-output.log
@@ -931,7 +931,7 @@ jobs:
             if node -e 'const pkg=require("./package.json"); process.exit((pkg.dependencies?.vite || pkg.devDependencies?.vite) ? 0 : 1)' 2>/dev/null; then
               npx vite preview --port 4173 --host 127.0.0.1 >/tmp/vite-preview.log 2>&1 &
               PREVIEW_PID=$!
-              run_check "preview-smoke" node .agents/skills/preview-smoke/scripts/preview-smoke.mjs --url http://127.0.0.1:4173 --routes /tmp/preview-routes.json --timeout-ms 5000 --retries 5 --retry-delay-ms 1000
+              run_check "preview-smoke" node .agents/skills/prove/scripts/preview-smoke.mjs --url http://127.0.0.1:4173 --routes /tmp/preview-routes.json --timeout-ms 5000 --retries 5 --retry-delay-ms 1000
               kill "$PREVIEW_PID" 2>/dev/null || true
             else
               echo "=== Control: preview-smoke ===" >> gate-output.log
@@ -1040,7 +1040,7 @@ jobs:
             Follow .github/instructions/prove.instructions.md and .github/agents/gate-fix.agent.md:
             1. Fix only the application/test files within the In Scope paths of ${SPEC_DIR}/plan.md.
             2. Never weaken, skip, or edit any control or spec file.
-            3. Re-run the failed checks and node .agents/skills/control-guard/scripts/control-guard.mjs --git origin/${BASE_REF}.
+            3. Re-run the failed checks and node .agents/skills/prove/scripts/control-guard.mjs --git origin/${BASE_REF}.
             4. Stage and commit your fix on ${BRANCH_NAME} with a clear message referencing #${ISSUE_NUMBER}."
 
             record_ai_cost "Prove Repair #${NEXT}"
@@ -1097,7 +1097,7 @@ jobs:
             fi
 
             if [ "$(git rev-parse HEAD)" != "$BEFORE" ]; then
-              node .agents/skills/control-guard/scripts/control-guard.mjs --git "origin/${BASE_REF}"
+              node .agents/skills/prove/scripts/control-guard.mjs --git "origin/${BASE_REF}"
               git push origin "$BRANCH_NAME"
             fi
             TARGET_STATUS=Prove bash -eo pipefail "$RUNNER_TEMP/prove-project-status.sh"

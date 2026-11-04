@@ -1750,7 +1750,7 @@ class WorkflowsTest < Minitest::Test
       - **Rollback:** _None._
     MD
     File.write(File.join(@repository, 'pr.md'), "valid pr body\n")
-    validate_dir = File.join(@repository, '.agents/skills/pr-record/scripts')
+    validate_dir = File.join(@repository, '.agents/skills/code/scripts')
     FileUtils.mkdir_p(validate_dir)
     File.write(File.join(validate_dir, 'validate-pr.mjs'), "export const TIERS = ['Low', 'Medium', 'High', 'Critical'];\nexport function readPlan() { return { tier: 'Low', criteria: ['AC-1'] }; }\nexport function readThink() { return { tier: 'Low', rollback: '_None._' }; }\n")
 
@@ -2219,15 +2219,18 @@ class WorkflowsTest < Minitest::Test
     assert_includes plan_validate, 'bindings-check.mjs --think "$THINK_FILE" --plan "$PLAN_FILE"'
 
     code_install = steps('code').find { |item| item['name'] == 'Install ALTEN-group/coding-pal code primitives' }.fetch('run')
-    assert_includes code_install, 'for skill in think plan forge'
+    assert_includes code_install, 'cp /tmp/alten-coding-pal/instructions/code.instructions.md .github/instructions/'
+    assert_includes code_install, 'for skill in think plan forge code prove; do'
     code_gates = steps('code').find { |item| item['name'] == 'Run deterministic Code exit gates' }.fetch('run')
     assert_includes code_gates, 'validate-plan.mjs --plan "${SPEC_DIR}/plan.md" --think "${SPEC_DIR}/think.md"'
+    assert_includes code_gates, '.agents/skills/code/scripts/validate-pr.mjs'
 
     prove_install = steps('prove').find { |item| item['name'] == 'Install ALTEN-group/coding-pal Prove and Remediation primitives' }.fetch('run')
     refute_includes prove_install, 'prove-controls.instructions.md'
     refute_includes prove_install, 'agents/code.agent.md'
+    assert_includes prove_install, 'for skill in think plan forge code prove; do'
     prove_loop = steps('prove').find { |item| item['name'] == 'Run Prove validation and auto-remediation loop' }.fetch('run')
-    assert_includes prove_loop, 'dependency-guard.mjs --git --base "origin/${BASE_REF}" --plan "${SPEC_DIR}/plan.md" --pr pr.md'
+    assert_includes prove_loop, '.agents/skills/prove/scripts/dependency-guard.mjs --git --base "origin/${BASE_REF}" --plan "${SPEC_DIR}/plan.md" --pr pr.md'
     assert_includes prove_loop, '--diff-filter=AM "origin/${BASE_REF}..HEAD"'
     assert_includes prove_loop, '--agent="gate-fix"'
     refute_includes prove_loop, '--agent="code"'
