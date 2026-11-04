@@ -212,6 +212,29 @@ jobs:
                             }
                           }
                         }
+                        items(first: 100) {
+                          nodes {
+                            id
+                            isArchived
+                            updatedAt
+                            fieldValueByName(name: "Status") {
+                              ... on ProjectV2ItemFieldSingleSelectValue {
+                                name
+                                optionId
+                              }
+                            }
+                            content {
+                              ... on Issue {
+                                closedAt
+                                updatedAt
+                              }
+                              ... on PullRequest {
+                                closedAt
+                                updatedAt
+                              }
+                            }
+                          }
+                        }
                       }
                     }
                   }
@@ -247,6 +270,25 @@ jobs:
                 value: { singleSelectOptionId: $optionId }
               }) { projectV2Item { id } }
             }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$FIELD_ID" -f optionId="$OPTION_ID" >/dev/null
+
+          if [ "$TARGET_STATUS" = "Done" ]; then
+            STALE_DONE_ITEMS=$(echo "$PROJECT" | jq -r --arg done_id "$OPTION_ID" --arg current_id "$ITEM_ID" '
+              .items.nodes[]?
+              | select(.id != $current_id and (.isArchived // false) == false)
+              | select(((.fieldValueByName.name // "" | ascii_downcase) == "done") or (.fieldValueByName.optionId == $done_id))
+              | (.content.closedAt // .updatedAt // .content.updatedAt // empty) as $ts
+              | select(($ts | length) > 0 and (($ts | fromdateiso8601? // now) < (now - 259200)))
+              | .id
+            ' 2>/dev/null || true)
+            for STALE_ITEM_ID in $STALE_DONE_ITEMS; do
+              gh api graphql -f query='
+                mutation($projectId: ID!, $itemId: ID!) {
+                  archiveProjectV2Item(input: { projectId: $projectId, itemId: $itemId }) {
+                    item { id }
+                  }
+                }' -f projectId="$PROJECT_ID" -f itemId="$STALE_ITEM_ID" >/dev/null 2>&1 || true
+            done
+          fi
 
           if [ -z "${ISSUE_AI_MODEL:-}" ]; then
             CURRENT_PRIORITY=$(echo "$DATA" | jq -r '.data.repository.issue.issueFieldValues.nodes[]? | select((.field.name // "" | ascii_downcase) == "priority") | .value // empty' | head -n 1)

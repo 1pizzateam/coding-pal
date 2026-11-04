@@ -232,6 +232,29 @@ jobs:
                             }
                           }
                         }
+                        items(first: 100) {
+                          nodes {
+                            id
+                            isArchived
+                            updatedAt
+                            fieldValueByName(name: "Status") {
+                              ... on ProjectV2ItemFieldSingleSelectValue {
+                                name
+                                optionId
+                              }
+                            }
+                            content {
+                              ... on Issue {
+                                closedAt
+                                updatedAt
+                              }
+                              ... on PullRequest {
+                                closedAt
+                                updatedAt
+                              }
+                            }
+                          }
+                        }
                       }
                     }
                   }
@@ -345,10 +368,22 @@ jobs:
             echo "ISSUE_AI_EFFORT=${ISSUE_AI_EFFORT}" >> "$GITHUB_ENV"
           fi
 
+          STALE_DONE_ITEMS=$(echo "$PROJECT" | jq -r --arg done_id "$DONE_OPTION_ID" --arg current_id "$ITEM_ID" '
+            [
+              .items.nodes[]?
+              | select(.id != $current_id and (.isArchived // false) == false)
+              | select(((.fieldValueByName.name // "" | ascii_downcase) == "done") or (.fieldValueByName.optionId == $done_id))
+              | (.content.closedAt // .updatedAt // .content.updatedAt // empty) as $ts
+              | select(($ts | length) > 0 and (($ts | fromdateiso8601? // now) < (now - 259200)))
+              | .id
+            ] | join(" ")
+          ' 2>/dev/null || true)
+
           echo "PROJECT_ID=${PROJECT_ID}" >> "$GITHUB_ENV"
           echo "PROJECT_ITEM_ID=${ITEM_ID}" >> "$GITHUB_ENV"
           echo "STATUS_FIELD_ID=${FIELD_ID}" >> "$GITHUB_ENV"
           echo "DONE_OPTION_ID=${DONE_OPTION_ID}" >> "$GITHUB_ENV"
+          echo "STALE_DONE_ITEMS=${STALE_DONE_ITEMS}" >> "$GITHUB_ENV"
 
           if [ -n "$COST_FIELD_ID" ]; then
             echo "COST_FIELD_ID=${COST_FIELD_ID}" >> "$GITHUB_ENV"
@@ -662,6 +697,14 @@ jobs:
                   value: { singleSelectOptionId: $optionId }
                 }) { projectV2Item { id } }
               }' -f projectId="$PROJECT_ID" -f itemId="$PROJECT_ITEM_ID" -f fieldId="$STATUS_FIELD_ID" -f optionId="$DONE_OPTION_ID" >/dev/null 2>&1 || true
+            for STALE_ITEM_ID in ${STALE_DONE_ITEMS:-}; do
+              gh api graphql -f query='
+                mutation($projectId: ID!, $itemId: ID!) {
+                  archiveProjectV2Item(input: { projectId: $projectId, itemId: $itemId }) {
+                    item { id }
+                  }
+                }' -f projectId="$PROJECT_ID" -f itemId="$STALE_ITEM_ID" >/dev/null 2>&1 || true
+            done
           fi
 
           if [ -n "${COST_FIELD_ID:-}" ] && [ -n "${PROJECT_ID:-}" ] && [ -n "${PROJECT_ITEM_ID:-}" ]; then

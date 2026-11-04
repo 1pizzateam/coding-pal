@@ -771,6 +771,102 @@ class WorkflowsTest < Minitest::Test
     assert @calls.any? { |args| args.include?('optionId=done') }
   end
 
+  def test_done_auto_archives_items_older_than_three_days_while_leaving_other_columns_untouched
+    stale_ts = (Time.now.utc - (4 * 86_400)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    recent_ts = (Time.now.utc - (1 * 86_400)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    board_with_items = project
+    board_with_items['data']['repository']['owner']['projectsV2']['nodes'][0]['items'] = {
+      'nodes' => [
+        {
+          'id' => 'DONE_STALE_CLOSED',
+          'isArchived' => false,
+          'updatedAt' => stale_ts,
+          'fieldValueByName' => { 'name' => 'Done', 'optionId' => 'done' },
+          'content' => { 'closedAt' => stale_ts, 'updatedAt' => stale_ts }
+        },
+        {
+          'id' => 'DONE_STALE_UPDATED_FALLBACK',
+          'isArchived' => false,
+          'updatedAt' => stale_ts,
+          'fieldValueByName' => { 'name' => 'Done', 'optionId' => 'done' },
+          'content' => {}
+        },
+        {
+          'id' => 'DONE_RECENT',
+          'isArchived' => false,
+          'updatedAt' => recent_ts,
+          'fieldValueByName' => { 'name' => 'Done', 'optionId' => 'done' },
+          'content' => { 'closedAt' => recent_ts, 'updatedAt' => recent_ts }
+        },
+        {
+          'id' => 'DONE_ALREADY_ARCHIVED',
+          'isArchived' => true,
+          'updatedAt' => stale_ts,
+          'fieldValueByName' => { 'name' => 'Done', 'optionId' => 'done' },
+          'content' => { 'closedAt' => stale_ts, 'updatedAt' => stale_ts }
+        },
+        {
+          'id' => 'TRIAGE_STALE',
+          'isArchived' => false,
+          'updatedAt' => stale_ts,
+          'fieldValueByName' => { 'name' => 'Triage', 'optionId' => 'triage' },
+          'content' => { 'updatedAt' => stale_ts }
+        },
+        {
+          'id' => 'CODE_STALE',
+          'isArchived' => false,
+          'updatedAt' => stale_ts,
+          'fieldValueByName' => { 'name' => 'Code', 'optionId' => 'code' },
+          'content' => { 'updatedAt' => stale_ts }
+        },
+        {
+          'id' => 'ITEM',
+          'isArchived' => false,
+          'updatedAt' => stale_ts,
+          'fieldValueByName' => { 'name' => 'Done', 'optionId' => 'done' },
+          'content' => { 'closedAt' => stale_ts, 'updatedAt' => stale_ts }
+        }
+      ]
+    }
+
+    # 1. Release Done step archives stale Done items (>3d) and leaves recent Done & non-Done columns untouched
+    done_step = status_step('release', 'Done')
+    run_step(done_step, scenario([], project: board_with_items))
+    archived_in_release = @calls.select { |args| args.any? { |arg| arg.include?('archiveProjectV2Item') } }
+                                .flat_map { |args| args.grep(/^itemId=/) }
+    assert_equal %w[itemId=DONE_STALE_CLOSED itemId=DONE_STALE_UPDATED_FALLBACK], archived_in_release
+
+    # 2. Prove status helper archives stale Done items only when TARGET_STATUS=Done
+    prove_status = status_step('prove', 'Prove')
+    run_step(prove_status, scenario([], project: board_with_items), { 'TARGET_STATUS' => 'Prove' })
+    assert_empty(@calls.select { |args| args.any? { |arg| arg.include?('archiveProjectV2Item') } })
+
+    run_step(prove_status, scenario([], project: board_with_items), { 'TARGET_STATUS' => 'Done' })
+    archived_in_prove = @calls.select { |args| args.any? { |arg| arg.include?('archiveProjectV2Item') } }
+                              .flat_map { |args| args.grep(/^itemId=/) }
+    assert_equal %w[itemId=DONE_STALE_CLOSED itemId=DONE_STALE_UPDATED_FALLBACK], archived_in_prove
+
+    # 3. Plan status step exports STALE_DONE_ITEMS and already_resolved archives them when closing as Done
+    plan_status = status_step('plan', 'Plan')
+    run_step(plan_status, scenario([], project: board_with_items))
+    env_vars = File.read(@environment.fetch('GITHUB_ENV'))
+    assert_includes env_vars, 'STALE_DONE_ITEMS=DONE_STALE_CLOSED DONE_STALE_UPDATED_FALLBACK'
+
+    already_resolved = step('plan', 'already_resolved')
+    FileUtils.mkdir_p(File.join(@directory, 'specs/issue-42'))
+    File.write(File.join(@directory, 'specs/issue-42/already-resolved.json'), JSON.generate({
+      'resolved' => true,
+      'summary' => 'Already resolved on base branch.'
+    }))
+    run_step(already_resolved, scenario(%w[5-release], project: board_with_items), {
+      'PROJECT_ID' => 'PROJECT', 'PROJECT_ITEM_ID' => 'ITEM', 'STATUS_FIELD_ID' => 'STATUS',
+      'DONE_OPTION_ID' => 'done', 'STALE_DONE_ITEMS' => 'DONE_STALE_CLOSED DONE_STALE_UPDATED_FALLBACK'
+    })
+    archived_in_plan = @calls.select { |args| args.any? { |arg| arg.include?('archiveProjectV2Item') } }
+                             .flat_map { |args| args.grep(/^itemId=/) }
+    assert_equal %w[itemId=DONE_STALE_CLOSED itemId=DONE_STALE_UPDATED_FALLBACK], archived_in_plan
+  end
+
   def release_run(sha, event, status: 'completed', conclusion: 'success', id: 101, created: '2026-01-02T00:00:01Z')
     {
       'id' => id, 'head_sha' => sha, 'event' => event, 'status' => status,

@@ -74,6 +74,8 @@ result = case ARGV.first(2)
            case query
            when /updateProjectV2ItemFieldValue/
              { 'data' => { 'updateProjectV2ItemFieldValue' => { 'projectV2Item' => { 'id' => 'ITEM' } } } }
+           when /archiveProjectV2Item/
+             { 'data' => { 'archiveProjectV2Item' => { 'item' => { 'id' => 'ARCHIVED_ITEM' } } } }
            when /setIssueFieldValue/
              { 'data' => { 'setIssueFieldValue' => { 'issue' => { 'id' => 'ISSUE' } } } }
            when /addProjectV2ItemById/
