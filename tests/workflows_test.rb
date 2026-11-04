@@ -507,7 +507,7 @@ class WorkflowsTest < Minitest::Test
           },
           {
             'id' => 'MODEL_FIELD', 'name' => 'Model',
-            'options' => %w[claude-sonnet-5.5 claude-opus-5.5 claude-haiku-5.5 gpt-6.1-sol gpt-5.3-codex gemini-4-argon gemini-3.8-flash auto].map { |name| { 'name' => name, 'id' => "model_#{name}" } }
+            'options' => %w[claude-sonnet-5.5 claude-opus-5.5 claude-haiku-5.5 gpt-6.1-sol gpt-6.1-terra gpt-6-luna gpt-5.3-codex gemini-4-argon gemini-3.8-flash auto].map { |name| { 'name' => name, 'id' => "model_#{name}" } }
           },
           {
             'id' => 'EFFORT_FIELD', 'name' => 'Effort',

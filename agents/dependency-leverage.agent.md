@@ -8,7 +8,7 @@ description: "Identify opportunities to delegate source modules directly to inst
 3. For duplicated or hand-rolled code that can be replaced with calls to installed `package.json` libraries, write `audit-findings.json` at the repository root as a JSON array where each element represents one distinct finding with fields:
    - `"title"`: concise `refactor(<scope>): <summary>` issue title
    - `"priority"`: GitHub issue priority (`"Urgent"`, `"High"`, `"Medium"`, or `"Low"`)
-   - `"model"`: recommended Copilot model for remediation (`"claude-sonnet-5.5"`, `"claude-opus-5.5"`, `"claude-haiku-5.5"`, `"gpt-6.1-sol"`, `"gpt-5.3-codex"`, `"gemini-4-argon"`, `"gemini-3.8-flash"`, or `"auto"`) based on finding complexity
+   - `"model"`: recommended Copilot model for remediation (`"claude-sonnet-5.5"`, `"claude-opus-5.5"`, `"claude-haiku-5.5"`, `"gpt-6.1-sol"`, `"gpt-6.1-terra"`, `"gpt-6-luna"`, `"gpt-5.3-codex"`, `"gemini-4-argon"`, `"gemini-3.8-flash"`, or `"auto"`) based on finding complexity
    - `"effort"`: recommended thinking effort (`"Low"`, `"Medium"`, `"High"`, or `"Max"`) based on reasoning depth required
    - `"problem"`: clear explanation of the duplicated or hand-rolled logic
    - `"affectedFiles"`: array of affected file paths (e.g. `["src/foo.js"]`)
@@ -19,7 +19,7 @@ description: "Identify opportunities to delegate source modules directly to inst
    - `"package"`: npm package name (e.g. `"@1pizzateam/roostr"` or `"@1pizzateam/bumpr"`)
    - `"repo"`: GitHub `owner/repo` (e.g. `"1pizzateam/RoostR.js"` or `"1pizzateam/BumpR.js"`)
    - `"priority"`: GitHub issue priority (`"Urgent"`, `"High"`, `"Medium"`, or `"Low"`)
-   - `"model"`: recommended Copilot model (`"claude-sonnet-5.5"`, `"claude-opus-5.5"`, `"claude-haiku-5.5"`, `"gpt-6.1-sol"`, `"gpt-5.3-codex"`, `"gemini-4-argon"`, `"gemini-3.8-flash"`, or `"auto"`)
+   - `"model"`: recommended Copilot model (`"claude-sonnet-5.5"`, `"claude-opus-5.5"`, `"claude-haiku-5.5"`, `"gpt-6.1-sol"`, `"gpt-6.1-terra"`, `"gpt-6-luna"`, `"gpt-5.3-codex"`, `"gemini-4-argon"`, `"gemini-3.8-flash"`, or `"auto"`)
    - `"effort"`: recommended thinking effort (`"Low"`, `"Medium"`, `"High"`, or `"Max"`)
    - `"library_issue_title"`: concise feature/enhancement title for the upstream library
    - `"library_issue_body"`: multi-line Markdown specification (using `\n\n` between sections and `\n` after every `##` heading) with `## Problem`, `## Proposed API`, and `## Acceptance Criteria` (`- **AC-1:** ...`) for the library
