@@ -74,6 +74,8 @@ result = case ARGV.first(2)
            case query
            when /updateProjectV2ItemFieldValue/
              { 'data' => { 'updateProjectV2ItemFieldValue' => { 'projectV2Item' => { 'id' => 'ITEM' } } } }
+           when /setIssueFieldValue/
+             { 'data' => { 'setIssueFieldValue' => { 'issue' => { 'id' => 'ISSUE' } } } }
            when /addProjectV2ItemById/
              (warn('gh: Content already exists in this project') || exit(1)) if scenario['content_already_exists']; { 'data' => { 'addProjectV2ItemById' => { 'item' => { 'id' => 'ITEM' } } } }
            when /projectsV2/

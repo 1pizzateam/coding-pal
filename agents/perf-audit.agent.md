@@ -7,6 +7,7 @@ description: "Identify hot-loop and library runtime method violations of the hot
 2. Do not modify source, test, or documentation files.
 3. Write `audit-findings.json` at the repository root as a JSON array where each element represents one distinct performance or Zero-GC finding with fields:
    - `"title"`: concise `perf(<scope>): <summary>` issue title
+   - `"priority"`: GitHub issue priority (`"Urgent"`, `"High"`, `"Medium"`, or `"Low"`)
    - `"problem"`: clear explanation of the hot-loop or Zero-GC violation
    - `"affectedFiles"`: array of affected file paths (e.g. `["src/foo.js"]`)
    - `"suggestedFix"`: concrete remediation steps

@@ -7,6 +7,7 @@ description: "Identify spatial modules that violate the vector-first instruction
 2. Do not modify source, test, or documentation files.
 3. Write `audit-findings.json` at the repository root as a JSON array where each element represents one distinct vector-first violation with fields:
    - `"title"`: concise `refactor(<scope>): <summary>` issue title
+   - `"priority"`: GitHub issue priority (`"Urgent"`, `"High"`, `"Medium"`, or `"Low"`)
    - `"problem"`: clear explanation of the scalar/ad-hoc math violation
    - `"affectedFiles"`: array of affected file paths (e.g. `["src/foo.js"]`)
    - `"suggestedFix"`: concrete refactoring steps using `@1pizzateam/spock` vectors

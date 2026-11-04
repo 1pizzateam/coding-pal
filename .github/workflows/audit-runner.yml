@@ -154,7 +154,7 @@ jobs:
           EXTRA_PROMPT: ${{ inputs.prompt }}
         run: |
           copilot --model="gemini-3.8-flash" --agent="$AGENT" --allow-all-tools \
-            --prompt "Scope: ${SCOPE}. ${EXTRA_PROMPT} Do not modify repository source, test, or documentation files. Write structured findings to audit-findings.json as a JSON array of objects, where each element has keys: { \"title\": \"<concise issue title>\", \"problem\": \"<clear problem explanation>\", \"affectedFiles\": [\"<file path>\"], \"suggestedFix\": \"<concrete remediation>\", \"acceptanceCriteria\": [\"- **AC-1:** <testable criterion>\"], \"body\": \"## Problem\\n\\n<problem>\\n\\n## Affected Files\\n\\n- \`<file>\`\\n\\n## Suggested Fix\\n\\n<fix>\\n\\n## Acceptance Criteria\\n\\n- **AC-1:** <criterion>\" } (or [] if no findings exist), and write a brief Markdown summary of the audit to audit-report.md. Always separate Markdown headings and sections with real newlines (\\n\\n), never a single line. If an upstream @1pizzateam/* library (`@1pizzateam/roostr` -> `1pizzateam/RoostR.js`, `@1pizzateam/bumpr` -> `1pizzateam/BumpR.js`, `@1pizzateam/loopr` -> `1pizzateam/LoopR.js`, `@1pizzateam/spock` -> `1pizzateam/Spock.js`, `@1pizzateam/groovr` -> `1pizzateam/GroovR.js`, `@1pizzateam/facer` -> `1pizzateam/FaceR.js`) should be updated instead of (or prior to) changing this repository, write the structured request array to upstream-requests.json with objects `{ \"package\": \"@1pizzateam/<pkg>\", \"repo\": \"1pizzateam/<Repo>\", \"library_issue_title\": \"<upstream issue title>\", \"library_issue_body\": \"## Problem\\n\\n<problem>\\n\\n## Proposed API\\n\\n<proposed API>\\n\\n## Acceptance Criteria\\n\\n- **AC-1:** <criterion>\", \"consumer_issue_title\": \"<blocked consumer issue title>\", \"consumer_issue_body\": \"## Problem\\n\\n<problem>\\n\\n## Affected Files\\n\\n- \`<file>\`\\n\\n## Suggested Fix\\n\\n<fix>\\n\\n## Acceptance Criteria\\n\\n- **AC-1:** <criterion>\" }`. If a finding in DoomR.js requires a companion update in one of the 1PizzaTeam game editors (`cadenza` -> `1pizzateam/Cadenza`, `facegun` -> `1pizzateam/FaceGun`, `mappr` -> `1pizzateam/MappR`, `pixelgun` -> `1pizzateam/PixelGun`, `polygun` -> `1pizzateam/PolyGun`, `shadergun` -> `1pizzateam/ShaderGun`), write a JSON array to editor-requests.json with objects `{ \"editor\": \"<cadenza|facegun|mappr|pixelgun|polygun|shadergun>\", \"repo\": \"1pizzateam/<Editor>\", \"title\": \"<issue title>\", \"problem\": \"<what changed in DoomR.js>\", \"affectedFiles\": [\"<DoomR.js file>\"], \"suggestedDirection\": \"<editor changes needed>\", \"body\": \"## Problem\\n\\n<problem>\\n\\n## Affected DoomR.js Files\\n\\n- \`<file>\`\\n\\n## Suggested Direction\\n\\n<direction>\" }`."
+            --prompt "Scope: ${SCOPE}. ${EXTRA_PROMPT} Do not modify repository source, test, or documentation files. Write structured findings to audit-findings.json as a JSON array of objects, where each element has keys: { \"title\": \"<concise issue title>\", \"priority\": \"<Urgent|High|Medium|Low>\", \"problem\": \"<clear problem explanation>\", \"affectedFiles\": [\"<file path>\"], \"suggestedFix\": \"<concrete remediation>\", \"acceptanceCriteria\": [\"- **AC-1:** <testable criterion>\"], \"body\": \"## Problem\\n\\n<problem>\\n\\n## Affected Files\\n\\n- \`<file>\`\\n\\n## Suggested Fix\\n\\n<fix>\\n\\n## Acceptance Criteria\\n\\n- **AC-1:** <criterion>\" } (or [] if no findings exist), and write a brief Markdown summary of the audit to audit-report.md. Always separate Markdown headings and sections with real newlines (\\n\\n), never a single line. If an upstream @1pizzateam/* library (`@1pizzateam/roostr` -> `1pizzateam/RoostR.js`, `@1pizzateam/bumpr` -> `1pizzateam/BumpR.js`, `@1pizzateam/loopr` -> `1pizzateam/LoopR.js`, `@1pizzateam/spock` -> `1pizzateam/Spock.js`, `@1pizzateam/groovr` -> `1pizzateam/GroovR.js`, `@1pizzateam/facer` -> `1pizzateam/FaceR.js`) should be updated instead of (or prior to) changing this repository, write the structured request array to upstream-requests.json with objects `{ \"package\": \"@1pizzateam/<pkg>\", \"repo\": \"1pizzateam/<Repo>\", \"priority\": \"<Urgent|High|Medium|Low>\", \"library_issue_title\": \"<upstream issue title>\", \"library_issue_body\": \"## Problem\\n\\n<problem>\\n\\n## Proposed API\\n\\n<proposed API>\\n\\n## Acceptance Criteria\\n\\n- **AC-1:** <criterion>\", \"consumer_issue_title\": \"<blocked consumer issue title>\", \"consumer_issue_body\": \"## Problem\\n\\n<problem>\\n\\n## Affected Files\\n\\n- \`<file>\`\\n\\n## Suggested Fix\\n\\n<fix>\\n\\n## Acceptance Criteria\\n\\n- **AC-1:** <criterion>\" }`. If a finding in DoomR.js requires a companion update in one of the 1PizzaTeam game editors (`cadenza` -> `1pizzateam/Cadenza`, `facegun` -> `1pizzateam/FaceGun`, `mappr` -> `1pizzateam/MappR`, `pixelgun` -> `1pizzateam/PixelGun`, `polygun` -> `1pizzateam/PolyGun`, `shadergun` -> `1pizzateam/ShaderGun`), write a JSON array to editor-requests.json with objects `{ \"editor\": \"<cadenza|facegun|mappr|pixelgun|polygun|shadergun>\", \"repo\": \"1pizzateam/<Editor>\", \"priority\": \"<Urgent|High|Medium|Low>\", \"title\": \"<issue title>\", \"problem\": \"<what changed in DoomR.js>\", \"affectedFiles\": [\"<DoomR.js file>\"], \"suggestedDirection\": \"<editor changes needed>\", \"body\": \"## Problem\\n\\n<problem>\\n\\n## Affected DoomR.js Files\\n\\n- \`<file>\`\\n\\n## Suggested Direction\\n\\n<direction>\" }`."
 
       - name: Create issues for audit findings and add to Project
         id: create_findings
@@ -191,6 +191,13 @@ jobs:
           CREATED_COUNT=0
           for ((i = 0; i < COUNT; i++)); do
             TITLE=$(jq -r ".[$i].title // empty" audit-findings.json)
+            PRIORITY=$(jq -r --argjson idx "$i" '
+              ((.[$idx].priority // .[$idx].severity // "") | tostring | ascii_downcase | gsub("^\\s+|\\s+$"; "")) as $p |
+              if ($p == "urgent" or $p == "critical" or $p == "p0") then "Urgent"
+              elif ($p == "high" or $p == "major" or $p == "p1") then "High"
+              elif ($p == "low" or $p == "minor" or $p == "trivial" or $p == "p3") then "Low"
+              else "Medium" end
+            ' audit-findings.json)
             BODY=$(jq -r --argjson idx "$i" '
               def norm:
                 gsub("\\r\\n"; "\n")
@@ -281,6 +288,15 @@ jobs:
                   }
                   owner {
                     ... on Organization {
+                      issueFields(first: 20) {
+                        nodes {
+                          ... on IssueFieldSingleSelect {
+                            id
+                            name
+                            options { id name }
+                          }
+                        }
+                      }
                       projectsV2(first: 20, query: $projectTitle) {
                         nodes {
                           id
@@ -313,6 +329,19 @@ jobs:
               }' -f owner="$OWNER" -f repo="$REPO" -F number="$ISSUE_NUMBER" -f projectTitle="$PROJECT_TITLE" 2>/dev/null || echo '{}')
 
             ISSUE_ID=$(echo "$DATA" | jq -r '.data.repository.issue.id // empty')
+            PRIORITY_FIELD=$(echo "$DATA" | jq -c '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "priority")' | head -n 1)
+            PRIORITY_FIELD_ID=$(echo "$PRIORITY_FIELD" | jq -r '.id // empty')
+            PRIORITY_OPTION_ID=$(echo "$PRIORITY_FIELD" | jq -r --arg p "$PRIORITY" '(.options[]? | select((.name | ascii_downcase) == ($p | ascii_downcase)) | .id), (.options[]? | select((.name | ascii_downcase) == "medium") | .id)' | head -n 1)
+            if [ -n "$ISSUE_ID" ] && [ -n "$PRIORITY_FIELD_ID" ] && [ -n "$PRIORITY_OPTION_ID" ]; then
+              gh api graphql -f query='
+                mutation($issueId: ID!, $fieldId: ID!, $optionId: ID!) {
+                  setIssueFieldValue(input: {
+                    issueId: $issueId,
+                    issueFields: [{ fieldId: $fieldId, singleSelectOptionId: $optionId }]
+                  }) { issue { id } }
+                }' -f issueId="$ISSUE_ID" -f fieldId="$PRIORITY_FIELD_ID" -f optionId="$PRIORITY_OPTION_ID" >/dev/null 2>&1 || true
+            fi
+
             PROJECT=$(echo "$DATA" | jq -c --arg title "$PROJECT_TITLE" --arg repo "$REPO" '.data.repository.owner.projectsV2.nodes[]? | select((.title | ascii_downcase | sub("\\.js$"; "")) == ($title | ascii_downcase | sub("\\.js$"; "")) or (.title | ascii_downcase) == ($repo | ascii_downcase))' | head -n 1)
             PROJECT_ID=$(echo "$PROJECT" | jq -r '.id // empty')
             FIELD_ID=$(echo "$PROJECT" | jq -r '.field.id // empty')
@@ -377,6 +406,7 @@ jobs:
             local target_full="$1"
             local issue_num="$2"
             local custom_title="${3:-}"
+            local priority_val="${4:-Medium}"
             local owner="${target_full%%/*}"
             local repo="${target_full#*/}"
             local ptitle="${custom_title:-$repo}"
@@ -395,6 +425,15 @@ jobs:
                   }
                   owner {
                     ... on Organization {
+                      issueFields(first: 20) {
+                        nodes {
+                          ... on IssueFieldSingleSelect {
+                            id
+                            name
+                            options { id name }
+                          }
+                        }
+                      }
                       projectsV2(first: 20, query: $projectTitle) {
                         nodes {
                           id
@@ -425,8 +464,20 @@ jobs:
                   }
                 }
               }' -f owner="$owner" -f repo="$repo" -F number="$issue_num" -f projectTitle="$ptitle" 2>/dev/null || echo '{}')
-            local issue_id project project_id field_id option_id item_id
+            local issue_id priority_field priority_field_id priority_option_id project project_id field_id option_id item_id
             issue_id=$(echo "$data" | jq -r '.data.repository.issue.id // empty')
+            priority_field=$(echo "$data" | jq -c '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "priority")' | head -n 1)
+            priority_field_id=$(echo "$priority_field" | jq -r '.id // empty')
+            priority_option_id=$(echo "$priority_field" | jq -r --arg p "$priority_val" '(.options[]? | select((.name | ascii_downcase) == ($p | ascii_downcase)) | .id), (.options[]? | select((.name | ascii_downcase) == "medium") | .id)' | head -n 1)
+            if [ -n "$issue_id" ] && [ -n "$priority_field_id" ] && [ -n "$priority_option_id" ]; then
+              gh api graphql -f query='
+                mutation($issueId: ID!, $fieldId: ID!, $optionId: ID!) {
+                  setIssueFieldValue(input: {
+                    issueId: $issueId,
+                    issueFields: [{ fieldId: $fieldId, singleSelectOptionId: $optionId }]
+                  }) { issue { id } }
+                }' -f issueId="$issue_id" -f fieldId="$priority_field_id" -f optionId="$priority_option_id" >/dev/null 2>&1 || true
+            fi
             project=$(echo "$data" | jq -c --arg title "$ptitle" --arg repo "$repo" '.data.repository.owner.projectsV2.nodes[]? | select((.title | ascii_downcase | sub("\\.js$"; "")) == ($title | ascii_downcase | sub("\\.js$"; "")) or (.title | ascii_downcase) == ($repo | ascii_downcase))' | head -n 1)
             project_id=$(echo "$project" | jq -r '.id // empty')
             field_id=$(echo "$project" | jq -r '.field.id // empty')
@@ -484,6 +535,13 @@ jobs:
           for ((i = 0; i < MAX; i++)); do
             PKG=$(jq -r ".[$i].package // empty" upstream-requests.json)
             TARGET_REPO=$(jq -r ".[$i].repo // empty" upstream-requests.json)
+            UPSTREAM_PRIORITY=$(jq -r --argjson idx "$i" '
+              ((.[$idx].priority // .[$idx].severity // "") | tostring | ascii_downcase | gsub("^\\s+|\\s+$"; "")) as $p |
+              if ($p == "urgent" or $p == "critical" or $p == "p0") then "Urgent"
+              elif ($p == "high" or $p == "major" or $p == "p1") then "High"
+              elif ($p == "low" or $p == "minor" or $p == "trivial" or $p == "p3") then "Low"
+              else "Medium" end
+            ' upstream-requests.json)
             LIB_TITLE=$(jq -r ".[$i].library_issue_title // empty" upstream-requests.json)
             LIB_BODY=$(jq -r --argjson idx "$i" "${NORM_JQ} (.[$idx].library_issue_body // \"\") | tostring | norm" upstream-requests.json)
             CONSUMER_TITLE=$(jq -r ".[$i].consumer_issue_title // empty" upstream-requests.json)
@@ -544,7 +602,7 @@ jobs:
               --body "$CONSUMER_FULL_BODY")
             CONSUMER_ISSUE_NUMBER="${CONSUMER_ISSUE_URL##*/}"
             OPEN_CONSUMER_ISSUES=$(echo "$OPEN_CONSUMER_ISSUES" | jq -c --argjson num "${CONSUMER_ISSUE_NUMBER:-0}" --arg title "$CONSUMER_TITLE" '. + [{"number": $num, "title": $title}]')
-            add_to_project "$CURRENT_REPO" "$CONSUMER_ISSUE_NUMBER" "$PROJECT_TITLE"
+            add_to_project "$CURRENT_REPO" "$CONSUMER_ISSUE_NUMBER" "$PROJECT_TITLE" "$UPSTREAM_PRIORITY"
 
             # 2. Create the upstream issue for triage on the upstream library Project board
             gh label create "upstream-escalated:1" --repo "$TARGET_REPO" --force --description "Triggered by downstream consumer audit" || true
@@ -562,7 +620,7 @@ jobs:
           - **Downstream-Issue:** #${CONSUMER_ISSUE_NUMBER}
           - **Upstream-Escalated:** 1")
             LIB_ISSUE_NUMBER="${LIB_ISSUE_URL##*/}"
-            add_to_project "$TARGET_REPO" "$LIB_ISSUE_NUMBER"
+            add_to_project "$TARGET_REPO" "$LIB_ISSUE_NUMBER" "" "$UPSTREAM_PRIORITY"
 
             # 3. Record the exact upstream issue reference on the consumer issue
             gh issue comment "$CONSUMER_ISSUE_NUMBER" --repo "$CURRENT_REPO" \
@@ -603,6 +661,13 @@ jobs:
             EDITOR_NAME=$(jq -r "(.[$i].editor // empty) | ascii_downcase" editor-requests.json)
             TARGET_REPO=$(jq -r ".[$i].repo // empty" editor-requests.json)
             ED_TITLE=$(jq -r ".[$i].title // empty" editor-requests.json)
+            ED_PRIORITY=$(jq -r --argjson idx "$i" '
+              ((.[$idx].priority // .[$idx].severity // "") | tostring | ascii_downcase | gsub("^\\s+|\\s+$"; "")) as $p |
+              if ($p == "urgent" or $p == "critical" or $p == "p0") then "Urgent"
+              elif ($p == "high" or $p == "major" or $p == "p1") then "High"
+              elif ($p == "low" or $p == "minor" or $p == "trivial" or $p == "p3") then "Low"
+              else "Medium" end
+            ' editor-requests.json)
             ED_BODY=$(jq -r --argjson idx "$i" '
               def norm:
                 gsub("\\r\\n"; "\n")
@@ -702,6 +767,15 @@ jobs:
                   }
                   owner {
                     ... on Organization {
+                      issueFields(first: 20) {
+                        nodes {
+                          ... on IssueFieldSingleSelect {
+                            id
+                            name
+                            options { id name }
+                          }
+                        }
+                      }
                       projectsV2(first: 20, query: $projectTitle) {
                         nodes {
                           id
@@ -733,6 +807,18 @@ jobs:
                 }
               }' -f owner="$ED_OWNER" -f repo="$ED_REPO" -F number="$ED_ISSUE_NUMBER" -f projectTitle="$ED_REPO" 2>/dev/null || echo '{}')
             ED_ISSUE_ID=$(echo "$ED_DATA" | jq -r '.data.repository.issue.id // empty')
+            ED_PRIORITY_FIELD=$(echo "$ED_DATA" | jq -c '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "priority")' | head -n 1)
+            ED_PRIORITY_FIELD_ID=$(echo "$ED_PRIORITY_FIELD" | jq -r '.id // empty')
+            ED_PRIORITY_OPTION_ID=$(echo "$ED_PRIORITY_FIELD" | jq -r --arg p "$ED_PRIORITY" '(.options[]? | select((.name | ascii_downcase) == ($p | ascii_downcase)) | .id), (.options[]? | select((.name | ascii_downcase) == "medium") | .id)' | head -n 1)
+            if [ -n "$ED_ISSUE_ID" ] && [ -n "$ED_PRIORITY_FIELD_ID" ] && [ -n "$ED_PRIORITY_OPTION_ID" ]; then
+              gh api graphql -f query='
+                mutation($issueId: ID!, $fieldId: ID!, $optionId: ID!) {
+                  setIssueFieldValue(input: {
+                    issueId: $issueId,
+                    issueFields: [{ fieldId: $fieldId, singleSelectOptionId: $optionId }]
+                  }) { issue { id } }
+                }' -f issueId="$ED_ISSUE_ID" -f fieldId="$ED_PRIORITY_FIELD_ID" -f optionId="$ED_PRIORITY_OPTION_ID" >/dev/null 2>&1 || true
+            fi
             ED_PROJECT=$(echo "$ED_DATA" | jq -c --arg title "$ED_REPO" --arg repo "$ED_REPO" '.data.repository.owner.projectsV2.nodes[]? | select((.title | ascii_downcase | sub("\\.js$"; "")) == ($title | ascii_downcase | sub("\\.js$"; "")) or (.title | ascii_downcase) == ($repo | ascii_downcase))' | head -n 1)
             ED_PROJECT_ID=$(echo "$ED_PROJECT" | jq -r '.id // empty')
             ED_FIELD_ID=$(echo "$ED_PROJECT" | jq -r '.field.id // empty')

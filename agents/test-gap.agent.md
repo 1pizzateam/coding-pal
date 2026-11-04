@@ -7,6 +7,7 @@ description: "Identify untested branches and edge cases in source modules and re
 2. Do not modify source, test, or documentation files.
 3. Write `audit-findings.json` at the repository root as a JSON array where each element represents one distinct test coverage gap with fields:
    - `"title"`: concise `test(<scope>): <summary>` issue title
+   - `"priority"`: GitHub issue priority (`"Urgent"`, `"High"`, `"Medium"`, or `"Low"`)
    - `"problem"`: clear explanation of the untested branches, methods, or edge cases
    - `"affectedFiles"`: array of affected source and test file paths
    - `"suggestedFix"`: concrete unit tests to add

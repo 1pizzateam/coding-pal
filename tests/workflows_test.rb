@@ -489,10 +489,16 @@ class WorkflowsTest < Minitest::Test
   def project
     { 'data' => { 'repository' => {
       'issue' => { 'id' => 'ISSUE', 'projectItems' => { 'nodes' => [{ 'id' => 'ITEM', 'project' => { 'id' => 'PROJECT' } }] } },
-      'owner' => { 'projectsV2' => { 'nodes' => [{
-        'id' => 'PROJECT', 'title' => 'Test board',
-        'field' => { 'id' => 'STATUS', 'options' => %w[Triage Think Plan Code Prove Release Done].map { |name| { 'name' => name, 'id' => name.downcase } } }
-      }] } }
+      'owner' => {
+        'issueFields' => { 'nodes' => [{
+          'id' => 'PRIORITY_FIELD', 'name' => 'Priority',
+          'options' => %w[Urgent High Medium Low].map { |name| { 'name' => name, 'id' => "prio_#{name.downcase}" } }
+        }] },
+        'projectsV2' => { 'nodes' => [{
+          'id' => 'PROJECT', 'title' => 'Test board',
+          'field' => { 'id' => 'STATUS', 'options' => %w[Triage Think Plan Code Prove Release Done].map { |name| { 'name' => name, 'id' => name.downcase } } }
+        }] }
+      }
     } } }
   end
 
@@ -1652,6 +1658,7 @@ class WorkflowsTest < Minitest::Test
     File.write(File.join(@directory, 'audit-findings.json'), JSON.generate([
       {
         'title' => 'chore(dead-code): remove unused parseLegacyConfig helper',
+        'priority' => 'Low',
         'body' => "## Problem\n`parseLegacyConfig` in `src/config.js` has zero call sites.\n\n## Affected Files\n- `src/config.js`\n\n## Suggested Remediation\nDelete `parseLegacyConfig`."
       },
       {
@@ -1675,6 +1682,10 @@ class WorkflowsTest < Minitest::Test
     assert_includes create_call, 'audit:dead-code'
     LABELS.each { |label| refute_includes create_call, label }
 
+    priority_calls = @calls.select { |args| args.any? { |arg| arg.include?('setIssueFieldValue') } }
+    assert_equal 1, priority_calls.length, 'Audit-created issues must set the organization Priority issue field'
+    %w[issueId=ISSUE fieldId=PRIORITY_FIELD optionId=prio_low].each { |arg| assert_includes priority_calls.first, arg }
+
     add_item_calls = @calls.select { |args| args.any? { |arg| arg.include?('addProjectV2ItemById') } }
     assert_equal 1, add_item_calls.length
     assert_includes add_item_calls.first, 'projectId=PROJECT'
@@ -1687,11 +1698,12 @@ class WorkflowsTest < Minitest::Test
     assert_includes report, 'chore(dead-code): remove unused parseLegacyConfig helper'
     refute File.exist?(File.join(@directory, 'audit-findings.json'))
 
-    # Verify auto-added project items ("gh: Content already exists in this project") do not abort issue creation
-    # and collapsed 1-liner bodies / structured fields are normalized into multi-line Markdown sections
+    # Verify auto-added project items ("gh: Content already exists in this project") do not abort issue creation,
+    # omitted priority defaults to Medium, and collapsed 1-liner bodies / structured fields are normalized
     File.write(File.join(@directory, 'audit-findings.json'), JSON.generate([
       {
         'title' => 'test(gap): add unit test for pause toggle',
+        'priority' => 'High',
         'body' => '## Problem: Missing pause test. ## Affected Files: - `src/pause.js` ## Suggested Fix: Add pause unit test. - **AC-1:** Pause toggle is covered.'
       },
       {
@@ -1708,6 +1720,10 @@ class WorkflowsTest < Minitest::Test
     created_bodies = @calls.select { |args| args.first(2) == %w[issue create] }.map { |args| args[args.index('--body') + 1] }
     assert_includes created_bodies[0], "## Problem\n\nMissing pause test.\n\n## Affected Files\n\n- `src/pause.js`\n\n## Suggested Fix\n\nAdd pause unit test.\n\n## Acceptance Criteria\n\n- **AC-1:** Pause toggle is covered."
     assert_includes created_bodies[1], "## Problem\n\nMissing door prompt test.\n\n## Affected Files\n\n- `src/door.js`\n\n## Suggested Fix\n\nAdd door prompt unit test.\n\n## Acceptance Criteria\n\n- **AC-1:** Door prompt is covered."
+    auto_priority_calls = @calls.select { |args| args.any? { |arg| arg.include?('setIssueFieldValue') } }
+    assert_equal 2, auto_priority_calls.length
+    %w[issueId=ISSUE fieldId=PRIORITY_FIELD optionId=prio_high].each { |arg| assert_includes auto_priority_calls[0], arg }
+    %w[issueId=ISSUE fieldId=PRIORITY_FIELD optionId=prio_medium].each { |arg| assert_includes auto_priority_calls[1], arg }
     auto_status_calls = @calls.select { |args| args.any? { |arg| arg.include?('updateProjectV2ItemFieldValue') } }
     assert_equal 2, auto_status_calls.length
     %w[projectId=PROJECT itemId=ITEM fieldId=STATUS optionId=triage].each { |arg| assert_includes auto_status_calls.first, arg }

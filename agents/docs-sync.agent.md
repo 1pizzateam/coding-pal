@@ -7,6 +7,7 @@ description: "Identify mismatches between documentation pages/README and public 
 2. Do not modify source, test, or documentation files.
 3. Write `audit-findings.json` at the repository root as a JSON array where each element represents one distinct documentation mismatch with fields:
    - `"title"`: concise `docs(<scope>): <summary>` issue title
+   - `"priority"`: GitHub issue priority (`"Urgent"`, `"High"`, `"Medium"`, or `"Low"`)
    - `"problem"`: clear explanation of the documentation mismatch
    - `"affectedFiles"`: array of affected documentation and source file paths
    - `"suggestedFix"`: concrete documentation updates needed

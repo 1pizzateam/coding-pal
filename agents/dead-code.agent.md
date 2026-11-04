@@ -7,6 +7,7 @@ description: "Identify unused internal exports, dead state properties, and orpha
 2. Do not modify source, test, or documentation files.
 3. Write `audit-findings.json` at the repository root as a JSON array where each element represents one distinct finding with fields:
    - `"title"`: concise `chore(<scope>): <summary>` issue title
+   - `"priority"`: GitHub issue priority (`"Urgent"`, `"High"`, `"Medium"`, or `"Low"`)
    - `"problem"`: clear explanation of the unused export, dead state property, or orphaned helper/asset
    - `"affectedFiles"`: array of affected file paths (e.g. `["src/foo.js"]`)
    - `"suggestedFix"`: concrete remediation steps
