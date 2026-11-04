@@ -217,9 +217,12 @@ jobs:
                   }
                 }
               }
-            }' -f owner="$OWNER" -f repo="$REPO" -F number="$ISSUE_NUMBER" -f projectTitle="$PROJECT_TITLE")
+            }' -f owner="$OWNER" -f repo="$REPO" -F number="$ISSUE_NUMBER" -f projectTitle="$PROJECT_TITLE" 2>/dev/null || true)
+          if [ -z "$DATA" ]; then
+            exit 1
+          fi
 
-          ISSUE_ID=$(echo "$DATA" | jq -r '.data.repository.issue.id // empty')
+          ISSUE_ID=$(echo "$DATA" | jq -r '.data.repository.issue.id // empty' | head -n 1)
           PROJECT=$(echo "$DATA" | jq -c --arg title "$PROJECT_TITLE" --arg repo "$REPO" '.data.repository.owner.projectsV2.nodes[]? | select((.title | ascii_downcase | sub("\\.js$"; "")) == ($title | ascii_downcase | sub("\\.js$"; "")) or (.title | ascii_downcase) == ($repo | ascii_downcase))' | head -n 1)
           PROJECT_ID=$(echo "$PROJECT" | jq -r '.id // empty')
           FIELD_ID=$(echo "$PROJECT" | jq -r '.field.id // empty')
@@ -250,6 +253,8 @@ jobs:
             if [ -z "$CURRENT_PRIORITY" ]; then
               PRIORITY_FIELD_ID=$(echo "$DATA" | jq -r '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "priority") | .id // empty' | head -n 1)
               PRIORITY_DEFAULT_ID=$(echo "$DATA" | jq -r '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "priority") | .options[]? | select((.name | ascii_downcase) == "medium") | .id // empty' | head -n 1)
+              PRIORITY_FIELD_ID="${PRIORITY_FIELD_ID:-IFSS_kgDOAoWpGg}"
+              PRIORITY_DEFAULT_ID="${PRIORITY_DEFAULT_ID:-IFSSO_kgDOBGndmQ}"
               if [ -n "$PRIORITY_FIELD_ID" ] && [ -n "$PRIORITY_DEFAULT_ID" ]; then
                 gh api graphql -f query='
                   mutation($issueId: ID!, $fieldId: ID!, $fieldOptionId: ID!) {
@@ -266,6 +271,8 @@ jobs:
               CURRENT_MODEL="claude-sonnet-5.5"
               MODEL_FIELD_ID=$(echo "$DATA" | jq -r '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "model") | .id // empty' | head -n 1)
               MODEL_DEFAULT_ID=$(echo "$DATA" | jq -r '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "model") | .options[]? | select((.name | ascii_downcase) == "claude-sonnet-5.5") | .id // empty' | head -n 1)
+              MODEL_FIELD_ID="${MODEL_FIELD_ID:-IFSS_kgDOAvKZhw}"
+              MODEL_DEFAULT_ID="${MODEL_DEFAULT_ID:-IFSSO_kgDOBSkjiw}"
               if [ -n "$MODEL_FIELD_ID" ] && [ -n "$MODEL_DEFAULT_ID" ]; then
                 gh api graphql -f query='
                   mutation($issueId: ID!, $fieldId: ID!, $fieldOptionId: ID!) {
@@ -282,6 +289,8 @@ jobs:
               CURRENT_EFFORT="Medium"
               EFFORT_FIELD_ID=$(echo "$DATA" | jq -r '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "effort") | .id // empty' | head -n 1)
               EFFORT_DEFAULT_ID=$(echo "$DATA" | jq -r '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "effort") | .options[]? | select((.name | ascii_downcase) == "medium") | .id // empty' | head -n 1)
+              EFFORT_FIELD_ID="${EFFORT_FIELD_ID:-IFSS_kgDOAvKWEg}"
+              EFFORT_DEFAULT_ID="${EFFORT_DEFAULT_ID:-IFSSO_kgDOBSkdRg}"
               if [ -n "$EFFORT_FIELD_ID" ] && [ -n "$EFFORT_DEFAULT_ID" ]; then
                 gh api graphql -f query='
                   mutation($issueId: ID!, $fieldId: ID!, $fieldOptionId: ID!) {
@@ -294,7 +303,7 @@ jobs:
             fi
 
             case "$CURRENT_MODEL" in
-              claude-sonnet-5.5|claude-opus-5.5|claude-haiku-5.5|gpt-6.1-sol|gpt-5.3-codex|gemini-4-argon|gemini-3.8-flash|auto)
+              claude-sonnet-5.5|claude-opus-5.5|claude-haiku-5.5|gpt-6.1-sol|gpt-6.1-terra|gpt-6-luna|gpt-5.3-codex|gemini-4-argon|gemini-3.8-flash|auto)
                 ISSUE_AI_MODEL="$CURRENT_MODEL"
                 ;;
               *)
@@ -495,13 +504,11 @@ jobs:
           cp /tmp/1pizza-coding-pal/instructions/*.md .github/instructions/
           cp -R /tmp/1pizza-coding-pal/skills/* .agents/skills/
           cp /tmp/alten-coding-pal/instructions/prove.instructions.md .github/instructions/
-          cp /tmp/alten-coding-pal/instructions/prove-controls.instructions.md .github/instructions/
           [ -d tests ] && [ -f /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md ] && cp /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md .github/instructions/
           [ -d website ] && [ -f /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md ] && cp /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md .github/instructions/
           [ -d website ] && [ -d /tmp/alten-coding-pal/skills/vitepress-docs-examples ] && cp -R /tmp/alten-coding-pal/skills/vitepress-docs-examples .agents/skills/vitepress-docs-examples
           cp /tmp/alten-coding-pal/agents/prove.agent.md .github/agents/
           cp /tmp/alten-coding-pal/agents/gate-fix.agent.md .github/agents/
-          cp /tmp/alten-coding-pal/agents/code.agent.md .github/agents/
           for skill in think plan forge pr-record prove scope-guard secret-guard dependency-guard task-gate control-guard test-probe preview-smoke criteria-verify; do
             cp -R "/tmp/alten-coding-pal/skills/${skill}" ".agents/skills/${skill}"
           done
@@ -809,7 +816,7 @@ jobs:
 
             run_check "control-guard" node .agents/skills/control-guard/scripts/control-guard.mjs --git "origin/${BASE_REF}"
             run_check "secret-guard" node .agents/skills/secret-guard/scripts/secret-guard.mjs --git --base "origin/${BASE_REF}"
-            run_check "dependency-guard" node .agents/skills/dependency-guard/scripts/dependency-guard.mjs --git --base "origin/${BASE_REF}"
+            run_check "dependency-guard" node .agents/skills/dependency-guard/scripts/dependency-guard.mjs --git --base "origin/${BASE_REF}" --plan "${SPEC_DIR}/plan.md" --pr pr.md
 
             SCOPE_ARGS=(--scope "${SPEC_DIR}/**" --scope "pr.md" --scope "gate-output.log" --scope "failed-gates.log" --scope "reports/**")
             while IFS= read -r scope_glob; do
@@ -867,7 +874,7 @@ jobs:
               run_check "criteria-verify" node .agents/skills/criteria-verify/scripts/verify-criteria.mjs --plan "${SPEC_DIR}/plan.md" --report reports/test-report.log --require-test-files
             fi
 
-            MODIFIED_SRCS=$(git diff --name-only --diff-filter=M "origin/${BASE_REF}..HEAD" -- 'src/**')
+            MODIFIED_SRCS=$(git diff --name-only --diff-filter=AM "origin/${BASE_REF}..HEAD" -- 'src/**')
             if [ -n "$MODIFIED_SRCS" ]; then
               PROBE_ARGS=()
               for src in $MODIFIED_SRCS; do
@@ -876,7 +883,7 @@ jobs:
               run_check "test-probe" node .agents/skills/test-probe/scripts/test-probe.mjs --base "origin/${BASE_REF}" --test-cmd "npm test" "${PROBE_ARGS[@]}"
             else
               echo "=== Control: test-probe ===" >> gate-output.log
-              echo "N/A (no existing tracked src/** files modified)" >> gate-output.log
+              echo "N/A (no tracked src/** files added or modified)" >> gate-output.log
             fi
 
             if node -e 'const pkg=require("./package.json"); process.exit((pkg.dependencies?.vite || pkg.devDependencies?.vite) ? 0 : 1)' 2>/dev/null; then
@@ -984,11 +991,11 @@ jobs:
 
             BEFORE=$(git rev-parse HEAD)
             rm -rf "${COPILOT_HOME:-$HOME/.copilot}/session-state" "$COPILOT_OTEL_FILE_EXPORTER_PATH" 2>/dev/null || true
-            copilot --model="${ISSUE_AI_MODEL:-claude-sonnet-5.5}" --reasoning-effort="${ISSUE_AI_EFFORT:-medium}" --agent="code" --allow-all-tools \
+            copilot --model="${ISSUE_AI_MODEL:-claude-sonnet-5.5}" --reasoning-effort="${ISSUE_AI_EFFORT:-medium}" --agent="gate-fix" --allow-all-tools \
               --prompt "Remediate the failing Prove controls and findings for Pull Request #${PR_NUMBER} (Issue #${ISSUE_NUMBER}, attempt ${NEXT}/${FIX_LOOP_LIMIT}).
 
             Read ${REPAIR_FILE}, gate-output.log, ${SPEC_DIR}/think.md, ${SPEC_DIR}/plan.md and pr.md. The repair request includes the current failed commands/output and, only when checks passed, the independent review findings. For failed GitHub checks, inspect their linked run logs with gh run view <run-id> --log-failed before fixing. Ignore stale review records. If the plan is invalid, report a blocking explanation and stop; do not broaden scope.
-            Follow .github/instructions/prove-controls.instructions.md and .github/agents/code.agent.md:
+            Follow .github/instructions/prove.instructions.md and .github/agents/gate-fix.agent.md:
             1. Fix only the application/test files within the In Scope paths of ${SPEC_DIR}/plan.md.
             2. Never weaken, skip, or edit any control or spec file.
             3. Re-run the failed checks and node .agents/skills/control-guard/scripts/control-guard.mjs --git origin/${BASE_REF}.

@@ -165,7 +165,7 @@ jobs:
             else "" end
           ' 2>/dev/null || echo "")
           copilot --model="gemini-3.8-flash" --agent="$AGENT" --allow-all-tools \
-            --prompt "Scope: ${SCOPE}. ${EXTRA_PROMPT} ${OPEN_ISSUES_CONTEXT} Do not modify repository source, test, or documentation files. Keep each finding scoped to a single cohesive module/concern (do not bundle unrelated files or exports into one catch-all issue) and skip any symbol or file already tracked by an open issue. Write structured findings to audit-findings.json as a JSON array of objects, where each element has keys: { \"title\": \"<concise issue title>\", \"priority\": \"<Urgent|High|Medium|Low>\", \"model\": \"<claude-sonnet-5.5|claude-opus-5.5|claude-haiku-5.5|gpt-6.1-sol|gpt-5.3-codex|gemini-4-argon|gemini-3.8-flash|auto>\", \"effort\": \"<Low|Medium|High|Max>\", \"problem\": \"<clear problem explanation>\", \"affectedFiles\": [\"<file path>\"], \"suggestedFix\": \"<concrete remediation>\", \"acceptanceCriteria\": [\"- **AC-1:** <testable criterion>\"], \"body\": \"## Problem\\n\\n<problem>\\n\\n## Affected Files\\n\\n- \`<file>\`\\n\\n## Suggested Fix\\n\\n<fix>\\n\\n## Acceptance Criteria\\n\\n- **AC-1:** <criterion>\" } (or [] if no findings exist), choosing model and effort based on finding complexity and priority (e.g. gemini-3.8-flash/claude-haiku-5.5 + Low for trivial cleanup/docs, claude-sonnet-5.5 + Medium/High for standard code/tests/refactors, claude-opus-5.5 + High/Max for complex architectural/hot-loop changes), and write a brief Markdown summary of the audit to audit-report.md. Always separate Markdown headings and sections with real newlines (\\n\\n), never a single line. If an upstream @1pizzateam/* library (`@1pizzateam/roostr` -> `1pizzateam/RoostR.js`, `@1pizzateam/bumpr` -> `1pizzateam/BumpR.js`, `@1pizzateam/loopr` -> `1pizzateam/LoopR.js`, `@1pizzateam/spock` -> `1pizzateam/Spock.js`, `@1pizzateam/groovr` -> `1pizzateam/GroovR.js`, `@1pizzateam/facer` -> `1pizzateam/FaceR.js`) should be updated instead of (or prior to) changing this repository, write the structured request array to upstream-requests.json with objects `{ \"package\": \"@1pizzateam/<pkg>\", \"repo\": \"1pizzateam/<Repo>\", \"priority\": \"<Urgent|High|Medium|Low>\", \"model\": \"<claude-sonnet-5.5|claude-opus-5.5|claude-haiku-5.5|gpt-6.1-sol|gpt-5.3-codex|gemini-4-argon|gemini-3.8-flash|auto>\", \"effort\": \"<Low|Medium|High|Max>\", \"library_issue_title\": \"<upstream issue title>\", \"library_issue_body\": \"## Problem\\n\\n<problem>\\n\\n## Proposed API\\n\\n<proposed API>\\n\\n## Acceptance Criteria\\n\\n- **AC-1:** <criterion>\", \"consumer_issue_title\": \"<blocked consumer issue title>\", \"consumer_issue_body\": \"## Problem\\n\\n<problem>\\n\\n## Affected Files\\n\\n- \`<file>\`\\n\\n## Suggested Fix\\n\\n<fix>\\n\\n## Acceptance Criteria\\n\\n- **AC-1:** <criterion>\" }`. If a finding in DoomR.js requires a companion update in one of the 1PizzaTeam game editors (`cadenza` -> `1pizzateam/Cadenza`, `facegun` -> `1pizzateam/FaceGun`, `mappr` -> `1pizzateam/MappR`, `pixelgun` -> `1pizzateam/PixelGun`, `polygun` -> `1pizzateam/PolyGun`, `shadergun` -> `1pizzateam/ShaderGun`), write a JSON array to editor-requests.json with objects `{ \"editor\": \"<cadenza|facegun|mappr|pixelgun|polygun|shadergun>\", \"repo\": \"1pizzateam/<Editor>\", \"priority\": \"<Urgent|High|Medium|Low>\", \"model\": \"<claude-sonnet-5.5|claude-opus-5.5|claude-haiku-5.5|gpt-6.1-sol|gpt-5.3-codex|gemini-4-argon|gemini-3.8-flash|auto>\", \"effort\": \"<Low|Medium|High|Max>\", \"title\": \"<issue title>\", \"problem\": \"<what changed in DoomR.js>\", \"affectedFiles\": [\"<DoomR.js file>\"], \"suggestedDirection\": \"<editor changes needed>\", \"body\": \"## Problem\\n\\n<problem>\\n\\n## Affected DoomR.js Files\\n\\n- \`<file>\`\\n\\n## Suggested Direction\\n\\n<direction>\" }`."
+            --prompt "Scope: ${SCOPE}. ${EXTRA_PROMPT} ${OPEN_ISSUES_CONTEXT} Do not modify repository source, test, or documentation files. Keep each finding scoped to a single cohesive module/concern (do not bundle unrelated files or exports into one catch-all issue) and skip any symbol or file already tracked by an open issue. Write structured findings to audit-findings.json as a JSON array of objects, where each element has keys: { \"title\": \"<concise issue title>\", \"priority\": \"<Urgent|High|Medium|Low>\", \"model\": \"<claude-sonnet-5.5|claude-opus-5.5|claude-haiku-5.5|gpt-6.1-sol|gpt-6.1-terra|gpt-6-luna|gpt-5.3-codex|gemini-4-argon|gemini-3.8-flash|auto>\", \"effort\": \"<Low|Medium|High|Max>\", \"problem\": \"<clear problem explanation>\", \"affectedFiles\": [\"<file path>\"], \"suggestedFix\": \"<concrete remediation>\", \"acceptanceCriteria\": [\"- **AC-1:** <testable criterion>\"], \"body\": \"## Problem\\n\\n<problem>\\n\\n## Affected Files\\n\\n- \`<file>\`\\n\\n## Suggested Fix\\n\\n<fix>\\n\\n## Acceptance Criteria\\n\\n- **AC-1:** <criterion>\" } (or [] if no findings exist), choosing model and effort based on finding complexity and priority (e.g. gemini-3.8-flash/claude-haiku-5.5 + Low for trivial cleanup/docs, claude-sonnet-5.5 + Medium/High for standard code/tests/refactors, claude-opus-5.5 + High/Max for complex architectural/hot-loop changes), and write a brief Markdown summary of the audit to audit-report.md. Always separate Markdown headings and sections with real newlines (\\n\\n), never a single line. If an upstream @1pizzateam/* library (`@1pizzateam/roostr` -> `1pizzateam/RoostR.js`, `@1pizzateam/bumpr` -> `1pizzateam/BumpR.js`, `@1pizzateam/loopr` -> `1pizzateam/LoopR.js`, `@1pizzateam/spock` -> `1pizzateam/Spock.js`, `@1pizzateam/groovr` -> `1pizzateam/GroovR.js`, `@1pizzateam/facer` -> `1pizzateam/FaceR.js`) should be updated instead of (or prior to) changing this repository, write the structured request array to upstream-requests.json with objects `{ \"package\": \"@1pizzateam/<pkg>\", \"repo\": \"1pizzateam/<Repo>\", \"priority\": \"<Urgent|High|Medium|Low>\", \"model\": \"<claude-sonnet-5.5|claude-opus-5.5|claude-haiku-5.5|gpt-6.1-sol|gpt-6.1-terra|gpt-6-luna|gpt-5.3-codex|gemini-4-argon|gemini-3.8-flash|auto>\", \"effort\": \"<Low|Medium|High|Max>\", \"library_issue_title\": \"<upstream issue title>\", \"library_issue_body\": \"## Problem\\n\\n<problem>\\n\\n## Proposed API\\n\\n<proposed API>\\n\\n## Acceptance Criteria\\n\\n- **AC-1:** <criterion>\", \"consumer_issue_title\": \"<blocked consumer issue title>\", \"consumer_issue_body\": \"## Problem\\n\\n<problem>\\n\\n## Affected Files\\n\\n- \`<file>\`\\n\\n## Suggested Fix\\n\\n<fix>\\n\\n## Acceptance Criteria\\n\\n- **AC-1:** <criterion>\" }`. If a finding in DoomR.js requires a companion update in one of the 1PizzaTeam game editors (`cadenza` -> `1pizzateam/Cadenza`, `facegun` -> `1pizzateam/FaceGun`, `mappr` -> `1pizzateam/MappR`, `pixelgun` -> `1pizzateam/PixelGun`, `polygun` -> `1pizzateam/PolyGun`, `shadergun` -> `1pizzateam/ShaderGun`), write a JSON array to editor-requests.json with objects `{ \"editor\": \"<cadenza|facegun|mappr|pixelgun|polygun|shadergun>\", \"repo\": \"1pizzateam/<Editor>\", \"priority\": \"<Urgent|High|Medium|Low>\", \"model\": \"<claude-sonnet-5.5|claude-opus-5.5|claude-haiku-5.5|gpt-6.1-sol|gpt-6.1-terra|gpt-6-luna|gpt-5.3-codex|gemini-4-argon|gemini-3.8-flash|auto>\", \"effort\": \"<Low|Medium|High|Max>\", \"title\": \"<issue title>\", \"problem\": \"<what changed in DoomR.js>\", \"affectedFiles\": [\"<DoomR.js file>\"], \"suggestedDirection\": \"<editor changes needed>\", \"body\": \"## Problem\\n\\n<problem>\\n\\n## Affected DoomR.js Files\\n\\n- \`<file>\`\\n\\n## Suggested Direction\\n\\n<direction>\" }`."
 
       - name: Create issues for audit findings and add to Project
         id: create_findings
@@ -214,6 +214,8 @@ jobs:
               if ($m == "claude-opus-5.5" or $m == "opus") then "claude-opus-5.5"
               elif ($m == "claude-haiku-5.5" or $m == "haiku") then "claude-haiku-5.5"
               elif ($m == "gpt-6.1-sol") then "gpt-6.1-sol"
+              elif ($m == "gpt-6.1-terra" or $m == "terra") then "gpt-6.1-terra"
+              elif ($m == "gpt-6-luna" or $m == "luna") then "gpt-6-luna"
               elif ($m == "gpt-5.3-codex" or $m == "codex") then "gpt-5.3-codex"
               elif ($m == "gemini-4-argon" or $m == "argon") then "gemini-4-argon"
               elif ($m == "gemini-3.8-flash" or $m == "flash") then "gemini-3.8-flash"
@@ -374,12 +376,22 @@ jobs:
                     }
                   }
                 }
-              }' -f owner="$OWNER" -f repo="$REPO" -F number="$ISSUE_NUMBER" -f projectTitle="$PROJECT_TITLE" 2>/dev/null || echo '{}')
+              }' -f owner="$OWNER" -f repo="$REPO" -F number="$ISSUE_NUMBER" -f projectTitle="$PROJECT_TITLE" 2>/dev/null || true)
+            DATA="${DATA:-"{}"}"
 
-            ISSUE_ID=$(echo "$DATA" | jq -r '.data.repository.issue.id // empty')
+            ISSUE_ID=$(echo "$DATA" | jq -r '.data.repository.issue.id // empty' | head -n 1)
             PRIORITY_FIELD=$(echo "$DATA" | jq -c '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "priority")' | head -n 1)
             PRIORITY_FIELD_ID=$(echo "$PRIORITY_FIELD" | jq -r '.id // empty')
             PRIORITY_OPTION_ID=$(echo "$PRIORITY_FIELD" | jq -r --arg p "$PRIORITY" '(.options[]? | select((.name | ascii_downcase) == ($p | ascii_downcase)) | .id), (.options[]? | select((.name | ascii_downcase) == "medium") | .id)' | head -n 1)
+            if [ -z "$PRIORITY_FIELD_ID" ] || [ -z "$PRIORITY_OPTION_ID" ]; then
+              PRIORITY_FIELD_ID="IFSS_kgDOAoWpGg"
+              case "$PRIORITY" in
+                Urgent) PRIORITY_OPTION_ID="IFSSO_kgDOBGndlw" ;;
+                High)   PRIORITY_OPTION_ID="IFSSO_kgDOBGndmA" ;;
+                Low)    PRIORITY_OPTION_ID="IFSSO_kgDOBGndmg" ;;
+                *)      PRIORITY_OPTION_ID="IFSSO_kgDOBGndmQ" ;;
+              esac
+            fi
             if [ -n "$ISSUE_ID" ] && [ -n "$PRIORITY_FIELD_ID" ] && [ -n "$PRIORITY_OPTION_ID" ]; then
               gh api graphql -f query='
                 mutation($issueId: ID!, $fieldId: ID!, $optionId: ID!) {
@@ -392,6 +404,21 @@ jobs:
             MODEL_FIELD=$(echo "$DATA" | jq -c '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "model")' | head -n 1)
             MODEL_FIELD_ID=$(echo "$MODEL_FIELD" | jq -r '.id // empty')
             MODEL_OPTION_ID=$(echo "$MODEL_FIELD" | jq -r --arg m "$MODEL" '(.options[]? | select((.name | ascii_downcase) == ($m | ascii_downcase)) | .id), (.options[]? | select((.name | ascii_downcase) == "claude-sonnet-5.5") | .id)' | head -n 1)
+            if [ -z "$MODEL_FIELD_ID" ] || [ -z "$MODEL_OPTION_ID" ]; then
+              MODEL_FIELD_ID="IFSS_kgDOAvKZhw"
+              case "$MODEL" in
+                claude-opus-5.5)  MODEL_OPTION_ID="IFSSO_kgDOBSkjjA" ;;
+                claude-haiku-5.5) MODEL_OPTION_ID="IFSSO_kgDOBSkjjQ" ;;
+                gpt-6.1-sol)      MODEL_OPTION_ID="IFSSO_kgDOBSkjjg" ;;
+                gpt-6.1-terra)    MODEL_OPTION_ID="IFSSO_kgDOBSkjjw" ;;
+                gpt-6-luna)       MODEL_OPTION_ID="IFSSO_kgDOBSkjkA" ;;
+                gpt-5.3-codex)    MODEL_OPTION_ID="IFSSO_kgDOBSkjkQ" ;;
+                gemini-4-argon)   MODEL_OPTION_ID="IFSSO_kgDOBSkjkg" ;;
+                gemini-3.8-flash) MODEL_OPTION_ID="IFSSO_kgDOBSkjkw" ;;
+                auto)             MODEL_OPTION_ID="IFSSO_kgDOBSkjlQ" ;;
+                *)                MODEL_OPTION_ID="IFSSO_kgDOBSkjiw" ;;
+              esac
+            fi
             if [ -n "$ISSUE_ID" ] && [ -n "$MODEL_FIELD_ID" ] && [ -n "$MODEL_OPTION_ID" ]; then
               gh api graphql -f query='
                 mutation($issueId: ID!, $fieldId: ID!, $optionId: ID!) {
@@ -404,6 +431,15 @@ jobs:
             EFFORT_FIELD=$(echo "$DATA" | jq -c '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "effort")' | head -n 1)
             EFFORT_FIELD_ID=$(echo "$EFFORT_FIELD" | jq -r '.id // empty')
             EFFORT_OPTION_ID=$(echo "$EFFORT_FIELD" | jq -r --arg e "$EFFORT" '(.options[]? | select((.name | ascii_downcase) == ($e | ascii_downcase)) | .id), (.options[]? | select((.name | ascii_downcase) == "medium") | .id)' | head -n 1)
+            if [ -z "$EFFORT_FIELD_ID" ] || [ -z "$EFFORT_OPTION_ID" ]; then
+              EFFORT_FIELD_ID="IFSS_kgDOAvKWEg"
+              case "$EFFORT" in
+                Max)  EFFORT_OPTION_ID="IFSSO_kgDOBSkdRA" ;;
+                High) EFFORT_OPTION_ID="IFSSO_kgDOBSkdRQ" ;;
+                Low)  EFFORT_OPTION_ID="IFSSO_kgDOBSkdRw" ;;
+                *)    EFFORT_OPTION_ID="IFSSO_kgDOBSkdRg" ;;
+              esac
+            fi
             if [ -n "$ISSUE_ID" ] && [ -n "$EFFORT_FIELD_ID" ] && [ -n "$EFFORT_OPTION_ID" ]; then
               gh api graphql -f query='
                 mutation($issueId: ID!, $fieldId: ID!, $optionId: ID!) {
@@ -537,12 +573,22 @@ jobs:
                     }
                   }
                 }
-              }' -f owner="$owner" -f repo="$repo" -F number="$issue_num" -f projectTitle="$ptitle" 2>/dev/null || echo '{}')
+              }' -f owner="$owner" -f repo="$repo" -F number="$issue_num" -f projectTitle="$ptitle" 2>/dev/null || true)
+            data="${data:-"{}"}"
             local issue_id priority_field priority_field_id priority_option_id model_field model_field_id model_option_id effort_field effort_field_id effort_option_id project project_id field_id option_id item_id
-            issue_id=$(echo "$data" | jq -r '.data.repository.issue.id // empty')
+            issue_id=$(echo "$data" | jq -r '.data.repository.issue.id // empty' | head -n 1)
             priority_field=$(echo "$data" | jq -c '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "priority")' | head -n 1)
             priority_field_id=$(echo "$priority_field" | jq -r '.id // empty')
             priority_option_id=$(echo "$priority_field" | jq -r --arg p "$priority_val" '(.options[]? | select((.name | ascii_downcase) == ($p | ascii_downcase)) | .id), (.options[]? | select((.name | ascii_downcase) == "medium") | .id)' | head -n 1)
+            if [ -z "$priority_field_id" ] || [ -z "$priority_option_id" ]; then
+              priority_field_id="IFSS_kgDOAoWpGg"
+              case "$priority_val" in
+                Urgent) priority_option_id="IFSSO_kgDOBGndlw" ;;
+                High)   priority_option_id="IFSSO_kgDOBGndmA" ;;
+                Low)    priority_option_id="IFSSO_kgDOBGndmg" ;;
+                *)      priority_option_id="IFSSO_kgDOBGndmQ" ;;
+              esac
+            fi
             if [ -n "$issue_id" ] && [ -n "$priority_field_id" ] && [ -n "$priority_option_id" ]; then
               gh api graphql -f query='
                 mutation($issueId: ID!, $fieldId: ID!, $optionId: ID!) {
@@ -555,6 +601,21 @@ jobs:
             model_field=$(echo "$data" | jq -c '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "model")' | head -n 1)
             model_field_id=$(echo "$model_field" | jq -r '.id // empty')
             model_option_id=$(echo "$model_field" | jq -r --arg m "$model_val" '(.options[]? | select((.name | ascii_downcase) == ($m | ascii_downcase)) | .id), (.options[]? | select((.name | ascii_downcase) == "claude-sonnet-5.5") | .id)' | head -n 1)
+            if [ -z "$model_field_id" ] || [ -z "$model_option_id" ]; then
+              model_field_id="IFSS_kgDOAvKZhw"
+              case "$model_val" in
+                claude-opus-5.5)  model_option_id="IFSSO_kgDOBSkjjA" ;;
+                claude-haiku-5.5) model_option_id="IFSSO_kgDOBSkjjQ" ;;
+                gpt-6.1-sol)      model_option_id="IFSSO_kgDOBSkjjg" ;;
+                gpt-6.1-terra)    model_option_id="IFSSO_kgDOBSkjjw" ;;
+                gpt-6-luna)       model_option_id="IFSSO_kgDOBSkjkA" ;;
+                gpt-5.3-codex)    model_option_id="IFSSO_kgDOBSkjkQ" ;;
+                gemini-4-argon)   model_option_id="IFSSO_kgDOBSkjkg" ;;
+                gemini-3.8-flash) model_option_id="IFSSO_kgDOBSkjkw" ;;
+                auto)             model_option_id="IFSSO_kgDOBSkjlQ" ;;
+                *)                model_option_id="IFSSO_kgDOBSkjiw" ;;
+              esac
+            fi
             if [ -n "$issue_id" ] && [ -n "$model_field_id" ] && [ -n "$model_option_id" ]; then
               gh api graphql -f query='
                 mutation($issueId: ID!, $fieldId: ID!, $optionId: ID!) {
@@ -567,6 +628,15 @@ jobs:
             effort_field=$(echo "$data" | jq -c '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "effort")' | head -n 1)
             effort_field_id=$(echo "$effort_field" | jq -r '.id // empty')
             effort_option_id=$(echo "$effort_field" | jq -r --arg e "$effort_val" '(.options[]? | select((.name | ascii_downcase) == ($e | ascii_downcase)) | .id), (.options[]? | select((.name | ascii_downcase) == "medium") | .id)' | head -n 1)
+            if [ -z "$effort_field_id" ] || [ -z "$effort_option_id" ]; then
+              effort_field_id="IFSS_kgDOAvKWEg"
+              case "$effort_val" in
+                Max)  effort_option_id="IFSSO_kgDOBSkdRA" ;;
+                High) effort_option_id="IFSSO_kgDOBSkdRQ" ;;
+                Low)  effort_option_id="IFSSO_kgDOBSkdRw" ;;
+                *)    effort_option_id="IFSSO_kgDOBSkdRg" ;;
+              esac
+            fi
             if [ -n "$issue_id" ] && [ -n "$effort_field_id" ] && [ -n "$effort_option_id" ]; then
               gh api graphql -f query='
                 mutation($issueId: ID!, $fieldId: ID!, $optionId: ID!) {
@@ -645,6 +715,8 @@ jobs:
               if ($m == "claude-opus-5.5" or $m == "opus") then "claude-opus-5.5"
               elif ($m == "claude-haiku-5.5" or $m == "haiku") then "claude-haiku-5.5"
               elif ($m == "gpt-6.1-sol") then "gpt-6.1-sol"
+              elif ($m == "gpt-6.1-terra" or $m == "terra") then "gpt-6.1-terra"
+              elif ($m == "gpt-6-luna" or $m == "luna") then "gpt-6-luna"
               elif ($m == "gpt-5.3-codex" or $m == "codex") then "gpt-5.3-codex"
               elif ($m == "gemini-4-argon" or $m == "argon") then "gemini-4-argon"
               elif ($m == "gemini-3.8-flash" or $m == "flash") then "gemini-3.8-flash"
@@ -789,6 +861,8 @@ jobs:
               if ($m == "claude-opus-5.5" or $m == "opus") then "claude-opus-5.5"
               elif ($m == "claude-haiku-5.5" or $m == "haiku") then "claude-haiku-5.5"
               elif ($m == "gpt-6.1-sol") then "gpt-6.1-sol"
+              elif ($m == "gpt-6.1-terra" or $m == "terra") then "gpt-6.1-terra"
+              elif ($m == "gpt-6-luna" or $m == "luna") then "gpt-6-luna"
               elif ($m == "gpt-5.3-codex" or $m == "codex") then "gpt-5.3-codex"
               elif ($m == "gemini-4-argon" or $m == "argon") then "gemini-4-argon"
               elif ($m == "gemini-3.8-flash" or $m == "flash") then "gemini-3.8-flash"
@@ -939,11 +1013,21 @@ jobs:
                     }
                   }
                 }
-              }' -f owner="$ED_OWNER" -f repo="$ED_REPO" -F number="$ED_ISSUE_NUMBER" -f projectTitle="$ED_REPO" 2>/dev/null || echo '{}')
-            ED_ISSUE_ID=$(echo "$ED_DATA" | jq -r '.data.repository.issue.id // empty')
+              }' -f owner="$ED_OWNER" -f repo="$ED_REPO" -F number="$ED_ISSUE_NUMBER" -f projectTitle="$ED_REPO" 2>/dev/null || true)
+            ED_DATA="${ED_DATA:-"{}"}"
+            ED_ISSUE_ID=$(echo "$ED_DATA" | jq -r '.data.repository.issue.id // empty' | head -n 1)
             ED_PRIORITY_FIELD=$(echo "$ED_DATA" | jq -c '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "priority")' | head -n 1)
             ED_PRIORITY_FIELD_ID=$(echo "$ED_PRIORITY_FIELD" | jq -r '.id // empty')
             ED_PRIORITY_OPTION_ID=$(echo "$ED_PRIORITY_FIELD" | jq -r --arg p "$ED_PRIORITY" '(.options[]? | select((.name | ascii_downcase) == ($p | ascii_downcase)) | .id), (.options[]? | select((.name | ascii_downcase) == "medium") | .id)' | head -n 1)
+            if [ -z "$ED_PRIORITY_FIELD_ID" ] || [ -z "$ED_PRIORITY_OPTION_ID" ]; then
+              ED_PRIORITY_FIELD_ID="IFSS_kgDOAoWpGg"
+              case "$ED_PRIORITY" in
+                Urgent) ED_PRIORITY_OPTION_ID="IFSSO_kgDOBGndlw" ;;
+                High)   ED_PRIORITY_OPTION_ID="IFSSO_kgDOBGndmA" ;;
+                Low)    ED_PRIORITY_OPTION_ID="IFSSO_kgDOBGndmg" ;;
+                *)      ED_PRIORITY_OPTION_ID="IFSSO_kgDOBGndmQ" ;;
+              esac
+            fi
             if [ -n "$ED_ISSUE_ID" ] && [ -n "$ED_PRIORITY_FIELD_ID" ] && [ -n "$ED_PRIORITY_OPTION_ID" ]; then
               gh api graphql -f query='
                 mutation($issueId: ID!, $fieldId: ID!, $optionId: ID!) {
@@ -956,6 +1040,21 @@ jobs:
             ED_MODEL_FIELD=$(echo "$ED_DATA" | jq -c '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "model")' | head -n 1)
             ED_MODEL_FIELD_ID=$(echo "$ED_MODEL_FIELD" | jq -r '.id // empty')
             ED_MODEL_OPTION_ID=$(echo "$ED_MODEL_FIELD" | jq -r --arg m "$ED_MODEL" '(.options[]? | select((.name | ascii_downcase) == ($m | ascii_downcase)) | .id), (.options[]? | select((.name | ascii_downcase) == "claude-sonnet-5.5") | .id)' | head -n 1)
+            if [ -z "$ED_MODEL_FIELD_ID" ] || [ -z "$ED_MODEL_OPTION_ID" ]; then
+              ED_MODEL_FIELD_ID="IFSS_kgDOAvKZhw"
+              case "$ED_MODEL" in
+                claude-opus-5.5)  ED_MODEL_OPTION_ID="IFSSO_kgDOBSkjjA" ;;
+                claude-haiku-5.5) ED_MODEL_OPTION_ID="IFSSO_kgDOBSkjjQ" ;;
+                gpt-6.1-sol)      ED_MODEL_OPTION_ID="IFSSO_kgDOBSkjjg" ;;
+                gpt-6.1-terra)    ED_MODEL_OPTION_ID="IFSSO_kgDOBSkjjw" ;;
+                gpt-6-luna)       ED_MODEL_OPTION_ID="IFSSO_kgDOBSkjkA" ;;
+                gpt-5.3-codex)    ED_MODEL_OPTION_ID="IFSSO_kgDOBSkjkQ" ;;
+                gemini-4-argon)   ED_MODEL_OPTION_ID="IFSSO_kgDOBSkjkg" ;;
+                gemini-3.8-flash) ED_MODEL_OPTION_ID="IFSSO_kgDOBSkjkw" ;;
+                auto)             ED_MODEL_OPTION_ID="IFSSO_kgDOBSkjlQ" ;;
+                *)                ED_MODEL_OPTION_ID="IFSSO_kgDOBSkjiw" ;;
+              esac
+            fi
             if [ -n "$ED_ISSUE_ID" ] && [ -n "$ED_MODEL_FIELD_ID" ] && [ -n "$ED_MODEL_OPTION_ID" ]; then
               gh api graphql -f query='
                 mutation($issueId: ID!, $fieldId: ID!, $optionId: ID!) {
@@ -968,6 +1067,15 @@ jobs:
             ED_EFFORT_FIELD=$(echo "$ED_DATA" | jq -c '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "effort")' | head -n 1)
             ED_EFFORT_FIELD_ID=$(echo "$ED_EFFORT_FIELD" | jq -r '.id // empty')
             ED_EFFORT_OPTION_ID=$(echo "$ED_EFFORT_FIELD" | jq -r --arg e "$ED_EFFORT" '(.options[]? | select((.name | ascii_downcase) == ($e | ascii_downcase)) | .id), (.options[]? | select((.name | ascii_downcase) == "medium") | .id)' | head -n 1)
+            if [ -z "$ED_EFFORT_FIELD_ID" ] || [ -z "$ED_EFFORT_OPTION_ID" ]; then
+              ED_EFFORT_FIELD_ID="IFSS_kgDOAvKWEg"
+              case "$ED_EFFORT" in
+                Max)  ED_EFFORT_OPTION_ID="IFSSO_kgDOBSkdRA" ;;
+                High) ED_EFFORT_OPTION_ID="IFSSO_kgDOBSkdRQ" ;;
+                Low)  ED_EFFORT_OPTION_ID="IFSSO_kgDOBSkdRw" ;;
+                *)    ED_EFFORT_OPTION_ID="IFSSO_kgDOBSkdRg" ;;
+              esac
+            fi
             if [ -n "$ED_ISSUE_ID" ] && [ -n "$ED_EFFORT_FIELD_ID" ] && [ -n "$ED_EFFORT_OPTION_ID" ]; then
               gh api graphql -f query='
                 mutation($issueId: ID!, $fieldId: ID!, $optionId: ID!) {

@@ -1966,4 +1966,32 @@ class WorkflowsTest < Minitest::Test
     refute @calls.any? { |args| args.first(2) == %w[issue create] }, 'Overlapping file + symbol finding must be skipped'
     refute @calls.any? { |args| args.first(2) == %w[issue edit] }, 'Different-title overlapping finding must not overwrite existing issue body'
   end
+
+  def test_primitive_validators_and_agents_are_wired_across_phases
+    think_install = steps('think').find { |item| item['name'] == 'Install ALTEN-group/coding-pal think primitives' }.fetch('run')
+    refute_includes think_install, 'forge.instructions.md'
+    think_validate = steps('think').find { |item| item['name'] == 'Validate think.md contract' }.fetch('run')
+    assert_includes think_validate, 'bindings-check.mjs --think "$THINK_FILE"'
+    assert_includes think_validate, 'validate-decision.mjs --think "$THINK_FILE"'
+
+    plan_install = steps('plan').find { |item| item['name'] == 'Install ALTEN-group/coding-pal plan primitives' }.fetch('run')
+    refute_includes plan_install, 'forge.instructions.md'
+    assert_includes plan_install, 'skills/think'
+    plan_validate = steps('plan').find { |item| item['name'] == 'Validate plan.md contract and cross-check against think.md' }.fetch('run')
+    assert_includes plan_validate, 'bindings-check.mjs --think "$THINK_FILE" --plan "$PLAN_FILE"'
+
+    code_install = steps('code').find { |item| item['name'] == 'Install ALTEN-group/coding-pal code primitives' }.fetch('run')
+    assert_includes code_install, 'for skill in think plan forge'
+    code_gates = steps('code').find { |item| item['name'] == 'Run deterministic Code exit gates' }.fetch('run')
+    assert_includes code_gates, 'validate-plan.mjs --plan "${SPEC_DIR}/plan.md" --think "${SPEC_DIR}/think.md"'
+
+    prove_install = steps('prove').find { |item| item['name'] == 'Install ALTEN-group/coding-pal Prove and Remediation primitives' }.fetch('run')
+    refute_includes prove_install, 'prove-controls.instructions.md'
+    refute_includes prove_install, 'agents/code.agent.md'
+    prove_loop = steps('prove').find { |item| item['name'] == 'Run Prove validation and auto-remediation loop' }.fetch('run')
+    assert_includes prove_loop, 'dependency-guard.mjs --git --base "origin/${BASE_REF}" --plan "${SPEC_DIR}/plan.md" --pr pr.md'
+    assert_includes prove_loop, '--diff-filter=AM "origin/${BASE_REF}..HEAD"'
+    assert_includes prove_loop, '--agent="gate-fix"'
+    refute_includes prove_loop, '--agent="code"'
+  end
 end
