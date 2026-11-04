@@ -8,6 +8,8 @@ description: "Identify hot-loop and library runtime method violations of the hot
 3. Write `audit-findings.json` at the repository root as a JSON array where each element represents one distinct performance or Zero-GC finding with fields:
    - `"title"`: concise `perf(<scope>): <summary>` issue title
    - `"priority"`: GitHub issue priority (`"Urgent"`, `"High"`, `"Medium"`, or `"Low"`)
+   - `"model"`: recommended Copilot model for remediation (`"claude-sonnet-5.5"`, `"claude-opus-5.5"`, `"claude-haiku-5.5"`, `"gpt-6.1-sol"`, `"gpt-5.3-codex"`, `"gemini-4-argon"`, `"gemini-3.8-flash"`, or `"auto"`) based on finding complexity
+   - `"effort"`: recommended thinking effort (`"Low"`, `"Medium"`, `"High"`, or `"Max"`) based on reasoning depth required
    - `"problem"`: clear explanation of the hot-loop or Zero-GC violation
    - `"affectedFiles"`: array of affected file paths (e.g. `["src/foo.js"]`)
    - `"suggestedFix"`: concrete remediation steps

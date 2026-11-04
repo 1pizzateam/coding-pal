@@ -183,8 +183,35 @@ jobs:
           DATA=$(gh api graphql -f query='
             query($owner: String!, $repo: String!, $number: Int!, $projectTitle: String!) {
               repository(owner: $owner, name: $repo) {
-                issue(number: $number) { id }
+                issue(number: $number) {
+                  id
+                  issueFieldValues(first: 20) {
+                    nodes {
+                      ... on IssueFieldSingleSelectValue {
+                        value
+                        optionId
+                        field {
+                          ... on IssueFieldSingleSelect {
+                            id
+                            name
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
                 owner {
+                  ... on Organization {
+                    issueFields(first: 20) {
+                      nodes {
+                        ... on IssueFieldSingleSelect {
+                          id
+                          name
+                          options { id name }
+                        }
+                      }
+                    }
+                  }
                   ... on ProjectV2Owner {
                     projectsV2(first: 20, query: $projectTitle) {
                       nodes {
@@ -217,6 +244,7 @@ jobs:
           PROJECT_ID=$(echo "$PROJECT" | jq -r '.id // empty')
           FIELD_ID=$(echo "$PROJECT" | jq -r '.field.id // empty')
           OPTION_ID=$(echo "$PROJECT" | jq -r --arg status "$TARGET_STATUS" '.field.options[]? | select((.name | ascii_downcase) == ($status | ascii_downcase)) | .id' | head -n 1)
+          DONE_OPTION_ID=$(echo "$PROJECT" | jq -r '.field.options[]? | select((.name | ascii_downcase) == "done") | .id' | head -n 1)
           COST_FIELD_ID=$(echo "$PROJECT" | jq -r '(.costField.id // ([.fields.nodes[]? | select((.name // "" | ascii_downcase) == "ai cost")][0].id)) // empty')
           COST_FIELD_TYPE=$(echo "$PROJECT" | jq -r '(.costField.dataType // ([.fields.nodes[]? | select((.name // "" | ascii_downcase) == "ai cost")][0].dataType)) // "NUMBER"')
 
@@ -238,9 +266,82 @@ jobs:
               }) { projectV2Item { id } }
             }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$FIELD_ID" -f optionId="$OPTION_ID" >/dev/null
 
+          if [ -z "${ISSUE_AI_MODEL:-}" ]; then
+            CURRENT_PRIORITY=$(echo "$DATA" | jq -r '.data.repository.issue.issueFieldValues.nodes[]? | select((.field.name // "" | ascii_downcase) == "priority") | .value // empty' | head -n 1)
+            if [ -z "$CURRENT_PRIORITY" ]; then
+              PRIORITY_FIELD_ID=$(echo "$DATA" | jq -r '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "priority") | .id // empty' | head -n 1)
+              PRIORITY_DEFAULT_ID=$(echo "$DATA" | jq -r '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "priority") | .options[]? | select((.name | ascii_downcase) == "medium") | .id // empty' | head -n 1)
+              if [ -n "$PRIORITY_FIELD_ID" ] && [ -n "$PRIORITY_DEFAULT_ID" ]; then
+                gh api graphql -f query='
+                  mutation($issueId: ID!, $fieldId: ID!, $fieldOptionId: ID!) {
+                    setIssueFieldValue(input: {
+                      issueId: $issueId,
+                      issueFields: [{ fieldId: $fieldId, singleSelectOptionId: $fieldOptionId }]
+                    }) { issue { id } }
+                  }' -f issueId="$ISSUE_ID" -f fieldId="$PRIORITY_FIELD_ID" -f fieldOptionId="$PRIORITY_DEFAULT_ID" >/dev/null 2>&1 || true
+              fi
+            fi
+
+            CURRENT_MODEL=$(echo "$DATA" | jq -r '.data.repository.issue.issueFieldValues.nodes[]? | select((.field.name // "" | ascii_downcase) == "model") | .value // empty' | head -n 1)
+            if [ -z "$CURRENT_MODEL" ]; then
+              CURRENT_MODEL="claude-sonnet-5.5"
+              MODEL_FIELD_ID=$(echo "$DATA" | jq -r '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "model") | .id // empty' | head -n 1)
+              MODEL_DEFAULT_ID=$(echo "$DATA" | jq -r '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "model") | .options[]? | select((.name | ascii_downcase) == "claude-sonnet-5.5") | .id // empty' | head -n 1)
+              if [ -n "$MODEL_FIELD_ID" ] && [ -n "$MODEL_DEFAULT_ID" ]; then
+                gh api graphql -f query='
+                  mutation($issueId: ID!, $fieldId: ID!, $fieldOptionId: ID!) {
+                    setIssueFieldValue(input: {
+                      issueId: $issueId,
+                      issueFields: [{ fieldId: $fieldId, singleSelectOptionId: $fieldOptionId }]
+                    }) { issue { id } }
+                  }' -f issueId="$ISSUE_ID" -f fieldId="$MODEL_FIELD_ID" -f fieldOptionId="$MODEL_DEFAULT_ID" >/dev/null 2>&1 || true
+              fi
+            fi
+
+            CURRENT_EFFORT=$(echo "$DATA" | jq -r '.data.repository.issue.issueFieldValues.nodes[]? | select((.field.name // "" | ascii_downcase) == "effort") | .value // empty' | head -n 1)
+            if [ -z "$CURRENT_EFFORT" ]; then
+              CURRENT_EFFORT="Medium"
+              EFFORT_FIELD_ID=$(echo "$DATA" | jq -r '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "effort") | .id // empty' | head -n 1)
+              EFFORT_DEFAULT_ID=$(echo "$DATA" | jq -r '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "effort") | .options[]? | select((.name | ascii_downcase) == "medium") | .id // empty' | head -n 1)
+              if [ -n "$EFFORT_FIELD_ID" ] && [ -n "$EFFORT_DEFAULT_ID" ]; then
+                gh api graphql -f query='
+                  mutation($issueId: ID!, $fieldId: ID!, $fieldOptionId: ID!) {
+                    setIssueFieldValue(input: {
+                      issueId: $issueId,
+                      issueFields: [{ fieldId: $fieldId, singleSelectOptionId: $fieldOptionId }]
+                    }) { issue { id } }
+                  }' -f issueId="$ISSUE_ID" -f fieldId="$EFFORT_FIELD_ID" -f fieldOptionId="$EFFORT_DEFAULT_ID" >/dev/null 2>&1 || true
+              fi
+            fi
+
+            case "$CURRENT_MODEL" in
+              claude-sonnet-5.5|claude-opus-5.5|claude-haiku-5.5|gpt-6.1-sol|gpt-5.3-codex|gemini-4-argon|gemini-3.8-flash|auto)
+                ISSUE_AI_MODEL="$CURRENT_MODEL"
+                ;;
+              *)
+                ISSUE_AI_MODEL="claude-sonnet-5.5"
+                ;;
+            esac
+            EFFORT_LOWER=$(echo "$CURRENT_EFFORT" | tr '[:upper:]' '[:lower:]')
+            case "$EFFORT_LOWER" in
+              low|medium|high|max)
+                ISSUE_AI_EFFORT="$EFFORT_LOWER"
+                ;;
+              *)
+                ISSUE_AI_EFFORT="medium"
+                ;;
+            esac
+            export ISSUE_AI_MODEL ISSUE_AI_EFFORT
+            echo "ISSUE_AI_MODEL=${ISSUE_AI_MODEL}" >> "$GITHUB_ENV"
+            echo "ISSUE_AI_EFFORT=${ISSUE_AI_EFFORT}" >> "$GITHUB_ENV"
+          fi
+
+          echo "PROJECT_ID=${PROJECT_ID}" >> "$GITHUB_ENV"
+          echo "PROJECT_ITEM_ID=${ITEM_ID}" >> "$GITHUB_ENV"
+          echo "STATUS_FIELD_ID=${FIELD_ID}" >> "$GITHUB_ENV"
+          echo "DONE_OPTION_ID=${DONE_OPTION_ID}" >> "$GITHUB_ENV"
+
           if [ -n "$COST_FIELD_ID" ]; then
-            echo "PROJECT_ID=${PROJECT_ID}" >> "$GITHUB_ENV"
-            echo "PROJECT_ITEM_ID=${ITEM_ID}" >> "$GITHUB_ENV"
             echo "COST_FIELD_ID=${COST_FIELD_ID}" >> "$GITHUB_ENV"
             echo "COST_FIELD_TYPE=${COST_FIELD_TYPE}" >> "$GITHUB_ENV"
             COMMENTS_JSON=$(gh issue view "$ISSUE_NUMBER" --json comments 2>/dev/null || echo '{"comments":[]}')
@@ -440,7 +541,7 @@ jobs:
 
           export COPILOT_OTEL_ENABLED="true"
           export COPILOT_OTEL_FILE_EXPORTER_PATH="${RUNNER_TEMP}/copilot-otel.jsonl"
-          copilot --model="claude-sonnet-5.5" --agent="plan" --allow-all-tools \
+          copilot --model="${ISSUE_AI_MODEL:-claude-sonnet-5.5}" --reasoning-effort="${ISSUE_AI_EFFORT:-medium}" --agent="plan" --allow-all-tools \
             --prompt "Produce a validated Plan record at ${PLAN_FILE} derived strictly from ${THINK_FILE} for GitHub Issue #${ISSUE_NUMBER}.
           Issue Title: ${ISSUE_TITLE}
           Issue Body:
@@ -450,6 +551,8 @@ jobs:
 
           Follow .github/instructions/plan.instructions.md and .agents/skills/plan/SKILL.md (and its references/plan-contract.md).
           Read ${THINK_FILE} first and ground all file scopes, acceptance criteria, atomic implementation steps (with Files, Action, Verification, Bootable Check, and Serves), test plan rows, and blast radius checks in ${THINK_FILE} and the existing repository conventions.
+          - **Already-Resolved Short-Circuit:** Before writing ${PLAN_FILE}, inspect the current repository files on the checked-out base branch against Issue #${ISSUE_NUMBER}. If every problem, dead symbol/export, or defect described in the issue has **already been resolved on the base branch** (for example, an earlier commit/PR already removed the dead symbol or implemented the requested behavior), do NOT invent no-op steps or artificial churn—instead write {\"resolved\": true, \"summary\": \"<concise explanation of how and where the issue is already resolved on the base branch>\"} to ${SPEC_DIR}/already-resolved.json and stop without writing ${PLAN_FILE}.
+          - **Test Files Must Be In Scope:** Every test file path referenced in ## Test Plan MUST also be listed in ## File Scope & Boundaries under '- **In Scope:**' (never under '- **Out of Scope:**') and in the Files field of its corresponding step in ## Implementation Checklist, even if ${THINK_FILE} only listed src/ files or stated not to modify tests. If ${THINK_FILE}'s ## Blast Radius ('- **Affected:**') omitted a test file required by ## Test Plan, append that test file path to ${THINK_FILE}'s '- **Affected:**' list before running validate-plan.mjs so both validate-plan.mjs and downstream scope-guard pass.
           Order ## Implementation Checklist steps strictly so every step passes its Verification, Bootable Check, and full test suite immediately when executed in sequence: always place core implementation steps BEFORE the test steps that assert on their new behavior (never place a test step before the implementation step it depends on), and if an implementation step changes existing behavior asserted by an existing test file, update that existing assertion in the same implementation step (listing both files in Files) while reserving subsequent test steps for adding new AC-<n> tests.
           Keep the exact required headings and '- **<Label>:**' bullet keys enforced by validate-plan.mjs, while producing a comprehensive, IDE-grade implementation blueprint:
           - **Rich, Concrete Step Specifications & Callee/Boundary Verification:** In each step's '- **Action:**' field, do NOT write vague 1-sentence summaries. Provide a thorough multi-sentence technical specification (plus 2-space indented sub-bullets '  - ...' where helpful) detailing exact function/method signatures, data structures, constants/glyphs, state transitions, integration points with existing symbols, and edge-case handling so the Code agent can implement the feature with zero guesswork.
@@ -512,16 +615,108 @@ jobs:
             "\n\n---\n<!-- ai-cost-step:" + (. | tojson) + " -->\n💰 **AI Cost (" + .step + "):** `$" + fmt_usd(.cost_usd) + "` (`" + .model + "` · " + (.input_tokens | tostring) + " in / " + (.output_tokens | tostring) + " out tokens · " + (.requests | tostring) + (if .requests == 1 then " request" else " requests" end) + (if $prior > 0 then " · **Cumulative:** `$" + fmt_usd($cum) + "`" else "" end) + ")"
           ' > "${SPEC_DIR}/ai-cost-step.md"
 
-      - name: Validate plan.md contract and cross-check against think.md
+      - name: Close issue if already resolved on base branch
+        id: already_resolved
         if: steps.resolve.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          RESOLVED_FILE="specs/issue-${ISSUE_NUMBER}/already-resolved.json"
+          if [ ! -s "$RESOLVED_FILE" ] || [ "$(jq -r '.resolved == true' "$RESOLVED_FILE" 2>/dev/null || echo "false")" != "true" ]; then
+            echo "resolved=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "resolved=true" >> "$GITHUB_OUTPUT"
+          SUMMARY=$(jq -r '.summary // "All changes requested by this issue are already present on the base branch."' "$RESOLVED_FILE")
+          COST_STEP_FILE="specs/issue-${ISSUE_NUMBER}/ai-cost-step.md"
+          COMMENT_BODY="✅ **Already Resolved on Base Branch**
+
+          ${SUMMARY}
+
+          Closing this issue automatically and skipping \`Code → Prove\`."
+          if [ -s "$COST_STEP_FILE" ]; then
+            COMMENT_BODY=$(printf "%s%s\n" "$COMMENT_BODY" "$(cat "$COST_STEP_FILE")")
+          fi
+          gh issue comment "$ISSUE_NUMBER" --body "$COMMENT_BODY"
+          rm -f "specs/issue-${ISSUE_NUMBER}/ai-cost-pending.jsonl"
+          gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-prove,5-release,pause:plan,needs:developer" --remove-assignee "@me" 2>/dev/null || true
+          gh issue close "$ISSUE_NUMBER" --reason completed
+
+          if [ -n "${PROJECT_ID:-}" ] && [ -n "${PROJECT_ITEM_ID:-}" ] && [ -n "${STATUS_FIELD_ID:-}" ] && [ -n "${DONE_OPTION_ID:-}" ]; then
+            gh api graphql -f query='
+              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
+                  value: { singleSelectOptionId: $optionId }
+                }) { projectV2Item { id } }
+              }' -f projectId="$PROJECT_ID" -f itemId="$PROJECT_ITEM_ID" -f fieldId="$STATUS_FIELD_ID" -f optionId="$DONE_OPTION_ID" >/dev/null 2>&1 || true
+          fi
+
+          if [ -n "${COST_FIELD_ID:-}" ] && [ -n "${PROJECT_ID:-}" ] && [ -n "${PROJECT_ITEM_ID:-}" ]; then
+            COMMENTS_JSON=$(gh issue view "$ISSUE_NUMBER" --json comments 2>/dev/null || echo '{"comments":[]}')
+            TOTAL_COST=$(jq -n --argjson issue "$COMMENTS_JSON" '
+              [ $issue.comments[]?.body // "" | scan("<!-- ai-cost-step:(\\{[^\\n]*?\\}) -->") | .[0] | fromjson? ]
+              | [.[].cost_usd // 0] | add // 0 | ((. * 10000 | round) / 10000)
+            ')
+            if [ "${COST_FIELD_TYPE:-NUMBER}" = "TEXT" ]; then
+              TOTAL_COST_TEXT=$(jq -n --argjson c "$TOTAL_COST" '
+                def fmt_usd:
+                  ((. * 10000 | round) | tostring) as $s
+                  | (if ($s | length) <= 4 then ("0000" + $s)[-4:] else $s end) as $padded
+                  | (if ($s | length) <= 4 then "0" else $s[0:($s | length) - 4] end) + "." + $padded[-4:];
+                "$" + ($c | fmt_usd)
+              ' -r)
+              gh api graphql -f query='
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $cost: String!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
+                    value: { text: $cost }
+                  }) { projectV2Item { id } }
+                }' -f projectId="$PROJECT_ID" -f itemId="$PROJECT_ITEM_ID" -f fieldId="$COST_FIELD_ID" -f cost="$TOTAL_COST_TEXT" >/dev/null 2>&1 || true
+            else
+              gh api graphql -f query='
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $cost: Float!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
+                    value: { number: $cost }
+                  }) { projectV2Item { id } }
+                }' -f projectId="$PROJECT_ID" -f itemId="$PROJECT_ITEM_ID" -f fieldId="$COST_FIELD_ID" -F cost="$TOTAL_COST" >/dev/null 2>&1 || true
+            fi
+          fi
+
+      - name: Validate plan.md contract and cross-check against think.md
+        if: steps.resolve.outputs.skip != 'true' && steps.already_resolved.outputs.resolved != 'true'
         run: |
           THINK_FILE="specs/issue-${ISSUE_NUMBER}/think.md"
           PLAN_FILE="specs/issue-${ISSUE_NUMBER}/plan.md"
           node .agents/skills/plan/scripts/validate-plan.mjs --plan "$PLAN_FILE" --think "$THINK_FILE"
+          node -e '
+            const fs = require("fs");
+            const plan = fs.readFileSync(process.argv[1], "utf8");
+            const scopeSec = (plan.match(/^## File Scope & Boundaries[ \t]*\n([\s\S]*?)(?=\n## |(?![\s\S]))/m) || [])[1] || "";
+            const inScopeBlock = (scopeSec.match(/^[ \t]*-\s*\*\*In Scope:\*\*[ \t]*(.*(?:\n(?:[ \t]+-[ \t]+.*|[ \t]+`.*))*)/m) || [])[1] || "";
+            const inScope = new Set([...inScopeBlock.matchAll(/`([^`]+)`/g)].map(m => m[1].trim()));
+            const testSec = (plan.match(/^## Test Plan[ \t]*\n([\s\S]*?)(?=\n## |(?![\s\S]))/m) || [])[1] || "";
+            const testFiles = new Set();
+            for (const line of testSec.split("\n")) {
+              if (!line.trim().startsWith("|")) continue;
+              for (const m of line.matchAll(/`?((?:tests?|scripts|__tests__)\/[A-Za-z0-9_./-]+\.[A-Za-z0-9]+|[A-Za-z0-9_./-]+\.(?:test|spec)\.[A-Za-z0-9]+)`?\s*:/g)) {
+                testFiles.add(m[1].trim());
+              }
+            }
+            const missing = [...testFiles].filter(f => !inScope.has(f) && ![...inScope].some(s => s.endsWith("/") && f.startsWith(s)));
+            if (missing.length > 0) {
+              console.error("::error::Test file(s) referenced in ## Test Plan are missing from ## File Scope & Boundaries (- **In Scope:**): " + missing.join(", "));
+              process.exit(1);
+            }
+          ' "$PLAN_FILE"
           cat "$PLAN_FILE" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Comment plan.md on issue
-        if: steps.resolve.outputs.skip != 'true'
+        if: steps.resolve.outputs.skip != 'true' && steps.already_resolved.outputs.resolved != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
         run: |
@@ -569,7 +764,7 @@ jobs:
 
       - name: Check for manual validation checkpoint after Plan
         id: checkpoint
-        if: steps.resolve.outputs.skip != 'true'
+        if: steps.resolve.outputs.skip != 'true' && steps.already_resolved.outputs.resolved != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -598,7 +793,7 @@ jobs:
 
       - name: Upload plan.md and think.md artifact
         id: handoff
-        if: steps.resolve.outputs.skip != 'true' && steps.checkpoint.outputs.paused != 'true'
+        if: steps.resolve.outputs.skip != 'true' && steps.already_resolved.outputs.resolved != 'true' && steps.checkpoint.outputs.paused != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: plan-spec

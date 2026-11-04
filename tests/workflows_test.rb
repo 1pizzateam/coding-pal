@@ -231,10 +231,10 @@ class WorkflowsTest < Minitest::Test
 
   def test_every_copilot_invocation_uses_expected_step_model
     expected_models = {
-      'pipeline-think.yml: Fetch issue context and run Thinker agent' => ['claude-sonnet-5.5'],
-      'pipeline-plan.yml: Fetch issue context and run Planner agent' => ['claude-sonnet-5.5'],
-      'pipeline-code.yml: Run Code Agent to implement plan.md and prepare pr.md' => ['claude-sonnet-5.5'],
-      'pipeline-prove.yml: Run Prove validation and auto-remediation loop' => ['claude-sonnet-5.5', 'claude-sonnet-5.5'],
+      'pipeline-think.yml: Fetch issue context and run Thinker agent' => ['${ISSUE_AI_MODEL:-claude-sonnet-5.5}'],
+      'pipeline-plan.yml: Fetch issue context and run Planner agent' => ['${ISSUE_AI_MODEL:-claude-sonnet-5.5}'],
+      'pipeline-code.yml: Run Code Agent to implement plan.md and prepare pr.md' => ['${ISSUE_AI_MODEL:-claude-sonnet-5.5}'],
+      'pipeline-prove.yml: Run Prove validation and auto-remediation loop' => ['${ISSUE_AI_MODEL:-claude-sonnet-5.5}', '${ISSUE_AI_MODEL:-claude-sonnet-5.5}'],
       'pipeline-prove.yml: Auto-release merged @1pizzateam/* library version' => ['gpt-6-luna'],
       'audit-runner.yml: Run ${{ inputs.agent }} agent' => ['gemini-3.8-flash']
     }
@@ -246,10 +246,16 @@ class WorkflowsTest < Minitest::Test
           entry.fetch('run', '').each_line do |line|
             next unless line.match?(/^\s*copilot\s/)
             calls << line
+            step_key = "#{File.basename(path)}: #{entry['name']}"
             match = line.match(/^\s*copilot --model="([^"]+)"(?:\s|$)/)
-            refute_nil match, "#{path}: #{entry['name']}"
-            actual_models["#{File.basename(path)}: #{entry['name']}"] << match[1]
-            refute_match(/--(?:fusion-tier|auto-tier|reasoning-effort)\b/, line)
+            refute_nil match, step_key
+            actual_models[step_key] << match[1]
+            refute_match(/--(?:fusion-tier|auto-tier)\b/, line)
+            if match[1].include?('ISSUE_AI_MODEL')
+              assert_match(/--reasoning-effort="\$\{ISSUE_AI_EFFORT:-medium\}"/, line, step_key)
+            else
+              refute_match(/--reasoning-effort\b/, line, step_key)
+            end
           end
         end
       end
@@ -488,12 +494,26 @@ class WorkflowsTest < Minitest::Test
 
   def project
     { 'data' => { 'repository' => {
-      'issue' => { 'id' => 'ISSUE', 'projectItems' => { 'nodes' => [{ 'id' => 'ITEM', 'project' => { 'id' => 'PROJECT' } }] } },
+      'issue' => {
+        'id' => 'ISSUE',
+        'issueFieldValues' => { 'nodes' => [] },
+        'projectItems' => { 'nodes' => [{ 'id' => 'ITEM', 'project' => { 'id' => 'PROJECT' } }] }
+      },
       'owner' => {
-        'issueFields' => { 'nodes' => [{
-          'id' => 'PRIORITY_FIELD', 'name' => 'Priority',
-          'options' => %w[Urgent High Medium Low].map { |name| { 'name' => name, 'id' => "prio_#{name.downcase}" } }
-        }] },
+        'issueFields' => { 'nodes' => [
+          {
+            'id' => 'PRIORITY_FIELD', 'name' => 'Priority',
+            'options' => %w[Urgent High Medium Low].map { |name| { 'name' => name, 'id' => "prio_#{name.downcase}" } }
+          },
+          {
+            'id' => 'MODEL_FIELD', 'name' => 'Model',
+            'options' => %w[claude-sonnet-5.5 claude-opus-5.5 claude-haiku-5.5 gpt-6.1-sol gpt-5.3-codex gemini-4-argon gemini-3.8-flash auto].map { |name| { 'name' => name, 'id' => "model_#{name}" } }
+          },
+          {
+            'id' => 'EFFORT_FIELD', 'name' => 'Effort',
+            'options' => %w[Max High Medium Low].map { |name| { 'name' => name, 'id' => "effort_#{name.downcase}" } }
+          }
+        ] },
         'projectsV2' => { 'nodes' => [{
           'id' => 'PROJECT', 'title' => 'Test board',
           'field' => { 'id' => 'STATUS', 'options' => %w[Triage Think Plan Code Prove Release Done].map { |name| { 'name' => name, 'id' => name.downcase } } }
@@ -513,8 +533,28 @@ class WorkflowsTest < Minitest::Test
       update = @calls.find { |args| args.any? { |arg| arg.start_with?('query=') && arg.include?('updateProjectV2ItemFieldValue') } }
       refute_nil update
       %W[projectId=PROJECT itemId=ITEM fieldId=STATUS optionId=#{status.downcase}].each { |arg| assert_includes update, arg }
+      field_sets = @calls.select { |args| args.any? { |arg| arg.include?('setIssueFieldValue') } }
+      assert_equal 3, field_sets.length, "#{phase} must pre-select default Priority, Model, and Effort when unset"
+      assert field_sets.any? { |args| args.include?('fieldId=PRIORITY_FIELD') && args.include?('fieldOptionId=prio_medium') }
+      assert field_sets.any? { |args| args.include?('fieldId=MODEL_FIELD') && args.include?('fieldOptionId=model_claude-sonnet-5.5') }
+      assert field_sets.any? { |args| args.include?('fieldId=EFFORT_FIELD') && args.include?('fieldOptionId=effort_medium') }
+      env_vars = File.read(@environment.fetch('GITHUB_ENV'))
+      assert_includes env_vars, 'ISSUE_AI_MODEL=claude-sonnet-5.5'
+      assert_includes env_vars, 'ISSUE_AI_EFFORT=medium'
       assert_includes entry.fetch('if'), phase == 'think' ? "steps.resume.outputs.resumed_stage == 'none'" : "steps.resolve.outputs.skip != 'true'"
     end
+
+    custom_project = project
+    custom_project['data']['repository']['issue']['issueFieldValues']['nodes'] = [
+      { 'value' => 'High', 'field' => { 'name' => 'Priority' } },
+      { 'value' => 'claude-opus-5.5', 'field' => { 'name' => 'Model' } },
+      { 'value' => 'Max', 'field' => { 'name' => 'Effort' } }
+    ]
+    run_step(status_step('think', 'Think'), scenario([], project: custom_project))
+    assert_empty(@calls.select { |args| args.any? { |arg| arg.include?('setIssueFieldValue') } })
+    custom_env = File.read(@environment.fetch('GITHUB_ENV'))
+    assert_includes custom_env, 'ISSUE_AI_MODEL=claude-opus-5.5'
+    assert_includes custom_env, 'ISSUE_AI_EFFORT=max'
   end
 
   def test_project_status_matching_is_case_insensitive
@@ -1659,6 +1699,8 @@ class WorkflowsTest < Minitest::Test
       {
         'title' => 'chore(dead-code): remove unused parseLegacyConfig helper',
         'priority' => 'Low',
+        'model' => 'claude-haiku-5.5',
+        'effort' => 'Low',
         'body' => "## Problem\n`parseLegacyConfig` in `src/config.js` has zero call sites.\n\n## Affected Files\n- `src/config.js`\n\n## Suggested Remediation\nDelete `parseLegacyConfig`."
       },
       {
@@ -1682,9 +1724,11 @@ class WorkflowsTest < Minitest::Test
     assert_includes create_call, 'audit:dead-code'
     LABELS.each { |label| refute_includes create_call, label }
 
-    priority_calls = @calls.select { |args| args.any? { |arg| arg.include?('setIssueFieldValue') } }
-    assert_equal 1, priority_calls.length, 'Audit-created issues must set the organization Priority issue field'
-    %w[issueId=ISSUE fieldId=PRIORITY_FIELD optionId=prio_low].each { |arg| assert_includes priority_calls.first, arg }
+    field_calls = @calls.select { |args| args.any? { |arg| arg.include?('setIssueFieldValue') } }
+    assert_equal 3, field_calls.length, 'Audit-created issues must set Priority, Model, and Effort organization issue fields'
+    %w[issueId=ISSUE fieldId=PRIORITY_FIELD optionId=prio_low].each { |arg| assert_includes field_calls[0], arg }
+    %w[issueId=ISSUE fieldId=MODEL_FIELD optionId=model_claude-haiku-5.5].each { |arg| assert_includes field_calls[1], arg }
+    %w[issueId=ISSUE fieldId=EFFORT_FIELD optionId=effort_low].each { |arg| assert_includes field_calls[2], arg }
 
     add_item_calls = @calls.select { |args| args.any? { |arg| arg.include?('addProjectV2ItemById') } }
     assert_equal 1, add_item_calls.length
@@ -1699,11 +1743,13 @@ class WorkflowsTest < Minitest::Test
     refute File.exist?(File.join(@directory, 'audit-findings.json'))
 
     # Verify auto-added project items ("gh: Content already exists in this project") do not abort issue creation,
-    # omitted priority defaults to Medium, and collapsed 1-liner bodies / structured fields are normalized
+    # omitted priority/model/effort default to Medium/claude-sonnet-5.5/Medium, and collapsed 1-liner bodies / structured fields are normalized
     File.write(File.join(@directory, 'audit-findings.json'), JSON.generate([
       {
         'title' => 'test(gap): add unit test for pause toggle',
         'priority' => 'High',
+        'model' => 'claude-opus-5.5',
+        'effort' => 'High',
         'body' => '## Problem: Missing pause test. ## Affected Files: - `src/pause.js` ## Suggested Fix: Add pause unit test. - **AC-1:** Pause toggle is covered.'
       },
       {
@@ -1720,10 +1766,14 @@ class WorkflowsTest < Minitest::Test
     created_bodies = @calls.select { |args| args.first(2) == %w[issue create] }.map { |args| args[args.index('--body') + 1] }
     assert_includes created_bodies[0], "## Problem\n\nMissing pause test.\n\n## Affected Files\n\n- `src/pause.js`\n\n## Suggested Fix\n\nAdd pause unit test.\n\n## Acceptance Criteria\n\n- **AC-1:** Pause toggle is covered."
     assert_includes created_bodies[1], "## Problem\n\nMissing door prompt test.\n\n## Affected Files\n\n- `src/door.js`\n\n## Suggested Fix\n\nAdd door prompt unit test.\n\n## Acceptance Criteria\n\n- **AC-1:** Door prompt is covered."
-    auto_priority_calls = @calls.select { |args| args.any? { |arg| arg.include?('setIssueFieldValue') } }
-    assert_equal 2, auto_priority_calls.length
-    %w[issueId=ISSUE fieldId=PRIORITY_FIELD optionId=prio_high].each { |arg| assert_includes auto_priority_calls[0], arg }
-    %w[issueId=ISSUE fieldId=PRIORITY_FIELD optionId=prio_medium].each { |arg| assert_includes auto_priority_calls[1], arg }
+    auto_field_calls = @calls.select { |args| args.any? { |arg| arg.include?('setIssueFieldValue') } }
+    assert_equal 6, auto_field_calls.length
+    %w[issueId=ISSUE fieldId=PRIORITY_FIELD optionId=prio_high].each { |arg| assert_includes auto_field_calls[0], arg }
+    %w[issueId=ISSUE fieldId=MODEL_FIELD optionId=model_claude-opus-5.5].each { |arg| assert_includes auto_field_calls[1], arg }
+    %w[issueId=ISSUE fieldId=EFFORT_FIELD optionId=effort_high].each { |arg| assert_includes auto_field_calls[2], arg }
+    %w[issueId=ISSUE fieldId=PRIORITY_FIELD optionId=prio_medium].each { |arg| assert_includes auto_field_calls[3], arg }
+    %w[issueId=ISSUE fieldId=MODEL_FIELD optionId=model_claude-sonnet-5.5].each { |arg| assert_includes auto_field_calls[4], arg }
+    %w[issueId=ISSUE fieldId=EFFORT_FIELD optionId=effort_medium].each { |arg| assert_includes auto_field_calls[5], arg }
     auto_status_calls = @calls.select { |args| args.any? { |arg| arg.include?('updateProjectV2ItemFieldValue') } }
     assert_equal 2, auto_status_calls.length
     %w[projectId=PROJECT itemId=ITEM fieldId=STATUS optionId=triage].each { |arg| assert_includes auto_status_calls.first, arg }
@@ -1822,5 +1872,98 @@ class WorkflowsTest < Minitest::Test
     assert_equal 'plan', out_think_skip.fetch('resumed_stage')
     assert File.exist?(File.join(@directory, 'specs/issue-42/think.md'))
     refute @calls.any? { |args| args.first(2) == %w[issue comment] }
+  end
+
+  def test_plan_short_circuits_already_resolved_issues_and_enforces_test_files_in_scope
+    already_resolved = step('plan', 'already_resolved')
+    FileUtils.mkdir_p(File.join(@directory, 'specs/issue-42'))
+
+    # 1. Normal unresolved issue: resolved=false and no GitHub calls
+    out_unresolved = run_step(already_resolved, scenario)
+    assert_equal 'false', out_unresolved.fetch('resolved')
+    assert_empty @calls
+
+    # 2. Already resolved on base branch: comments with AI cost, strips labels, closes issue, and moves Project item to Done
+    File.write(File.join(@directory, 'specs/issue-42/already-resolved.json'), JSON.generate({
+      'resolved' => true,
+      'summary' => '`KEYCARD_COLORS` in `src/keycard.js` was already removed by PR #115 (#107).'
+    }))
+    File.write(File.join(@directory, 'specs/issue-42/ai-cost-step.md'), "\n\n---\n<!-- ai-cost-step:{\"step\":\"Plan\",\"cost_usd\":0.04} -->\n💰 **AI Cost (Plan):** `$0.0400`")
+    out_resolved = run_step(already_resolved, scenario(%w[5-release], project: project), {
+      'PROJECT_ID' => 'PROJECT', 'PROJECT_ITEM_ID' => 'ITEM', 'STATUS_FIELD_ID' => 'STATUS', 'DONE_OPTION_ID' => 'done'
+    })
+    assert_equal 'true', out_resolved.fetch('resolved')
+    comment_call = @calls.find { |args| args.first(2) == %w[issue comment] }
+    refute_nil comment_call
+    assert_includes comment_call.last, 'Already Resolved on Base Branch'
+    assert_includes comment_call.last, '`KEYCARD_COLORS` in `src/keycard.js` was already removed by PR #115 (#107).'
+    assert_includes comment_call.last, '💰 **AI Cost (Plan):** `$0.0400`'
+    assert @calls.any? { |args| args.first(3) == %w[issue close 42] && args.include?('--reason') && args.include?('completed') }
+    assert @calls.any? { |args| args.include?('optionId=done') }
+
+    # 3. Validate plan.md rejects Test Plan files omitted from In Scope and accepts when included
+    validate_step = steps('plan').find { |item| item['name'] == 'Validate plan.md contract and cross-check against think.md' }
+    scope_snippet = validate_step.fetch('run')[/node -e '\s*(const fs = require\("fs"\);.*?)' "\$PLAN_FILE"/m, 1]
+    refute_nil scope_snippet
+    bad_plan = File.join(@directory, 'bad_plan.md')
+    File.write(bad_plan, <<~MD)
+      # Plan: Remove dead KEYCARD_COLORS export
+
+      ## File Scope & Boundaries
+      - **In Scope:** `src/keycard.js`
+      - **Out of Scope:** `tests/`
+
+      ## Test Plan
+      | Test | Type | Verify |
+      | --- | --- | --- |
+      | `tests/exports.test.mjs`: AC-1 keycard exports | unit | `npm test` |
+    MD
+    _, err_bad, status_bad = Open3.capture3('node', '-e', scope_snippet, bad_plan)
+    refute status_bad.success?
+    assert_includes err_bad, 'tests/exports.test.mjs'
+
+    good_plan = File.join(@directory, 'good_plan.md')
+    File.write(good_plan, <<~MD)
+      # Plan: Remove dead KEYCARD_COLORS export
+
+      ## File Scope & Boundaries
+      - **In Scope:** `src/keycard.js`, `tests/exports.test.mjs`
+      - **Out of Scope:** `src/world.js`
+
+      ## Test Plan
+      | Test | Type | Verify |
+      | --- | --- | --- |
+      | `tests/exports.test.mjs`: AC-1 keycard exports | unit | `npm test` |
+    MD
+    _, err_good, status_good = Open3.capture3('node', '-e', scope_snippet, good_plan)
+    assert status_good.success?, err_good
+  end
+
+  def test_audit_runner_deduplicates_overlapping_symbol_and_file_findings
+    audit = YAML.load_file(File.join(ROOT, '.github/workflows/audit-runner.yml'))
+    create_entry = audit.fetch('jobs').fetch('audit').fetch('steps').find { |item| item['id'] == 'create_findings' }
+
+    File.write(File.join(@directory, 'audit-findings.json'), JSON.generate([
+      {
+        'title' => 'chore(dead-code): remove unused export constants and dead tint vectors',
+        'priority' => 'Low',
+        'problem' => 'Dead export `KEYCARD_COLORS` in `src/keycard.js` has zero call sites.',
+        'affectedFiles' => ['src/keycard.js'],
+        'suggestedFix' => 'Remove `KEYCARD_COLORS` from `src/keycard.js`.',
+        'acceptanceCriteria' => ['- **AC-1:** `KEYCARD_COLORS` is removed.']
+      }
+    ]))
+
+    existing_issues = [
+      {
+        'number' => 60,
+        'title' => 'chore(keycard): remove dead KEYCARD_COLORS export',
+        'body' => "## Problem\n\n`KEYCARD_COLORS` in `src/keycard.js` is never imported.\n\n## Affected Files\n\n- `src/keycard.js`"
+      }
+    ]
+    out = run_step(create_entry, scenario([], issues: existing_issues, project: project))
+    assert_equal '0', out.fetch('created_count')
+    refute @calls.any? { |args| args.first(2) == %w[issue create] }, 'Overlapping file + symbol finding must be skipped'
+    refute @calls.any? { |args| args.first(2) == %w[issue edit] }, 'Different-title overlapping finding must not overwrite existing issue body'
   end
 end

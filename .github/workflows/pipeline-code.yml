@@ -271,8 +271,35 @@ jobs:
           DATA=$(gh api graphql -f query='
             query($owner: String!, $repo: String!, $number: Int!, $projectTitle: String!) {
               repository(owner: $owner, name: $repo) {
-                issue(number: $number) { id }
+                issue(number: $number) {
+                  id
+                  issueFieldValues(first: 20) {
+                    nodes {
+                      ... on IssueFieldSingleSelectValue {
+                        value
+                        optionId
+                        field {
+                          ... on IssueFieldSingleSelect {
+                            id
+                            name
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
                 owner {
+                  ... on Organization {
+                    issueFields(first: 20) {
+                      nodes {
+                        ... on IssueFieldSingleSelect {
+                          id
+                          name
+                          options { id name }
+                        }
+                      }
+                    }
+                  }
                   ... on ProjectV2Owner {
                     projectsV2(first: 20, query: $projectTitle) {
                       nodes {
@@ -324,6 +351,76 @@ jobs:
                 value: { singleSelectOptionId: $optionId }
               }) { projectV2Item { id } }
             }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$FIELD_ID" -f optionId="$OPTION_ID" >/dev/null
+
+          if [ -z "${ISSUE_AI_MODEL:-}" ]; then
+            CURRENT_PRIORITY=$(echo "$DATA" | jq -r '.data.repository.issue.issueFieldValues.nodes[]? | select((.field.name // "" | ascii_downcase) == "priority") | .value // empty' | head -n 1)
+            if [ -z "$CURRENT_PRIORITY" ]; then
+              PRIORITY_FIELD_ID=$(echo "$DATA" | jq -r '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "priority") | .id // empty' | head -n 1)
+              PRIORITY_DEFAULT_ID=$(echo "$DATA" | jq -r '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "priority") | .options[]? | select((.name | ascii_downcase) == "medium") | .id // empty' | head -n 1)
+              if [ -n "$PRIORITY_FIELD_ID" ] && [ -n "$PRIORITY_DEFAULT_ID" ]; then
+                gh api graphql -f query='
+                  mutation($issueId: ID!, $fieldId: ID!, $fieldOptionId: ID!) {
+                    setIssueFieldValue(input: {
+                      issueId: $issueId,
+                      issueFields: [{ fieldId: $fieldId, singleSelectOptionId: $fieldOptionId }]
+                    }) { issue { id } }
+                  }' -f issueId="$ISSUE_ID" -f fieldId="$PRIORITY_FIELD_ID" -f fieldOptionId="$PRIORITY_DEFAULT_ID" >/dev/null 2>&1 || true
+              fi
+            fi
+
+            CURRENT_MODEL=$(echo "$DATA" | jq -r '.data.repository.issue.issueFieldValues.nodes[]? | select((.field.name // "" | ascii_downcase) == "model") | .value // empty' | head -n 1)
+            if [ -z "$CURRENT_MODEL" ]; then
+              CURRENT_MODEL="claude-sonnet-5.5"
+              MODEL_FIELD_ID=$(echo "$DATA" | jq -r '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "model") | .id // empty' | head -n 1)
+              MODEL_DEFAULT_ID=$(echo "$DATA" | jq -r '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "model") | .options[]? | select((.name | ascii_downcase) == "claude-sonnet-5.5") | .id // empty' | head -n 1)
+              if [ -n "$MODEL_FIELD_ID" ] && [ -n "$MODEL_DEFAULT_ID" ]; then
+                gh api graphql -f query='
+                  mutation($issueId: ID!, $fieldId: ID!, $fieldOptionId: ID!) {
+                    setIssueFieldValue(input: {
+                      issueId: $issueId,
+                      issueFields: [{ fieldId: $fieldId, singleSelectOptionId: $fieldOptionId }]
+                    }) { issue { id } }
+                  }' -f issueId="$ISSUE_ID" -f fieldId="$MODEL_FIELD_ID" -f fieldOptionId="$MODEL_DEFAULT_ID" >/dev/null 2>&1 || true
+              fi
+            fi
+
+            CURRENT_EFFORT=$(echo "$DATA" | jq -r '.data.repository.issue.issueFieldValues.nodes[]? | select((.field.name // "" | ascii_downcase) == "effort") | .value // empty' | head -n 1)
+            if [ -z "$CURRENT_EFFORT" ]; then
+              CURRENT_EFFORT="Medium"
+              EFFORT_FIELD_ID=$(echo "$DATA" | jq -r '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "effort") | .id // empty' | head -n 1)
+              EFFORT_DEFAULT_ID=$(echo "$DATA" | jq -r '.data.repository.owner.issueFields.nodes[]? | select((.name // "" | ascii_downcase) == "effort") | .options[]? | select((.name | ascii_downcase) == "medium") | .id // empty' | head -n 1)
+              if [ -n "$EFFORT_FIELD_ID" ] && [ -n "$EFFORT_DEFAULT_ID" ]; then
+                gh api graphql -f query='
+                  mutation($issueId: ID!, $fieldId: ID!, $fieldOptionId: ID!) {
+                    setIssueFieldValue(input: {
+                      issueId: $issueId,
+                      issueFields: [{ fieldId: $fieldId, singleSelectOptionId: $fieldOptionId }]
+                    }) { issue { id } }
+                  }' -f issueId="$ISSUE_ID" -f fieldId="$EFFORT_FIELD_ID" -f fieldOptionId="$EFFORT_DEFAULT_ID" >/dev/null 2>&1 || true
+              fi
+            fi
+
+            case "$CURRENT_MODEL" in
+              claude-sonnet-5.5|claude-opus-5.5|claude-haiku-5.5|gpt-6.1-sol|gpt-5.3-codex|gemini-4-argon|gemini-3.8-flash|auto)
+                ISSUE_AI_MODEL="$CURRENT_MODEL"
+                ;;
+              *)
+                ISSUE_AI_MODEL="claude-sonnet-5.5"
+                ;;
+            esac
+            EFFORT_LOWER=$(echo "$CURRENT_EFFORT" | tr '[:upper:]' '[:lower:]')
+            case "$EFFORT_LOWER" in
+              low|medium|high|max)
+                ISSUE_AI_EFFORT="$EFFORT_LOWER"
+                ;;
+              *)
+                ISSUE_AI_EFFORT="medium"
+                ;;
+            esac
+            export ISSUE_AI_MODEL ISSUE_AI_EFFORT
+            echo "ISSUE_AI_MODEL=${ISSUE_AI_MODEL}" >> "$GITHUB_ENV"
+            echo "ISSUE_AI_EFFORT=${ISSUE_AI_EFFORT}" >> "$GITHUB_ENV"
+          fi
 
           if [ -n "$COST_FIELD_ID" ]; then
             CUM_COST=$(
@@ -540,7 +637,7 @@ jobs:
           export COPILOT_OTEL_FILE_EXPORTER_PATH="${RUNNER_TEMP}/copilot-otel.jsonl"
           rm -rf "${COPILOT_HOME:-$HOME/.copilot}/session-state" "$COPILOT_OTEL_FILE_EXPORTER_PATH" 2>/dev/null || true
 
-          copilot --model="claude-sonnet-5.5" --agent="code" --allow-all-tools \
+          copilot --model="${ISSUE_AI_MODEL:-claude-sonnet-5.5}" --reasoning-effort="${ISSUE_AI_EFFORT:-medium}" --agent="code" --allow-all-tools \
             --prompt "Implement the validated Plan record at ${PLAN_FILE} (with ${THINK_FILE}) for GitHub Issue #${ISSUE_NUMBER} (${ISSUE_TITLE}) on the current branch ${BRANCH_NAME} (base: ${BASE_REF}).
           Issue Body:
           ${ISSUE_BODY}

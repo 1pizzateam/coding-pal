@@ -35,7 +35,7 @@ if ARGV.first(2) == ['repo', 'view'] && (ARGV[2].to_s.empty? || ARGV[2].to_s.sta
   reject_command("gh repo view ignores GH_REPO outside a git checkout; pass explicit repository argument: #{ARGV.inspect}")
 end
 
-if %w[issue pr].include?(ARGV[0]) && %w[view edit comment merge].include?(ARGV[1]) && ARGV[2].to_s.empty?
+if %w[issue pr].include?(ARGV[0]) && %w[view edit comment merge close].include?(ARGV[1]) && ARGV[2].to_s.empty?
   reject_command("Missing target number/branch for gh #{ARGV.first(2).join(' ')}")
 end
 
@@ -106,7 +106,7 @@ result = case ARGV.first(2)
            value = responses.length > 1 ? responses.shift : responses.first
            File.write(ENV.fetch('TEST_SCENARIO'), JSON.generate(scenario))
            { 'workflow_runs' => value }
-         when ['label', 'create'], ['issue', 'edit'], ['issue', 'comment'], ['pr', 'comment']
+         when ['label', 'create'], ['issue', 'edit'], ['issue', 'comment'], ['issue', 'close'], ['pr', 'comment']
            nil
          else
            reject_command("Unexpected gh command: #{ARGV.inspect}")
