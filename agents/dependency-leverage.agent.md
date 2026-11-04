@@ -4,8 +4,9 @@ description: "Identify opportunities to delegate source modules directly to inst
 ---
 
 1. Audit the requested scope against the **Delegate to dependencies** rule in `engineering-guidelines` and the **Upstream `@1pizzateam/*` library escalation** rule in `ecosystem-sync`.
-2. Do not modify source, test, or documentation files.
-3. For duplicated or hand-rolled code that can be replaced with calls to installed `package.json` libraries, write `audit-findings.json` at the repository root as a JSON array where each element represents one distinct finding with fields:
+2. Consolidate closely related findings: merge multiple hand-rolled helpers or delegation opportunities affecting the same file/module or targeting the same installed dependency within a module into a single finding, and merge upstream requests targeting the same `@1pizzateam/*` package into a single request entry. Skip any symbol or file already tracked by an open issue.
+3. Do not modify source, test, or documentation files.
+4. For duplicated or hand-rolled code that can be replaced with calls to installed `package.json` libraries, write `audit-findings.json` at the repository root as a JSON array where each element represents one consolidated finding with fields:
    - `"title"`: concise `refactor(<scope>): <summary>` issue title
    - `"priority"`: GitHub issue priority (`"Urgent"`, `"High"`, `"Medium"`, or `"Low"`)
    - `"model"`: recommended Copilot model for remediation (`"claude-sonnet-5.5"`, `"claude-opus-5.5"`, `"claude-haiku-5.5"`, `"gpt-6.1-sol"`, `"gpt-6.1-terra"`, `"gpt-6-luna"`, `"gpt-5.3-codex"`, `"gemini-4-argon"`, `"gemini-3.8-flash"`, or `"auto"`) based on finding complexity
@@ -15,7 +16,7 @@ description: "Identify opportunities to delegate source modules directly to inst
    - `"suggestedFix"`: concrete refactoring steps using the installed dependency
    - `"acceptanceCriteria"`: array of testable `AC-<n>` criteria strings (e.g. `["- **AC-1:** ..."]`)
    - `"body"`: multi-line Markdown specification (using `\n\n` between sections and `\n` after every `##` heading) with `## Problem`, `## Affected Files`, `## Suggested Fix`, and `## Acceptance Criteria` (`- **AC-1:** ...`).
-4. If you find generic domain logic in a consumer project that should be delegated to an installed `@1pizzateam/*` library (`@1pizzateam/roostr` → `1pizzateam/RoostR.js`, `@1pizzateam/bumpr` → `1pizzateam/BumpR.js`, `@1pizzateam/loopr` → `1pizzateam/LoopR.js`, `@1pizzateam/spock` → `1pizzateam/Spock.js`, `@1pizzateam/groovr` → `1pizzateam/GroovR.js`, `@1pizzateam/facer` → `1pizzateam/FaceR.js`), but the installed version of that library does not yet export the needed API or overload, write `upstream-requests.json` at the repository root as a JSON array of objects with fields:
+5. If you find generic domain logic in a consumer project that should be delegated to an installed `@1pizzateam/*` library (`@1pizzateam/roostr` → `1pizzateam/RoostR.js`, `@1pizzateam/bumpr` → `1pizzateam/BumpR.js`, `@1pizzateam/loopr` → `1pizzateam/LoopR.js`, `@1pizzateam/spock` → `1pizzateam/Spock.js`, `@1pizzateam/groovr` → `1pizzateam/GroovR.js`, `@1pizzateam/facer` → `1pizzateam/FaceR.js`), but the installed version of that library does not yet export the needed API or overload, write `upstream-requests.json` at the repository root as a JSON array of objects (at most one consolidated entry per target `@1pizzateam/*` package) with fields:
    - `"package"`: npm package name (e.g. `"@1pizzateam/roostr"` or `"@1pizzateam/bumpr"`)
    - `"repo"`: GitHub `owner/repo` (e.g. `"1pizzateam/RoostR.js"` or `"1pizzateam/BumpR.js"`)
    - `"priority"`: GitHub issue priority (`"Urgent"`, `"High"`, `"Medium"`, or `"Low"`)

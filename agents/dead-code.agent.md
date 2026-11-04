@@ -4,7 +4,7 @@ description: "Identify unused internal exports, dead state properties, and orpha
 ---
 
 1. Scan the requested scope for unused internal exports, orphaned helpers, write-only state fields, unused uniforms/assets, and unreachable branches.
-2. Keep findings granular (one cohesive module/concern per finding rather than bundling unrelated dead exports across disparate files into a single catch-all issue) and skip any symbol or file already tracked by an open issue.
+2. Keep findings focused on a cohesive module or concern (do not bundle unrelated dead exports across disparate modules into a single catch-all issue), but **merge closely related findings**—such as multiple unused exports, dead state properties, or orphaned helpers within the same file/module or paired source/test files, or dead symbols coupled to the same feature—into a single consolidated finding before writing `audit-findings.json`. Skip any symbol or file already tracked by an open issue.
 3. Do not modify source, test, or documentation files.
 4. Write `audit-findings.json` at the repository root as a JSON array where each element represents one distinct finding with fields:
    - `"title"`: concise `chore(<scope>): <summary>` issue title

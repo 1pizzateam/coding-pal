@@ -2063,6 +2063,148 @@ class WorkflowsTest < Minitest::Test
     refute @calls.any? { |args| args.first(2) == %w[issue edit] }, 'Different-title overlapping finding must not overwrite existing issue body'
   end
 
+  def test_audit_runner_merges_close_findings_and_requests_before_creating_issues
+    audit = YAML.load_file(File.join(ROOT, '.github/workflows/audit-runner.yml'))
+    steps_list = audit.fetch('jobs').fetch('audit').fetch('steps')
+    create_entry = steps_list.find { |item| item['id'] == 'create_findings' }
+    upstream_entry = steps_list.find { |item| item['name'] == 'Escalate upstream @1pizzateam/* library requests' }
+    editor_entry = steps_list.find { |item| item['name'] == 'Dispatch companion game editor requests' }
+
+    # 1. Three close findings (same file src/raycaster.js, paired test file tests/raycaster.test.js) merge into 1 issue,
+    #    while an unrelated finding in src/audio.js stays a separate issue (total created_count = 2).
+    File.write(File.join(@directory, 'audit-findings.json'), JSON.generate([
+      {
+        'title' => 'perf(raycaster): avoid per-frame array allocation in castRay',
+        'priority' => 'Medium',
+        'model' => 'claude-haiku-5.5',
+        'effort' => 'Low',
+        'problem' => '`castRay` allocates a temporary hit array every frame.',
+        'affectedFiles' => ['src/raycaster.js'],
+        'suggestedFix' => 'Preallocate a module-scoped scratch buffer in `src/raycaster.js`.',
+        'acceptanceCriteria' => ['- **AC-1:** `castRay` reuses a preallocated scratch buffer.']
+      },
+      {
+        'title' => 'perf(raycaster): reuse hit normal vector in castWall',
+        'priority' => 'High',
+        'model' => 'claude-opus-5.5',
+        'effort' => 'High',
+        'problem' => '`castWall` instantiates a new normal vector on every wall hit.',
+        'affectedFiles' => ['src/raycaster.js'],
+        'suggestedFix' => 'Mutate a scratch normal vector in place during `castWall`.',
+        'acceptanceCriteria' => ['- **AC-1:** `castWall` mutates a scratch normal vector without allocating.']
+      },
+      {
+        'title' => 'perf(raycaster): add zero-allocation benchmark assertion',
+        'priority' => 'Low',
+        'model' => 'claude-sonnet-5.5',
+        'effort' => 'Medium',
+        'problem' => 'Raycaster test suite does not assert zero per-frame allocations.',
+        'affectedFiles' => ['tests/raycaster.test.js'],
+        'suggestedFix' => 'Add a spy assertion in `tests/raycaster.test.js`.',
+        'acceptanceCriteria' => ['- **AC-1:** `tests/raycaster.test.js` verifies zero allocations.']
+      },
+      {
+        'title' => 'perf(audio): pool gain nodes in playSfx',
+        'priority' => 'Low',
+        'model' => 'claude-haiku-5.5',
+        'effort' => 'Low',
+        'problem' => '`playSfx` creates unpooled nodes.',
+        'affectedFiles' => ['src/audio.js'],
+        'suggestedFix' => 'Pool nodes in `src/audio.js`.',
+        'acceptanceCriteria' => ['- **AC-1:** `playSfx` reuses pooled nodes.']
+      }
+    ]))
+
+    out = run_step(create_entry, scenario([], issues: [], project: project))
+    assert_equal '2', out.fetch('created_count')
+
+    create_calls = @calls.select { |args| args.first(2) == %w[issue create] }
+    assert_equal 2, create_calls.length
+
+    raycaster_call = create_calls[0]
+    raycaster_title = raycaster_call[raycaster_call.index('--title') + 1]
+    raycaster_body = raycaster_call[raycaster_call.index('--body') + 1]
+    assert_equal 'perf(raycaster): avoid per-frame array allocation in castRay; reuse hit normal vector in castWall; add zero-allocation benchmark assertion', raycaster_title
+    assert_includes raycaster_body, '`castRay` allocates a temporary hit array every frame.'
+    assert_includes raycaster_body, '`castWall` instantiates a new normal vector on every wall hit.'
+    assert_includes raycaster_body, "- `src/raycaster.js`\n- `tests/raycaster.test.js`"
+    assert_includes raycaster_body, "- **AC-1:** `castRay` reuses a preallocated scratch buffer.\n- **AC-2:** `castWall` mutates a scratch normal vector without allocating.\n- **AC-3:** `tests/raycaster.test.js` verifies zero allocations."
+
+    field_calls = @calls.select { |args| args.any? { |arg| arg.include?('setIssueFieldValue') } }
+    assert_equal 6, field_calls.length
+    # First (merged raycaster) issue gets highest Priority (High), highest Model (claude-opus-5.5), and highest Effort (High)
+    %w[issueId=ISSUE fieldId=PRIORITY_FIELD optionId=prio_high].each { |arg| assert_includes field_calls[0], arg }
+    %w[issueId=ISSUE fieldId=MODEL_FIELD optionId=model_claude-opus-5.5].each { |arg| assert_includes field_calls[1], arg }
+    %w[issueId=ISSUE fieldId=EFFORT_FIELD optionId=effort_high].each { |arg| assert_includes field_calls[2], arg }
+
+    # 2. Close upstream requests targeting the same library merge into 1 consumer + 1 upstream issue
+    File.write(File.join(@directory, 'upstream-requests.json'), JSON.generate([
+      {
+        'package' => '@1pizzateam/spock',
+        'repo' => '1pizzateam/Spock.js',
+        'priority' => 'Medium',
+        'model' => 'claude-sonnet-5.5',
+        'effort' => 'Medium',
+        'library_issue_title' => 'feat(vec2): add clampLength method',
+        'library_issue_body' => "## Problem\n\nMissing `clampLength`.\n\n## Proposed API\n\n`vec.clampLength(max)`\n\n## Acceptance Criteria\n\n- **AC-1:** `clampLength` clamps vector length.",
+        'consumer_issue_title' => 'refactor(movement): use Vec2.clampLength',
+        'consumer_issue_body' => "## Problem\n\nManual clamp in `src/movement.js`.\n\n## Affected Files\n\n- `src/movement.js`\n\n## Suggested Fix\n\nDelegate to `clampLength`.\n\n## Acceptance Criteria\n\n- **AC-1:** `src/movement.js` uses `clampLength`."
+      },
+      {
+        'package' => '@1pizzateam/spock',
+        'repo' => '1pizzateam/Spock.js',
+        'priority' => 'High',
+        'model' => 'claude-opus-5.5',
+        'effort' => 'High',
+        'library_issue_title' => 'feat(vec2): add projectOnto method',
+        'library_issue_body' => "## Problem\n\nMissing `projectOnto`.\n\n## Proposed API\n\n`vec.projectOnto(axis)`\n\n## Acceptance Criteria\n\n- **AC-1:** `projectOnto` projects vector onto axis.",
+        'consumer_issue_title' => 'refactor(movement): use Vec2.projectOnto for wall slide',
+        'consumer_issue_body' => "## Problem\n\nManual projection in `src/slide.js`.\n\n## Affected Files\n\n- `src/slide.js`\n\n## Suggested Fix\n\nDelegate to `projectOnto`.\n\n## Acceptance Criteria\n\n- **AC-1:** `src/slide.js` uses `projectOnto`."
+      }
+    ]))
+    run_step(upstream_entry, scenario([], issues: [], project: project))
+    upstream_creates = @calls.select { |args| args.first(2) == %w[issue create] }
+    assert_equal 2, upstream_creates.length, 'Two close upstream requests for the same library must merge into 1 consumer issue + 1 upstream issue'
+    consumer_body = upstream_creates[0][upstream_creates[0].index('--body') + 1]
+    lib_body = upstream_creates[1][upstream_creates[1].index('--body') + 1]
+    assert_includes consumer_body, "- `src/movement.js`\n- `src/slide.js`"
+    assert_includes consumer_body, "- **AC-1:** `src/movement.js` uses `clampLength`.\n- **AC-2:** `src/slide.js` uses `projectOnto`."
+    assert_includes lib_body, "- **AC-1:** `clampLength` clamps vector length.\n- **AC-2:** `projectOnto` projects vector onto axis."
+
+    # 3. Close editor requests targeting the same companion editor merge into 1 issue
+    File.write(File.join(@directory, 'editor-requests.json'), JSON.generate([
+      {
+        'editor' => 'mappr',
+        'repo' => '1pizzateam/MappR',
+        'priority' => 'Low',
+        'model' => 'claude-haiku-5.5',
+        'effort' => 'Low',
+        'title' => 'feat(schema): support door lock color property',
+        'problem' => 'Added lock color in DoomR.js.',
+        'affectedFiles' => ['src/door.js'],
+        'suggestedDirection' => 'Add lock color dropdown in MappR inspector.'
+      },
+      {
+        'editor' => 'mappr',
+        'repo' => '1pizzateam/MappR',
+        'priority' => 'High',
+        'model' => 'claude-sonnet-5.5',
+        'effort' => 'Medium',
+        'title' => 'feat(schema): support door speed property',
+        'problem' => 'Added door speed in DoomR.js.',
+        'affectedFiles' => ['src/door-speed.js'],
+        'suggestedDirection' => 'Add speed numeric input in MappR inspector.'
+      }
+    ]))
+    run_step(editor_entry, scenario([], issues: [], project: project))
+    editor_creates = @calls.select { |args| args.first(2) == %w[issue create] }
+    assert_equal 1, editor_creates.length, 'Two close editor requests for the same companion editor must merge into 1 issue'
+    ed_title = editor_creates[0][editor_creates[0].index('--title') + 1]
+    ed_body = editor_creates[0][editor_creates[0].index('--body') + 1]
+    assert_equal 'feat(schema): support door lock color property and support door speed property', ed_title
+    assert_includes ed_body, "- `src/door.js`\n- `src/door-speed.js`"
+  end
+
   def test_primitive_validators_and_agents_are_wired_across_phases
     think_install = steps('think').find { |item| item['name'] == 'Install ALTEN-group/coding-pal think primitives' }.fetch('run')
     refute_includes think_install, 'forge.instructions.md'

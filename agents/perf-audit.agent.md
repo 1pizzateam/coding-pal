@@ -4,8 +4,9 @@ description: "Identify hot-loop and library runtime method violations of the hot
 ---
 
 1. Audit per-frame update/render loops and library runtime methods in the requested scope against the `hot-loop-performance` instruction.
-2. Do not modify source, test, or documentation files.
-3. Write `audit-findings.json` at the repository root as a JSON array where each element represents one distinct performance or Zero-GC finding with fields:
+2. Consolidate closely related violations: merge multiple hot-loop or Zero-GC findings within the same file, module, or per-frame subsystem into a single finding rather than reporting separate findings per allocation or method in the same module. Skip any symbol or file already tracked by an open issue.
+3. Do not modify source, test, or documentation files.
+4. Write `audit-findings.json` at the repository root as a JSON array where each element represents one consolidated performance or Zero-GC finding with fields:
    - `"title"`: concise `perf(<scope>): <summary>` issue title
    - `"priority"`: GitHub issue priority (`"Urgent"`, `"High"`, `"Medium"`, or `"Low"`)
    - `"model"`: recommended Copilot model for remediation (`"claude-sonnet-5.5"`, `"claude-opus-5.5"`, `"claude-haiku-5.5"`, `"gpt-6.1-sol"`, `"gpt-6.1-terra"`, `"gpt-6-luna"`, `"gpt-5.3-codex"`, `"gemini-4-argon"`, `"gemini-3.8-flash"`, or `"auto"`) based on finding complexity
