@@ -572,7 +572,7 @@ jobs:
               const p = ".agents/skills/prove/scripts/secret-guard.mjs";
               let src = fs.readFileSync(p, "utf8");
               src = src.replace(
-                "spawnSync(\"git\", [\"diff\", \"-U0\", diffBase], { cwd, encoding: \"utf-8\" })",
+                /spawnSync\("git",\s*\["diff",\s*"-U0",\s*diffBase\],\s*\{\s*cwd,\s*encoding:\s*"utf-8",?\s*\}\)/,
                 "spawnSync(\"git\", [\"diff\", \"-U0\", \"--diff-filter=AM\", diffBase], { cwd, encoding: \"utf-8\", maxBuffer: 64 * 1024 * 1024 })"
               );
               fs.writeFileSync(p, src);
