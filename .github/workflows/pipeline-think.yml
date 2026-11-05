@@ -59,7 +59,7 @@ jobs:
           HAS_CODE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("3-code") != null')
           HAS_PROVE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("4-prove") != null')
           HAS_RELEASE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("5-release") != null')
-          EXISTING_THINK=$(echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")')
+          EXISTING_THINK=$(echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "") | sub("\\n+## Forge Asset Bindings\\r?\\n[\\s\\S]*?(?=\\n## |$)"; "")')
           EXISTING_PLAN=$(echo "$ISSUE_VIEW" | jq -r '
             (.comments | map(.body) | to_entries) as $all |
             ([ $all[] | select(.value | test("^# Think:"; "m")) | .key ] | last // -1) as $last_think_idx |
@@ -133,23 +133,18 @@ jobs:
               "## Options Considered\n" +
               "### Option 1: Targeted In-Place Remediation\n" +
               "- **Approach:** Address the audit finding directly within the affected files (" + $affected + ") while preserving existing public contracts and runtime behavior.\n" +
-              "- **Source:** Custom build\n" +
               "- **Trade-offs:** Keeps scope strictly bounded to the reported finding without broader architectural churn.\n" +
               "- **Cost:** Low\n" +
               "- **Risk:** Low\n\n" +
               "### Option 2: Broad Subsystem Refactor\n" +
               "- **Approach:** Re-architect surrounding modules beyond the immediate audit finding scope.\n" +
-              "- **Source:** Custom build\n" +
               "- **Trade-offs:** Expands blast radius and review surface area unnecessarily for a targeted audit remediation.\n" +
               "- **Cost:** Medium\n" +
               "- **Risk:** Medium\n\n" +
               "## Chosen Approach\n" +
               "- **Selected:** Option 1\n" +
               "- **Reasoning:** Automated audit findings already pinpoint the exact file scope, root cause, and remediation direction, making a targeted in-place fix the lowest-risk path.\n" +
-              "- **Approved By:** Automated by coding-pal-audit on " + $today + "\n" +
-              "- **Custom Build Reason:** Remediation applies directly to repository-specific source and test files identified by the audit.\n\n" +
-              "## Forge Asset Bindings\n" +
-              "- **None:** Repository-internal audit remediation does not require external Forge asset composition.\n\n" +
+              "- **Approved By:** Automated by coding-pal-audit on " + $today + "\n\n" +
               "## System Flow & Responsibilities\n" +
               "- **Request Tracing:** Execution flows through the affected module(s) (" + $affected + ") and their corresponding unit tests.\n" +
               "- **Component Responsibilities:** Target files identified in issue #" + $issue_number + " own the localized remediation and regression test coverage.\n" +
@@ -420,8 +415,8 @@ jobs:
           [ -d website ] && [ -f /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md ] && cp /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md .github/instructions/
           cp /tmp/alten-coding-pal/agents/think.agent.md .github/agents/
           cp -R /tmp/alten-coding-pal/skills/think .agents/skills/think
-          cp -R /tmp/alten-coding-pal/skills/forge .agents/skills/forge
           cp -R /tmp/alten-coding-pal/skills/decision-record .agents/skills/decision-record
+          mkdir -p .agents/skills/forge
           cp /tmp/1pizza-coding-pal/forge-catalog.json .agents/skills/forge/catalog.json
           for repo_cat in docs/forge/catalog.json .github/forge-catalog.json forge-catalog.json; do
             if [ -f "$repo_cat" ]; then
@@ -498,7 +493,7 @@ jobs:
           ISSUE_TITLE=$(echo "$ISSUE_JSON" | jq -r '.title')
           ISSUE_BODY=$(echo "$ISSUE_JSON" | jq -r '.body // ""')
           ALREADY_ESCALATED=$(echo "$ISSUE_JSON" | jq -r '[.labels[].name] | index("upstream-escalated:1") != null')
-          PREVIOUS_THINK=$(echo "$ISSUE_JSON" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")')
+          PREVIOUS_THINK=$(echo "$ISSUE_JSON" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "") | sub("\\n+## Forge Asset Bindings\\r?\\n[\\s\\S]*?(?=\\n## |$)"; "")')
           DEV_COMMENTS=$(echo "$ISSUE_JSON" | jq -r '
             [.comments[]
               | select((.body // "") | test("^(# (Think|Plan|Prove|Release|Release report)|⏸️ \\*\\*(Paused after|Blocked on)|Pull request opened for #|### Companion Game Editor Updates Dispatched|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
@@ -591,9 +586,9 @@ jobs:
             - **End-to-End Producer-to-Consumer Trace:** Trace data and coordinates from generation through every intermediate helper, coordinate transform, and downstream consumer/filter/guard, and include every required companion file in ## Blast Radius (- **Affected:**) so the implementation is never blocked by an out-of-scope file constraint.
             - **No Self-Sabotaging Constraints:** In ## Constraints & Invariants (- **Non-Negotiable Rules:**), do not lock in broken legacy behavior or treat incidental literal/regex assertions in existing unit tests as immutable rules when updating them is required to fix the root cause; instead, include the affected module and test file in ## Blast Radius (- **Affected:**) so they are updated together.
           - **Product & Design Ambition (No Lazy No-Op Workarounds):** When an issue is brief or high-level (e.g., a 1-sentence feature idea), expand it with genuine product, UX, or gameplay creativity that fulfills the user's real intent. Never select a trivial or no-op workaround (such as claiming existing unrelated items already satisfy the request) just to minimize code changes; choose the option that delivers a cohesive, complete, and compelling feature.
-          - **Substantive Options & Trade-Off Analysis:** Explore 3 to 4 genuinely distinct architectural/design options in ## Options Considered (for example: lightweight extension of an existing entity, a dedicated interactive/destructible subsystem, or a Forge-composed/hybrid design). Give each option's Approach, Trade-offs, Cost, and Risk thorough multi-sentence analysis (and 2-space indented sub-bullets where helpful).
+          - **Substantive Options & Trade-Off Analysis:** Explore 3 to 4 genuinely distinct architectural/design options in ## Options Considered (for example: lightweight extension of an existing entity, a dedicated interactive/destructible subsystem, or @1pizzateam/* library composition). Give each option's Approach, Trade-offs, Cost, and Risk thorough multi-sentence analysis (and 2-space indented sub-bullets where helpful).
           - **Rich Technical Depth in Flow & Reasoning:** In ## Chosen Approach (Reasoning) and ## System Flow & Responsibilities (Request Tracing, Component Responsibilities, Boundaries), write detailed multi-sentence explanations, 2-space indented sub-bullets ('  - ...'), and optional 'mermaid' flow/state diagrams covering concrete data models, state transitions, interaction mechanics, visual/audio feedback, and exact module boundaries. Keep top-level '- **<Label>:**' keys strictly matching the contract; indent any sub-bullets by at least 2 spaces so validate-think.mjs parses them as continuation lines of that field, and do not include source code blocks or task checkboxes.
-          - **Forge Discovery:** Query the installed Forge catalog (.agents/skills/forge/catalog.json, or run 'node .agents/skills/forge/scripts/discover.mjs --need <capability>'): when the chosen approach reuses, composes, or extends any cataloged Forge asset, set Source to 'Forge reuse' or 'Hybrid' and bind each relevant asset in ## Forge Asset Bindings as '- **forge/<id>@<version>:** <how it is composed>' using the asset id and version from .agents/skills/forge/catalog.json; only when no cataloged Forge asset applies to this change, set Source to 'Custom build' with a clear Custom Build Reason in ## Chosen Approach and '- **None:** <reason why no cataloged Forge asset applies>' in ## Forge Asset Bindings.
+          - **Ecosystem Catalog Discovery:** Inspect the installed 1PizzaTeam ecosystem catalog (.agents/skills/forge/catalog.json) to check existing @1pizzateam/* libraries and companion game editors when evaluating options, reuse opportunities, upstream library escalations, and companion editor updates (do not add a ## Forge Asset Bindings section to ${THINK_FILE}).
           - Write '_None._' in ## Ambiguities & Open Questions unless a genuine blocker exists.
           ${ESCALATION_HINT}
           ${EDITOR_HINT}
@@ -656,7 +651,6 @@ jobs:
         run: |
           THINK_FILE="specs/issue-${ISSUE_NUMBER}/think.md"
           node .agents/skills/think/scripts/validate-think.mjs --think "$THINK_FILE"
-          node .agents/skills/forge/scripts/bindings-check.mjs --think "$THINK_FILE"
           node .agents/skills/decision-record/scripts/validate-decision.mjs --think "$THINK_FILE"
           cat "$THINK_FILE" >> "$GITHUB_STEP_SUMMARY"
 

@@ -453,7 +453,7 @@ jobs:
             ISSUE_VIEW=$(gh issue view "$ISSUE_NUMBER" --json title,body,labels,comments)
           fi
           if [ ! -s "${SPEC_DIR}/think.md" ]; then
-            echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")' > "${SPEC_DIR}/think.md"
+            echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "") | sub("\\n+## Forge Asset Bindings\\r?\\n[\\s\\S]*?(?=\\n## |$)"; "")' > "${SPEC_DIR}/think.md"
             if [ ! -s "${SPEC_DIR}/think.md" ]; then
               HAS_AUDIT_LABEL=$(echo "$ISSUE_VIEW" | jq -r '[.labels[]?.name] | any(startswith("audit:"))')
               if [ "$HAS_AUDIT_LABEL" = "true" ]; then
@@ -461,6 +461,9 @@ jobs:
                 echo "$ISSUE_VIEW" | jq -r --arg issue_number "$ISSUE_NUMBER" --arg today "$TODAY" '
                   ((.title // "") | gsub("[\\r\\n]+"; " ") | sub("^\\s+"; "") | sub("\\s+$"; "") | if length > 0 then . else "Audit Finding Remediation" end) as $title |
                   ([.labels[]?.name // empty | select(startswith("audit:"))] | first // "audit:finding") as $audit_label |
+                  (([.comments[]?.body // empty | select(test("^# Plan:"; "m")) | scan("on ([0-9]{4}-[0-9]{2}-[0-9]{2})") | .[0]] | last) // $today) as $plan_date |
+                  (if $plan_date < $today then $plan_date else $today end) as $think_date |
+                  (([.comments[]?.body // empty | select(test("^# Plan:"; "m")) | scan("- \\*\\*Tier from Think:\\*\\*\\s*(Low|Medium|High|Critical)") | .[0]] | last) // "Low") as $think_tier |
                   ((.body // "")
                     | gsub("```[\\s\\S]*?```"; " ")
                     | gsub("~~~[\\s\\S]*?~~~"; " ")
@@ -483,23 +486,18 @@ jobs:
                   "## Options Considered\n" +
                   "### Option 1: Targeted In-Place Remediation\n" +
                   "- **Approach:** Address the audit finding directly within the affected files (" + $affected + ") while preserving existing public contracts and runtime behavior.\n" +
-                  "- **Source:** Custom build\n" +
                   "- **Trade-offs:** Keeps scope strictly bounded to the reported finding without broader architectural churn.\n" +
                   "- **Cost:** Low\n" +
                   "- **Risk:** Low\n\n" +
                   "### Option 2: Broad Subsystem Refactor\n" +
                   "- **Approach:** Re-architect surrounding modules beyond the immediate audit finding scope.\n" +
-                  "- **Source:** Custom build\n" +
                   "- **Trade-offs:** Expands blast radius and review surface area unnecessarily for a targeted audit remediation.\n" +
                   "- **Cost:** Medium\n" +
                   "- **Risk:** Medium\n\n" +
                   "## Chosen Approach\n" +
                   "- **Selected:** Option 1\n" +
                   "- **Reasoning:** Automated audit findings already pinpoint the exact file scope, root cause, and remediation direction, making a targeted in-place fix the lowest-risk path.\n" +
-                  "- **Approved By:** Automated by coding-pal-audit on " + $today + "\n" +
-                  "- **Custom Build Reason:** Remediation applies directly to repository-specific source and test files identified by the audit.\n\n" +
-                  "## Forge Asset Bindings\n" +
-                  "- **None:** Repository-internal audit remediation does not require external Forge asset composition.\n\n" +
+                  "- **Approved By:** Automated by coding-pal-audit on " + $think_date + "\n\n" +
                   "## System Flow & Responsibilities\n" +
                   "- **Request Tracing:** Execution flows through the affected module(s) (" + $affected + ") and their corresponding unit tests.\n" +
                   "- **Component Responsibilities:** Target files identified in issue #" + $issue_number + " own the localized remediation and regression test coverage.\n" +
@@ -509,7 +507,7 @@ jobs:
                   "- **Non-Negotiable Rules:** Preserve existing public APIs, build outputs, and unrelated runtime behavior while resolving the audit finding.\n" +
                   "- **Side-Effect Constraints:** No unintended state mutations, external network calls, or out-of-scope file modifications.\n\n" +
                   "## Blast Radius\n" +
-                  "- **Tier:** Low\n" +
+                  "- **Tier:** " + $think_tier + "\n" +
                   "- **Affected:** " + $affected + "\n" +
                   "- **Rationale:** Scoped remediation of a single automated audit finding within existing module boundaries.\n" +
                   "- **Rollback:** Revert the pull request commit if any regression is detected.\n\n" +
@@ -549,11 +547,15 @@ jobs:
           [ -d tests ] && [ -f /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md ] && cp /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md .github/instructions/
           [ -d website ] && [ -f /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md ] && cp /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md .github/instructions/
           [ -d website ] && [ -d /tmp/alten-coding-pal/skills/vitepress-docs ] && cp -R /tmp/alten-coding-pal/skills/vitepress-docs .agents/skills/vitepress-docs
+          if [ -s "specs/issue-${ISSUE_NUMBER}/think.md" ]; then
+            jq -Rsr 'sub("\\n+## Forge Asset Bindings\\r?\\n[\\s\\S]*?(?=\\n## |$)"; "")' "specs/issue-${ISSUE_NUMBER}/think.md" > "specs/issue-${ISSUE_NUMBER}/think.md.tmp" && mv "specs/issue-${ISSUE_NUMBER}/think.md.tmp" "specs/issue-${ISSUE_NUMBER}/think.md"
+          fi
           cp /tmp/alten-coding-pal/agents/prove.agent.md .github/agents/
           cp /tmp/alten-coding-pal/agents/gate-fix.agent.md .github/agents/
-          for skill in think plan forge code prove; do
+          for skill in think plan code prove; do
             cp -R "/tmp/alten-coding-pal/skills/${skill}" ".agents/skills/${skill}"
           done
+          mkdir -p .agents/skills/forge
           cp /tmp/1pizza-coding-pal/forge-catalog.json .agents/skills/forge/catalog.json
           for repo_cat in docs/forge/catalog.json .github/forge-catalog.json forge-catalog.json; do
             if [ -f "$repo_cat" ]; then

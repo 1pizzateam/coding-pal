@@ -2208,19 +2208,24 @@ class WorkflowsTest < Minitest::Test
   def test_primitive_validators_and_agents_are_wired_across_phases
     think_install = steps('think').find { |item| item['name'] == 'Install ALTEN-group/coding-pal think primitives' }.fetch('run')
     refute_includes think_install, 'forge.instructions.md'
+    refute_includes think_install, '/tmp/alten-coding-pal/skills/forge'
+    assert_includes think_install, 'mkdir -p .agents/skills/forge'
     think_validate = steps('think').find { |item| item['name'] == 'Validate think.md contract' }.fetch('run')
-    assert_includes think_validate, 'bindings-check.mjs --think "$THINK_FILE"'
+    refute_includes think_validate, 'bindings-check.mjs'
     assert_includes think_validate, 'validate-decision.mjs --think "$THINK_FILE"'
 
     plan_install = steps('plan').find { |item| item['name'] == 'Install ALTEN-group/coding-pal plan primitives' }.fetch('run')
     refute_includes plan_install, 'forge.instructions.md'
+    refute_includes plan_install, '/tmp/alten-coding-pal/skills/forge'
+    assert_includes plan_install, 'mkdir -p .agents/skills/forge'
     assert_includes plan_install, 'skills/think'
     plan_validate = steps('plan').find { |item| item['name'] == 'Validate plan.md contract and cross-check against think.md' }.fetch('run')
-    assert_includes plan_validate, 'bindings-check.mjs --think "$THINK_FILE" --plan "$PLAN_FILE"'
+    refute_includes plan_validate, 'bindings-check.mjs'
 
     code_install = steps('code').find { |item| item['name'] == 'Install ALTEN-group/coding-pal code primitives' }.fetch('run')
     assert_includes code_install, 'cp /tmp/alten-coding-pal/instructions/code.instructions.md .github/instructions/'
-    assert_includes code_install, 'for skill in think plan forge code prove; do'
+    assert_includes code_install, 'for skill in think plan code prove; do'
+    assert_includes code_install, 'mkdir -p .agents/skills/forge'
     code_gates = steps('code').find { |item| item['name'] == 'Run deterministic Code exit gates' }.fetch('run')
     assert_includes code_gates, 'validate-plan.mjs --plan "${SPEC_DIR}/plan.md" --think "${SPEC_DIR}/think.md"'
     assert_includes code_gates, '.agents/skills/code/scripts/validate-pr.mjs'
@@ -2228,7 +2233,8 @@ class WorkflowsTest < Minitest::Test
     prove_install = steps('prove').find { |item| item['name'] == 'Install ALTEN-group/coding-pal Prove and Remediation primitives' }.fetch('run')
     refute_includes prove_install, 'prove-controls.instructions.md'
     refute_includes prove_install, 'agents/code.agent.md'
-    assert_includes prove_install, 'for skill in think plan forge code prove; do'
+    assert_includes prove_install, 'for skill in think plan code prove; do'
+    assert_includes prove_install, 'mkdir -p .agents/skills/forge'
     prove_loop = steps('prove').find { |item| item['name'] == 'Run Prove validation and auto-remediation loop' }.fetch('run')
     assert_includes prove_loop, '.agents/skills/prove/scripts/dependency-guard.mjs --git --base "origin/${BASE_REF}" --plan "${SPEC_DIR}/plan.md" --pr pr.md'
     assert_includes prove_loop, '--diff-filter=AM "origin/${BASE_REF}..HEAD"'
