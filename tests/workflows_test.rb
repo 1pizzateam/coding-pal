@@ -555,6 +555,9 @@ class WorkflowsTest < Minitest::Test
     custom_env = File.read(@environment.fetch('GITHUB_ENV'))
     assert_includes custom_env, 'ISSUE_AI_MODEL=claude-opus-5.5'
     assert_includes custom_env, 'ISSUE_AI_EFFORT=max'
+
+    run_step(status_step('prove', 'Prove'), scenario([], project: custom_project, content_already_exists: true))
+    assert @calls.any? { |args| args.include?('itemId=ITEM') && args.include?('optionId=prove') }
   end
 
   def test_project_status_matching_is_case_insensitive
@@ -2235,9 +2238,11 @@ class WorkflowsTest < Minitest::Test
     refute_includes prove_install, 'agents/code.agent.md'
     assert_includes prove_install, 'for skill in think plan code prove; do'
     assert_includes prove_install, 'mkdir -p .agents/skills/forge'
+    assert_includes prove_install, 'maxBuffer: 64 * 1024 * 1024'
     prove_loop = steps('prove').find { |item| item['name'] == 'Run Prove validation and auto-remediation loop' }.fetch('run')
     assert_includes prove_loop, '.agents/skills/prove/scripts/dependency-guard.mjs --git --base "origin/${BASE_REF}" --plan "${SPEC_DIR}/plan.md" --pr pr.md'
     assert_includes prove_loop, '--diff-filter=AM "origin/${BASE_REF}..HEAD"'
+    assert_includes prove_loop, '--test-cmd "bash $RUNNER_TEMP/run-tests.sh"'
     assert_includes prove_loop, '--agent="gate-fix"'
     refute_includes prove_loop, '--agent="code"'
   end

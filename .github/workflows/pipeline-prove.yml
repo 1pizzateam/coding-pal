@@ -165,6 +165,12 @@ jobs:
               repository(owner: $owner, name: $repo) {
                 issue(number: $number) {
                   id
+                  projectItems(first: 20) {
+                    nodes {
+                      id
+                      project { id }
+                    }
+                  }
                   issueFieldValues(first: 20) {
                     nodes {
                       ... on IssueFieldSingleSelectValue {
@@ -261,15 +267,20 @@ jobs:
           ITEM_ID=$(gh api graphql -f query='
             mutation($projectId: ID!, $contentId: ID!) {
               addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) { item { id } }
-            }' -f projectId="$PROJECT_ID" -f contentId="$ISSUE_ID" --jq '.data.addProjectV2ItemById.item.id')
+            }' -f projectId="$PROJECT_ID" -f contentId="$ISSUE_ID" --jq '.data.addProjectV2ItemById.item.id' 2>/dev/null || true)
+          if [ -z "$ITEM_ID" ]; then
+            ITEM_ID=$(echo "$DATA" | jq -r --arg pid "$PROJECT_ID" '.data.repository.issue.projectItems.nodes[]? | select(.project.id == $pid) | .id' | head -n 1)
+          fi
 
-          gh api graphql -f query='
-            mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
-              updateProjectV2ItemFieldValue(input: {
-                projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
-                value: { singleSelectOptionId: $optionId }
-              }) { projectV2Item { id } }
-            }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$FIELD_ID" -f optionId="$OPTION_ID" >/dev/null
+          if [ -n "$ITEM_ID" ]; then
+            gh api graphql -f query='
+              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
+                  value: { singleSelectOptionId: $optionId }
+                }) { projectV2Item { id } }
+              }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$FIELD_ID" -f optionId="$OPTION_ID" >/dev/null 2>&1 || echo "::warning::Transient GitHub ProjectV2 API error updating Status to '$TARGET_STATUS'; continuing."
+          fi
 
           if [ "$TARGET_STATUS" = "Done" ]; then
             STALE_DONE_ITEMS=$(echo "$PROJECT" | jq -r --arg done_id "$OPTION_ID" --arg current_id "$ITEM_ID" '
@@ -555,6 +566,18 @@ jobs:
           for skill in think plan code prove; do
             cp -R "/tmp/alten-coding-pal/skills/${skill}" ".agents/skills/${skill}"
           done
+          if [ -f .agents/skills/prove/scripts/secret-guard.mjs ]; then
+            node -e '
+              const fs = require("fs");
+              const p = ".agents/skills/prove/scripts/secret-guard.mjs";
+              let src = fs.readFileSync(p, "utf8");
+              src = src.replace(
+                "spawnSync(\"git\", [\"diff\", \"-U0\", diffBase], { cwd, encoding: \"utf-8\" })",
+                "spawnSync(\"git\", [\"diff\", \"-U0\", \"--diff-filter=AM\", diffBase], { cwd, encoding: \"utf-8\", maxBuffer: 64 * 1024 * 1024 })"
+              );
+              fs.writeFileSync(p, src);
+            '
+          fi
           mkdir -p .agents/skills/forge
           cp /tmp/1pizza-coding-pal/forge-catalog.json .agents/skills/forge/catalog.json
           for repo_cat in docs/forge/catalog.json .github/forge-catalog.json forge-catalog.json; do
@@ -814,6 +837,9 @@ jobs:
           cat > "$RUNNER_TEMP/run-tests.sh" <<'TEST_SCRIPT'
           set -eo pipefail
           mkdir -p reports
+          if [ -f package.json ] && [ "$(node -p "const p=require('./package.json'); Boolean(p.scripts && p.scripts['build:lib'])")" = "true" ]; then
+            npm run build:lib
+          fi
           if [ -f "./node_modules/jest/bin/jest.js" ]; then
             node --experimental-vm-modules ./node_modules/jest/bin/jest.js --coverage --json --outputFile=reports/test-report.json
           else
@@ -924,7 +950,8 @@ jobs:
               for src in $MODIFIED_SRCS; do
                 PROBE_ARGS+=(--source "$src")
               done
-              run_check "test-probe" node .agents/skills/prove/scripts/test-probe.mjs --base "origin/${BASE_REF}" --test-cmd "npm test" "${PROBE_ARGS[@]}"
+              run_check "test-probe" node .agents/skills/prove/scripts/test-probe.mjs --base "origin/${BASE_REF}" --test-cmd "bash $RUNNER_TEMP/run-tests.sh" "${PROBE_ARGS[@]}"
+              bash "$RUNNER_TEMP/run-tests.sh" >/dev/null 2>&1 || true
             else
               echo "=== Control: test-probe ===" >> gate-output.log
               echo "N/A (no tracked src/** files added or modified)" >> gate-output.log
