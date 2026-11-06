@@ -450,11 +450,14 @@ jobs:
           fi
 
           STALE_DONE_ITEMS=$(echo "$PROJECT" | jq -r --arg done_id "$OPTION_ID" --arg current_id "$ITEM_ID" '
-            .items.nodes[]?
-            | select(.id != $current_id and (.isArchived // false) == false)
-            | select(((.fieldValueByName.name // "" | ascii_downcase) == "done") or (.fieldValueByName.optionId == $done_id))
-            | (.content.closedAt // .updatedAt // .content.updatedAt // empty) as $ts
-            | select(($ts | length) > 0 and (($ts | fromdateiso8601? // now) < (now - 259200)))
+            [
+              .items.nodes[]?
+              | select(.id != $current_id and (.isArchived // false) == false)
+              | select(((.fieldValueByName.name // "" | ascii_downcase) == "done") or (.fieldValueByName.optionId == $done_id))
+            ]
+            | sort_by((.content.closedAt // .updatedAt // .content.updatedAt // "") | fromdateiso8601? // 0)
+            | reverse
+            | .[39:][]
             | .id
           ' 2>/dev/null || true)
           for STALE_ITEM_ID in $STALE_DONE_ITEMS; do

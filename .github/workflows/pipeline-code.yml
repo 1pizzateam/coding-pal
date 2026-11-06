@@ -79,16 +79,36 @@ jobs:
             exit 1
           fi
 
+          ISSUE_VIEW=$(gh issue view "$ISSUE_NUMBER" --json state,title,body,labels,comments)
+          ISSUE_STATE=$(echo "$ISSUE_VIEW" | jq -r '.state // "OPEN"')
+          if [ "$ISSUE_STATE" = "CLOSED" ]; then
+            echo "Issue #${ISSUE_NUMBER} is already CLOSED; skipping Code."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          HAS_AUDIT_LABEL=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | any(startswith("audit:"))')
+          HAS_BLOCKED_UPSTREAM=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("blocked:upstream") != null')
+          HAS_UPSTREAM_RELEASED=$(echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^## Upstream Library Released"; "m"))] | length > 0')
+          HAS_CODE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("3-code") != null')
+          HAS_PROVE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("4-prove") != null')
+          HAS_RELEASE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("5-release") != null')
+          ALREADY_COMPLETED=$(echo "$ISSUE_VIEW" | jq -r '
+            (.comments | map(.body) | to_entries) as $all |
+            ([ $all[] | select(.value | test("^# (Think|Plan):"; "m")) | .key ] | last // -1) as $last_spec_idx |
+            ([ $all[] | select(.value | test("^# (Prove:|Release:|Release report)"; "m")) | .key ] | last // -1) as $last_done_idx |
+            ($last_done_idx >= 0 and $last_done_idx > $last_spec_idx)
+          ')
+
+          if [ "$HAS_CODE_TRIGGER" != "true" ] && [ "$HAS_PROVE_TRIGGER" != "true" ] && [ "$HAS_RELEASE_TRIGGER" != "true" ] && { [ -n "$RUN_ID" ] || [ "$ALREADY_COMPLETED" = "true" ]; }; then
+            echo "Issue #${ISSUE_NUMBER} no longer has an active 3-code, 4-prove, or 5-release label; skipping superseded Code run."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           gh issue edit "$ISSUE_NUMBER" --remove-assignee "@me" 2>/dev/null || true
 
           if [ -z "$RUN_ID" ]; then
-            ISSUE_VIEW=$(gh issue view "$ISSUE_NUMBER" --json title,body,labels,comments)
-            HAS_AUDIT_LABEL=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | any(startswith("audit:"))')
-            HAS_BLOCKED_UPSTREAM=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("blocked:upstream") != null')
-            HAS_UPSTREAM_RELEASED=$(echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^## Upstream Library Released"; "m"))] | length > 0')
-            HAS_CODE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("3-code") != null')
-            HAS_PROVE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("4-prove") != null')
-            HAS_RELEASE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("5-release") != null')
             if [ "$HAS_BLOCKED_UPSTREAM" = "true" ] && [ "$HAS_UPSTREAM_RELEASED" != "true" ]; then
               UPSTREAM_REF=$(echo "$ISSUE_VIEW" | jq -r '([ (.body // ""), (.comments[]?.body // "") ] | join("\n") | [ scan("(1pizzateam/[A-Za-z0-9_.-]+)#([0-9]+)") ] | last) | if type == "array" and length == 2 then (.[0] + "#" + .[1]) else "" end' 2>/dev/null || true)
               if [ -n "$UPSTREAM_REF" ]; then
@@ -255,6 +275,7 @@ jobs:
           fi
 
           if [ ! -s "$THINK_FILE" ] || [ ! -s "$PLAN_FILE" ]; then
+            echo "Missing \`think.md\` or \`plan.md\` specification for issue #${ISSUE_NUMBER}. Run the Think and Plan workflows first." > "$RUNNER_TEMP/code-failure-reason.md"
             echo "::error::Missing think.md or plan.md for issue #${ISSUE_NUMBER}. Run Think and Plan workflows first."
             exit 1
           fi
@@ -613,7 +634,7 @@ jobs:
           ISSUE_BODY=$(echo "$ISSUE_JSON" | jq -r '.body // ""')
           DEV_COMMENTS=$(echo "$ISSUE_JSON" | jq -r '
             [.comments[]
-              | select((.body // "") | test("^(# (Think|Plan|Prove|Release|Release report)|⏸️ \\*\\*(Paused after|Blocked on)|Pull request opened for #|### Companion Game Editor Updates Dispatched|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
+              | select((.body // "") | test("^(# (Think|Plan|Code|Prove|Release|Release report)|⏸️ \\*\\*(Paused after|Blocked on)|⚠️ \\*\\*(Think|Plan|Code|Prove) failed|Pull request opened for #|### Companion Game Editor Updates Dispatched|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
               | select((.body // "") | gsub("\\s+"; "") | length > 0)
               | "### Issue Comment by @" + (.author.login // "developer") + " (" + (.createdAt // "") + "):\n" + .body
             ] | join("\n\n")
@@ -622,7 +643,7 @@ jobs:
           if [ -n "$EXISTING_PR" ]; then
             PR_DEV_COMMENTS=$(gh pr view "$EXISTING_PR" --json comments --jq '
               [.comments[]
-                | select((.body // "") | test("^(# (Think|Plan|Prove|Release|Release report)|⏸️ \\*\\*(Paused after|Blocked on)|Pull request opened for #|### Companion Game Editor Updates Dispatched|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
+                | select((.body // "") | test("^(# (Think|Plan|Code|Prove|Release|Release report)|⏸️ \\*\\*(Paused after|Blocked on)|⚠️ \\*\\*(Think|Plan|Code|Prove) failed|Pull request opened for #|### Companion Game Editor Updates Dispatched|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
                 | select((.body // "") | gsub("\\s+"; "") | length > 0)
                 | "### PR Comment by @" + (.author.login // "developer") + " (" + (.createdAt // "") + "):\n" + .body
               ] | join("\n\n")
@@ -682,8 +703,9 @@ jobs:
 
           export COPILOT_OTEL_ENABLED="true"
           export COPILOT_OTEL_FILE_EXPORTER_PATH="${RUNNER_TEMP}/copilot-otel.jsonl"
-          rm -rf "${COPILOT_HOME:-$HOME/.copilot}/session-state" "$COPILOT_OTEL_FILE_EXPORTER_PATH" 2>/dev/null || true
+          rm -rf "${COPILOT_HOME:-$HOME/.copilot}/session-state" "$COPILOT_OTEL_FILE_EXPORTER_PATH" "$RUNNER_TEMP/copilot-code.log" 2>/dev/null || true
 
+          COPILOT_EXIT=0
           copilot --model="${ISSUE_AI_MODEL:-claude-sonnet-5.5}" --reasoning-effort="${ISSUE_AI_EFFORT:-medium}" --agent="code" --allow-all-tools \
             --prompt "Implement the validated Plan record at ${PLAN_FILE} (with ${THINK_FILE}) for GitHub Issue #${ISSUE_NUMBER} (${ISSUE_TITLE}) on the current branch ${BRANCH_NAME} (base: ${BASE_REF}).
           Issue Body:
@@ -695,7 +717,9 @@ jobs:
           1. Always deliver a working implementation and commit within ${PLAN_FILE}'s In Scope files: if your codebase investigation or visual reproduction refines the diagnosis in ${THINK_FILE} or ${PLAN_FILE} (for example, the root cause of the reported bug or visual artifact resides in a different shader, function, or branch within the In Scope files than the one hypothesized in Think/Plan), do NOT stop with zero commits. Instead, adapt and implement the actual root-cause fix inside the allowed In Scope files while satisfying all Acceptance Criteria (AC-1..AC-N) and Test Plan requirements in ${PLAN_FILE}.
           2. Implement all steps in ${PLAN_FILE} across the in-scope files (writing only files listed in ${PLAN_FILE}'s In Scope; if an in-scope test file has an existing assertion superseded by a behavior change, update that assertion; ensure every acceptance criterion test includes its AC-<n> token in the test name so it passes criteria-verify in Prove).
           3. Once all steps are implemented, run the full verification and build checks once ('npm test' and 'npm run build'; if this is a published @1pizzateam/* library, also follow .agents/skills/release-readiness/SKILL.md and run 'node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs --mode pr' so library documentation and package exports are already in sync), fix any failures, and stage and commit all modified in-scope files in a single clean commit referencing #${ISSUE_NUMBER} (do not stage or commit files under ${SPEC_DIR}).
-          4. Author the pull request body at pr.md following .agents/skills/code/references/code-contract.md (with ## Links including - **Closes:** #${ISSUE_NUMBER}, ## Acceptance Criteria Traceability, ## Dependencies, ## Blast Radius, and ## Human Validation with Client Intent, Behavioral Experience, and Safety & Blast Radius set to Pending)."
+          4. Author the pull request body at pr.md following .agents/skills/code/references/code-contract.md (with ## Links including - **Closes:** #${ISSUE_NUMBER}, ## Acceptance Criteria Traceability, ## Dependencies, ## Blast Radius, and ## Human Validation with Client Intent, Behavioral Experience, and Safety & Blast Radius set to Pending)." \
+            > "$RUNNER_TEMP/copilot-code.log" 2>&1 || COPILOT_EXIT=$?
+          [ -f "$RUNNER_TEMP/copilot-code.log" ] && cat "$RUNNER_TEMP/copilot-code.log" || true
 
           STEP_COST_JSON=$(
             {
@@ -744,6 +768,21 @@ jobs:
             ((.cost_usd // 0) + $prior) as $cum |
             "\n\n---\n<!-- ai-cost-step:" + (. | tojson) + " -->\n💰 **AI Cost (" + .step + "):** `$" + fmt_usd(.cost_usd) + "` (`" + .model + "` · " + (.input_tokens | tostring) + " in / " + (.output_tokens | tostring) + " out tokens · " + (.requests | tostring) + (if .requests == 1 then " request" else " requests" end) + (if $prior > 0 then " · **Cumulative:** `$" + fmt_usd($cum) + "`" else "" end) + ")"
           ' > "${SPEC_DIR}/ai-cost-step.md"
+          if [ "$COPILOT_EXIT" -ne 0 ]; then
+            {
+              echo "Code Agent (\`${ISSUE_AI_MODEL:-claude-sonnet-5.5}\` / effort \`${ISSUE_AI_EFFORT:-medium}\`) exited with status \`${COPILOT_EXIT}\` while implementing \`${PLAN_FILE}\`."
+              if [ -s "$RUNNER_TEMP/copilot-code.log" ]; then
+                echo ""
+                echo "<details><summary>Copilot CLI output (last 30 lines)</summary>"
+                echo ""
+                echo '```text'
+                tail -n 30 "$RUNNER_TEMP/copilot-code.log"
+                echo '```'
+                echo "</details>"
+              fi
+            } > "$RUNNER_TEMP/code-failure-reason.md"
+            exit "$COPILOT_EXIT"
+          fi
 
       - name: Run deterministic Code exit gates
         if: steps.resolve.outputs.skip != 'true'
@@ -816,12 +855,44 @@ jobs:
           fi
 
           if [ -z "$(git log "refs/remotes/origin/${BASE_REF}..HEAD" --oneline)" ]; then
+            OUT_OF_SCOPE_CHANGES=$(git status --porcelain --untracked-files=all 2>/dev/null | awk '{print $2}' | grep -vE '^(specs/|pr\.md$|pr-body\.md$|\.agents/|\.github/)' || true)
+            SCOPE_LIST=$(printf '`%s`, ' "${IN_SCOPE_PATHS[@]}" | sed 's/, $//')
+            {
+              echo "Code Agent (\`${ISSUE_AI_MODEL:-claude-sonnet-5.5}\` / effort \`${ISSUE_AI_EFFORT:-medium}\`) produced no commits or in-scope file changes between \`${BASE_REF}\` and \`${BRANCH_NAME}\`."
+              echo ""
+              echo "- **Allowed \`In Scope\` files (\`${SPEC_DIR}/plan.md\`):** ${SCOPE_LIST:-_None_}"
+              if [ -n "$OUT_OF_SCOPE_CHANGES" ]; then
+                echo "- **Uncommitted out-of-scope files modified by agent:**"
+                echo "$OUT_OF_SCOPE_CHANGES" | sed 's/^/  - `/' | sed 's/$/`/'
+              else
+                echo "- **Working tree changes:** _None (agent exited without modifying any tracked or untracked project files)_"
+              fi
+              if [ -s "$RUNNER_TEMP/copilot-code.log" ]; then
+                echo ""
+                echo "<details><summary>Copilot CLI output (last 30 lines)</summary>"
+                echo ""
+                echo '```text'
+                tail -n 30 "$RUNNER_TEMP/copilot-code.log"
+                echo '```'
+                echo "</details>"
+              fi
+            } > "$RUNNER_TEMP/code-failure-reason.md"
             echo "::error::Code Agent produced no commits or in-scope file changes between ${BASE_REF} and ${BRANCH_NAME} for issue #${ISSUE_NUMBER}."
             exit 1
           fi
 
           if [ -f .agents/skills/plan/scripts/validate-plan.mjs ]; then
-            node .agents/skills/plan/scripts/validate-plan.mjs --plan "${SPEC_DIR}/plan.md" --think "${SPEC_DIR}/think.md"
+            if ! node .agents/skills/plan/scripts/validate-plan.mjs --plan "${SPEC_DIR}/plan.md" --think "${SPEC_DIR}/think.md" > "$RUNNER_TEMP/validate-plan.log" 2>&1; then
+              cat "$RUNNER_TEMP/validate-plan.log" >&2
+              {
+                echo "Plan contract validation (\`validate-plan.mjs\`) failed during Code exit gates:"
+                echo ""
+                echo '```text'
+                cat "$RUNNER_TEMP/validate-plan.log"
+                echo '```'
+              } > "$RUNNER_TEMP/code-failure-reason.md"
+              exit 1
+            fi
           fi
 
           if ! node .agents/skills/code/scripts/validate-pr.mjs --body pr.md --dir "$SPEC_DIR" --stage code --allow-pending-approval >/dev/null 2>&1; then
@@ -865,7 +936,17 @@ jobs:
                 "",
               ].join("\n"));
             '
-            node .agents/skills/code/scripts/validate-pr.mjs --body pr.md --dir "$SPEC_DIR" --stage code --allow-pending-approval
+            if ! node .agents/skills/code/scripts/validate-pr.mjs --body pr.md --dir "$SPEC_DIR" --stage code --allow-pending-approval > "$RUNNER_TEMP/validate-pr.log" 2>&1; then
+              cat "$RUNNER_TEMP/validate-pr.log" >&2
+              {
+                echo "Pull request body validation (\`validate-pr.mjs\`) failed during Code exit gates:"
+                echo ""
+                echo '```text'
+                cat "$RUNNER_TEMP/validate-pr.log"
+                echo '```'
+              } > "$RUNNER_TEMP/code-failure-reason.md"
+              exit 1
+            fi
           fi
           [ -f pr.md ] && cat pr.md >> "$GITHUB_STEP_SUMMARY" || true
 
@@ -899,11 +980,38 @@ jobs:
           echo "$ISSUE_NUMBER" > specs/issue_number.txt
           echo "PR_NUMBER=${PR_NUMBER}" >> "$GITHUB_ENV"
           echo "PR_URL=${PR_URL}" >> "$GITHUB_ENV"
-          PR_OPEN_MSG="Pull request opened for #${ISSUE_NUMBER}: ${PR_URL}"
-          if [ -s "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md" ]; then
-            PR_OPEN_MSG="${PR_OPEN_MSG}$(cat "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md")"
-          fi
-          gh issue comment "$ISSUE_NUMBER" --body "$PR_OPEN_MSG"
+          CODE_COMMENT_FILE="$RUNNER_TEMP/code-comment.md"
+          HEAD_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "")
+          DIFF_STAT=$(git diff --stat "refs/remotes/origin/${BASE_REF}..HEAD" 2>/dev/null || true)
+          {
+            echo "# Code: ${ISSUE_TITLE}"
+            echo ""
+            echo "Pull request opened for #${ISSUE_NUMBER}: ${PR_URL} (\`${BRANCH_NAME}\`${HEAD_SHA:+ @ \`${HEAD_SHA}\`})"
+            if [ -n "$DIFF_STAT" ]; then
+              echo ""
+              echo "## Changed Files"
+              echo '```text'
+              echo "$DIFF_STAT"
+              echo '```'
+            fi
+            if [ -s pr.md ]; then
+              echo ""
+              cat pr.md
+            fi
+            if [ -s "$RUNNER_TEMP/copilot-code.log" ]; then
+              echo ""
+              echo "<details><summary>Code Agent output (last 40 lines)</summary>"
+              echo ""
+              echo '```text'
+              tail -n 40 "$RUNNER_TEMP/copilot-code.log"
+              echo '```'
+              echo "</details>"
+            fi
+            if [ -s "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md" ]; then
+              cat "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md"
+            fi
+          } > "$CODE_COMMENT_FILE"
+          gh issue comment "$ISSUE_NUMBER" --body-file "$CODE_COMMENT_FILE"
           rm -f "specs/issue-${ISSUE_NUMBER}/ai-cost-pending.jsonl"
 
       - name: Check for manual validation checkpoint after Code
@@ -916,9 +1024,11 @@ jobs:
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
         run: |
-          ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --json body,labels)
+          ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --json state,body,labels)
           PAUSE_CODE=$(echo "$ISSUE_JSON" | jq -r '
-            (([.labels[].name] | any(. == "3-code" or . == "pause:code")))
+            ((.state // "OPEN") == "CLOSED")
+            or (([.labels[].name] | any(. == "3-code" or . == "pause:code")))
+            or ((([.labels[].name] | any(. == "1-think" or . == "2-plan" or . == "3-code" or . == "4-prove" or . == "5-release")) | not))
             or ((.body // "") | test("(\\[pause:code\\]|- \\[[xX]\\] [Pp]ause after [Cc]ode)"))
           ')
 
@@ -969,4 +1079,32 @@ jobs:
             GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
             GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-prove,5-release" || true
             gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" || true
+            RUN_URL="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-$GH_REPO}/actions/runs/${GITHUB_RUN_ID:-}"
+            FAILURE_FILE="$RUNNER_TEMP/code-failure-comment.md"
+            {
+              echo "⚠️ **Code failed — issue stays in Code with \`needs:developer\`**"
+              echo ""
+              if [ -s "$RUNNER_TEMP/code-failure-reason.md" ]; then
+                cat "$RUNNER_TEMP/code-failure-reason.md"
+              else
+                echo "The \`Pipeline - Code\` workflow failed before completing the Pull Request handoff to Prove."
+                if [ -s "$RUNNER_TEMP/copilot-code.log" ]; then
+                  echo ""
+                  echo "<details><summary>Copilot CLI output (last 30 lines)</summary>"
+                  echo ""
+                  echo '```text'
+                  tail -n 30 "$RUNNER_TEMP/copilot-code.log"
+                  echo '```'
+                  echo "</details>"
+                fi
+              fi
+              echo ""
+              echo "- **Workflow run:** ${RUN_URL}"
+              echo "- **Next steps:** Inspect the failure details above (or adjust the \`# Plan:\` specification / issue \`Model\` & \`Effort\` fields), then re-add \`3-code\`, \`4-prove\`, or \`5-release\` to retry."
+              if [ -s "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md" ]; then
+                cat "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md"
+              fi
+            } > "$FAILURE_FILE"
+            gh issue comment "$ISSUE_NUMBER" --body-file "$FAILURE_FILE" || true
+            rm -f "specs/issue-${ISSUE_NUMBER}/ai-cost-pending.jsonl" "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md"
           fi

@@ -1,3 +1,4 @@
+require 'fileutils'
 require 'json'
 require 'open3'
 
@@ -62,8 +63,20 @@ result = case ARGV.first(2)
          when ['issue', 'create']
            puts 'https://github.com/1pizzateam/MappR/issues/77'
            nil
+         when ['pr', 'create']
+           puts 'https://example.test/pr/99'
+           nil
          when ['run', 'list']
            scenario.fetch('runs', [])
+         when ['run', 'download']
+           reject_command("Unmocked run download: #{ARGV.inspect}") unless scenario['artifact_specs']
+           dir = argument('-D') || '.'
+           scenario.fetch('artifact_specs').each do |rel_path, content|
+             full = File.join(dir, rel_path)
+             FileUtils.mkdir_p(File.dirname(full))
+             File.write(full, content)
+           end
+           nil
          when ['api', 'graphql']
            if scenario['api_failure']
              warn 'Mock GitHub API permission denied'

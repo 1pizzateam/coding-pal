@@ -284,11 +284,14 @@ jobs:
 
           if [ "$TARGET_STATUS" = "Done" ]; then
             STALE_DONE_ITEMS=$(echo "$PROJECT" | jq -r --arg done_id "$OPTION_ID" --arg current_id "$ITEM_ID" '
-              .items.nodes[]?
-              | select(.id != $current_id and (.isArchived // false) == false)
-              | select(((.fieldValueByName.name // "" | ascii_downcase) == "done") or (.fieldValueByName.optionId == $done_id))
-              | (.content.closedAt // .updatedAt // .content.updatedAt // empty) as $ts
-              | select(($ts | length) > 0 and (($ts | fromdateiso8601? // now) < (now - 259200)))
+              [
+                .items.nodes[]?
+                | select(.id != $current_id and (.isArchived // false) == false)
+                | select(((.fieldValueByName.name // "" | ascii_downcase) == "done") or (.fieldValueByName.optionId == $done_id))
+              ]
+              | sort_by((.content.closedAt // .updatedAt // .content.updatedAt // "") | fromdateiso8601? // 0)
+              | reverse
+              | .[39:][]
               | .id
             ' 2>/dev/null || true)
             for STALE_ITEM_ID in $STALE_DONE_ITEMS; do
@@ -1049,7 +1052,11 @@ jobs:
               if [ "$CONTROLS_OK" -eq 1 ] && [ -f "$PROVE_FILE" ]; then
                 gh pr review "$PR_NUMBER" --request-changes --body-file "$PROVE_FILE" 2>/dev/null || gh pr comment "$PR_NUMBER" --body-file "$PROVE_FILE"
               fi
+              RUN_URL="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-$GH_REPO}/actions/runs/${GITHUB_RUN_ID:-}"
+              LIMIT_MSG=$(printf "⚠️ **Prove failed — returned to Code with \`needs:developer\`**\n\nFix-loop limit of %s automatic remediation attempts reached on PR #%s. The issue has been moved back to **Code** for developer attention.\n\n- **Latest failure details:** See the \`# Prove repair request\` comment above.\n- **Workflow run:** %s" "$FIX_LOOP_LIMIT" "$PR_NUMBER" "$RUN_URL")
+              gh issue comment "$ISSUE_NUMBER" --body "$LIMIT_MSG" || true
               gh pr comment "$PR_NUMBER" --body "Fix-loop limit of ${FIX_LOOP_LIMIT} reached during Prove validation. Automatic remediation stops here and the Developer steps in."
+              echo "reported=true" > "$RUNNER_TEMP/prove-failure-reported"
               exit 1
             fi
 
@@ -1161,9 +1168,11 @@ jobs:
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
         run: |
-          ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --json body,labels)
+          ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --json state,body,labels)
           PAUSE_PROVE=$(echo "$ISSUE_JSON" | jq -r '
-            (([.labels[].name] | any(. == "4-prove" or . == "pause:prove")))
+            ((.state // "OPEN") == "CLOSED")
+            or (([.labels[].name] | any(. == "4-prove" or . == "pause:prove")))
+            or ((([.labels[].name] | any(. == "1-think" or . == "2-plan" or . == "3-code" or . == "4-prove" or . == "5-release")) | not))
             or ((.body // "") | test("(\\[pause:prove\\]|- \\[[xX]\\] [Pp]ause after [Pp]rove)"))
           ')
 
@@ -1585,6 +1594,7 @@ jobs:
           MESSAGE="Release failed or did not finish. Issue stays in Release and needs developer attention. Inspect ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}; any detailed Release report is posted above. A merged PR is not rolled back automatically."
           gh issue comment "$ISSUE_NUMBER" --body "$MESSAGE"
           gh pr comment "$PR_NUMBER" --body "$MESSAGE"
+          echo "reported=true" > "$RUNNER_TEMP/prove-failure-reported"
 
       - name: Mark issue needs:developer if Prove failed
         if: (failure() || cancelled()) && steps.resolve.outputs.skip != 'true'
@@ -1592,9 +1602,49 @@ jobs:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          PROJECT_TITLE: ${{ inputs.project_title }}
         run: |
           if [ -n "${ISSUE_NUMBER:-}" ]; then
             GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
             GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-prove,5-release" || true
             gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" || true
+            if [ ! -f "$RUNNER_TEMP/prove-failure-reported" ]; then
+              if [ -f "$RUNNER_TEMP/prove-project-status.sh" ]; then
+                TARGET_STATUS=Code bash -eo pipefail "$RUNNER_TEMP/prove-project-status.sh" 2>/dev/null || true
+              fi
+              RUN_URL="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-$GH_REPO}/actions/runs/${GITHUB_RUN_ID:-}"
+              FAILURE_FILE="$RUNNER_TEMP/prove-failure-comment.md"
+              {
+                echo "⚠️ **Prove failed — returned to Code with \`needs:developer\`**"
+                echo ""
+                echo "The \`Pipeline - Prove\` workflow failed or was cancelled before reaching Release${PR_NUMBER:+ on PR #${PR_NUMBER}}."
+                if [ -s failed-gates.log ]; then
+                  echo ""
+                  echo "<details><summary>Failed Prove gate output (last 30 lines)</summary>"
+                  echo ""
+                  echo '```text'
+                  tail -n 30 failed-gates.log
+                  echo '```'
+                  echo "</details>"
+                elif [ -s gate-output.log ]; then
+                  echo ""
+                  echo "<details><summary>Prove gate output (last 30 lines)</summary>"
+                  echo ""
+                  echo '```text'
+                  tail -n 30 gate-output.log
+                  echo '```'
+                  echo "</details>"
+                fi
+                echo ""
+                echo "- **Workflow run:** ${RUN_URL}"
+                echo "- **Next steps:** Inspect the failure details above, push a fix to the PR branch or adjust the specification, then re-add \`4-prove\` or \`5-release\` to retry."
+                if [ -s "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md" ]; then
+                  cat "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md"
+                fi
+              } > "$FAILURE_FILE"
+              gh issue comment "$ISSUE_NUMBER" --body-file "$FAILURE_FILE" || true
+              rm -f "specs/issue-${ISSUE_NUMBER}/ai-cost-pending.jsonl" "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md"
+            fi
           fi

@@ -49,10 +49,18 @@ jobs:
           ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
           echo "ISSUE_NUMBER=${ISSUE_NUMBER}" >> "$GITHUB_ENV"
+
+          ISSUE_VIEW=$(gh issue view "$ISSUE_NUMBER" --json state,title,body,labels,comments)
+          ISSUE_STATE=$(echo "$ISSUE_VIEW" | jq -r '.state // "OPEN"')
+          if [ "$ISSUE_STATE" = "CLOSED" ]; then
+            echo "Issue #${ISSUE_NUMBER} is already CLOSED; skipping Think."
+            echo "resumed_stage=skip" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           # Unassign the issue while the agent is actively working
           gh issue edit "$ISSUE_NUMBER" --remove-assignee "@me" 2>/dev/null || true
 
-          ISSUE_VIEW=$(gh issue view "$ISSUE_NUMBER" --json title,body,labels,comments)
           HAS_AUDIT_LABEL=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | any(startswith("audit:"))')
           HAS_THINK_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("1-think") != null')
           HAS_PLAN_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("2-plan") != null')
@@ -507,7 +515,7 @@ jobs:
           PREVIOUS_THINK=$(echo "$ISSUE_JSON" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "") | sub("\\n+## Forge Asset Bindings\\r?\\n[\\s\\S]*?(?=\\n## |$)"; "")')
           DEV_COMMENTS=$(echo "$ISSUE_JSON" | jq -r '
             [.comments[]
-              | select((.body // "") | test("^(# (Think|Plan|Prove|Release|Release report)|⏸️ \\*\\*(Paused after|Blocked on)|Pull request opened for #|### Companion Game Editor Updates Dispatched|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
+              | select((.body // "") | test("^(# (Think|Plan|Code|Prove|Release|Release report)|⏸️ \\*\\*(Paused after|Blocked on)|⚠️ \\*\\*(Think|Plan|Code|Prove) failed|Pull request opened for #|### Companion Game Editor Updates Dispatched|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
               | select((.body // "") | gsub("\\s+"; "") | length > 0)
               | "### Comment by @" + (.author.login // "developer") + " (" + (.createdAt // "") + "):\n" + .body
             ] | join("\n\n")
@@ -582,6 +590,8 @@ jobs:
 
           export COPILOT_OTEL_ENABLED="true"
           export COPILOT_OTEL_FILE_EXPORTER_PATH="${RUNNER_TEMP}/copilot-otel.jsonl"
+          rm -f "$RUNNER_TEMP/copilot-think.log" 2>/dev/null || true
+          COPILOT_EXIT=0
           copilot --model="${ISSUE_AI_MODEL:-claude-sonnet-5.5}" --reasoning-effort="${ISSUE_AI_EFFORT:-medium}" --agent="think" --allow-all-tools \
             --prompt "Produce a validated Think record at ${THINK_FILE} for GitHub Issue #${ISSUE_NUMBER}.
           Issue Title: ${ISSUE_TITLE}
@@ -605,7 +615,9 @@ jobs:
           ${EDITOR_HINT}
           ${LIBRARY_DOCS_HINT}
           Do not post comments or edit labels on GitHub issues; only write local files under ${SPEC_DIR}.
-          Validate the generated file with: node .agents/skills/think/scripts/validate-think.mjs --think ${THINK_FILE} and fix any validation errors until it exits with code 0."
+          Validate the generated file with: node .agents/skills/think/scripts/validate-think.mjs --think ${THINK_FILE} and fix any validation errors until it exits with code 0." \
+            > "$RUNNER_TEMP/copilot-think.log" 2>&1 || COPILOT_EXIT=$?
+          [ -f "$RUNNER_TEMP/copilot-think.log" ] && cat "$RUNNER_TEMP/copilot-think.log" || true
 
           STEP_COST_JSON=$(
             {
@@ -654,6 +666,21 @@ jobs:
             ((.cost_usd // 0) + $prior) as $cum |
             "\n\n---\n<!-- ai-cost-step:" + (. | tojson) + " -->\n💰 **AI Cost (" + .step + "):** `$" + fmt_usd(.cost_usd) + "` (`" + .model + "` · " + (.input_tokens | tostring) + " in / " + (.output_tokens | tostring) + " out tokens · " + (.requests | tostring) + (if .requests == 1 then " request" else " requests" end) + (if $prior > 0 then " · **Cumulative:** `$" + fmt_usd($cum) + "`" else "" end) + ")"
           ' > "${SPEC_DIR}/ai-cost-step.md"
+          if [ "$COPILOT_EXIT" -ne 0 ]; then
+            {
+              echo "Think Agent (\`${ISSUE_AI_MODEL:-claude-sonnet-5.5}\` / effort \`${ISSUE_AI_EFFORT:-medium}\`) exited with status \`${COPILOT_EXIT}\` while producing \`${THINK_FILE}\`."
+              if [ -s "$RUNNER_TEMP/copilot-think.log" ]; then
+                echo ""
+                echo "<details><summary>Copilot CLI output (last 30 lines)</summary>"
+                echo ""
+                echo '```text'
+                tail -n 30 "$RUNNER_TEMP/copilot-think.log"
+                echo '```'
+                echo "</details>"
+              fi
+            } > "$RUNNER_TEMP/think-failure-reason.md"
+            exit "$COPILOT_EXIT"
+          fi
 
       - name: Validate think.md contract
         if: steps.resume.outputs.resumed_stage == 'none'
@@ -661,8 +688,37 @@ jobs:
           ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
           THINK_FILE="specs/issue-${ISSUE_NUMBER}/think.md"
-          node .agents/skills/think/scripts/validate-think.mjs --think "$THINK_FILE"
-          node .agents/skills/decision-record/scripts/validate-decision.mjs --think "$THINK_FILE"
+          if ! node .agents/skills/think/scripts/validate-think.mjs --think "$THINK_FILE" > "$RUNNER_TEMP/validate-think.log" 2>&1; then
+            cat "$RUNNER_TEMP/validate-think.log" >&2
+            {
+              echo "Think contract validation (\`validate-think.mjs\`) failed for \`${THINK_FILE}\`:"
+              echo ""
+              echo '```text'
+              cat "$RUNNER_TEMP/validate-think.log"
+              echo '```'
+              if [ -s "$RUNNER_TEMP/copilot-think.log" ]; then
+                echo ""
+                echo "<details><summary>Copilot CLI output (last 30 lines)</summary>"
+                echo ""
+                echo '```text'
+                tail -n 30 "$RUNNER_TEMP/copilot-think.log"
+                echo '```'
+                echo "</details>"
+              fi
+            } > "$RUNNER_TEMP/think-failure-reason.md"
+            exit 1
+          fi
+          if ! node .agents/skills/decision-record/scripts/validate-decision.mjs --think "$THINK_FILE" > "$RUNNER_TEMP/validate-decision.log" 2>&1; then
+            cat "$RUNNER_TEMP/validate-decision.log" >&2
+            {
+              echo "Decision record validation (\`validate-decision.mjs\`) failed for \`${THINK_FILE}\`:"
+              echo ""
+              echo '```text'
+              cat "$RUNNER_TEMP/validate-decision.log"
+              echo '```'
+            } > "$RUNNER_TEMP/think-failure-reason.md"
+            exit 1
+          fi
           cat "$THINK_FILE" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Comment think.md on issue
@@ -816,9 +872,11 @@ jobs:
           REPO: ${{ github.event.repository.name }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
-          ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --json body,labels)
+          ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --json state,body,labels)
           PAUSE_THINK=$(echo "$ISSUE_JSON" | jq -r '
-            (([.labels[].name] | any(. == "1-think" or . == "pause:think")))
+            ((.state // "OPEN") == "CLOSED")
+            or (([.labels[].name] | any(. == "1-think" or . == "pause:think")))
+            or ((([.labels[].name] | any(. == "1-think" or . == "2-plan" or . == "3-code" or . == "4-prove" or . == "5-release")) | not))
             or ((.body // "") | test("(\\[pause:think\\]|- \\[[xX]\\] [Pp]ause after [Tt]hink)"))
           ')
 
@@ -842,6 +900,7 @@ jobs:
         if: >-
           steps.resume.outputs.resumed_stage != 'code' &&
           steps.resume.outputs.resumed_stage != 'prove' &&
+          steps.resume.outputs.resumed_stage != 'skip' &&
           steps.escalate.outputs.escalated != 'true' &&
           steps.checkpoint.outputs.paused != 'true'
         uses: actions/upload-artifact@v4
@@ -862,7 +921,7 @@ jobs:
         run: gh workflow run plan.yml -f workflow_run_id="$RUN_ID"
 
       - name: Mark issue needs:developer if Think fails
-        if: failure()
+        if: failure() && steps.resume.outputs.resumed_stage != 'skip'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -871,6 +930,36 @@ jobs:
           REPO: ${{ github.event.repository.name }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
-          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
-          GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-prove,5-release" || true
-          gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" || true
+          if [ -n "${ISSUE_NUMBER:-}" ]; then
+            GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
+            GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-prove,5-release" || true
+            gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" || true
+            RUN_URL="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-$GH_REPO}/actions/runs/${GITHUB_RUN_ID:-}"
+            FAILURE_FILE="$RUNNER_TEMP/think-failure-comment.md"
+            {
+              echo "⚠️ **Think failed — issue stays in Think with \`needs:developer\`**"
+              echo ""
+              if [ -s "$RUNNER_TEMP/think-failure-reason.md" ]; then
+                cat "$RUNNER_TEMP/think-failure-reason.md"
+              else
+                echo "The \`Pipeline - Think\` workflow failed before producing a validated \`think.md\` specification."
+                if [ -s "$RUNNER_TEMP/copilot-think.log" ]; then
+                  echo ""
+                  echo "<details><summary>Copilot CLI output (last 30 lines)</summary>"
+                  echo ""
+                  echo '```text'
+                  tail -n 30 "$RUNNER_TEMP/copilot-think.log"
+                  echo '```'
+                  echo "</details>"
+                fi
+              fi
+              echo ""
+              echo "- **Workflow run:** ${RUN_URL}"
+              echo "- **Next steps:** Inspect the failure details above (or adjust the issue \`Model\` & \`Effort\` fields), then re-add \`1-think\` or \`5-release\` to retry."
+              if [ -s "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md" ]; then
+                cat "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md"
+              fi
+            } > "$FAILURE_FILE"
+            gh issue comment "$ISSUE_NUMBER" --body-file "$FAILURE_FILE" || true
+            rm -f "specs/issue-${ISSUE_NUMBER}/ai-cost-pending.jsonl" "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md"
+          fi

@@ -67,6 +67,21 @@ jobs:
             exit 1
           fi
 
+          ISSUE_VIEW=$(gh issue view "$ISSUE_NUMBER" --json state,title,body,labels,comments)
+          ISSUE_STATE=$(echo "$ISSUE_VIEW" | jq -r '.state // "OPEN"')
+          if [ "$ISSUE_STATE" = "CLOSED" ]; then
+            echo "Issue #${ISSUE_NUMBER} is already CLOSED; skipping Plan."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          HAS_STAGE_LABEL=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | any(. == "2-plan" or . == "3-code" or . == "4-prove" or . == "5-release")')
+          if [ -n "$RUN_ID" ] && [ "$HAS_STAGE_LABEL" != "true" ]; then
+            echo "Issue #${ISSUE_NUMBER} no longer has an active Plan/Code/Prove/Release stage label; skipping superseded Plan run."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           gh issue edit "$ISSUE_NUMBER" --remove-assignee "@me" 2>/dev/null || true
 
           echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -77,7 +92,6 @@ jobs:
 
           if [ ! -s "$THINK_FILE" ]; then
             echo "Fetching latest think.md from issue #${ISSUE_NUMBER} comments..."
-            ISSUE_VIEW=$(gh issue view "$ISSUE_NUMBER" --json title,body,labels,comments)
             echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "") | sub("\\n+## Forge Asset Bindings\\r?\\n[\\s\\S]*?(?=\\n## |$)"; "")' > "$THINK_FILE"
             if [ ! -s "$THINK_FILE" ]; then
               HAS_AUDIT_LABEL=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | any(startswith("audit:"))')
@@ -381,10 +395,11 @@ jobs:
               .items.nodes[]?
               | select(.id != $current_id and (.isArchived // false) == false)
               | select(((.fieldValueByName.name // "" | ascii_downcase) == "done") or (.fieldValueByName.optionId == $done_id))
-              | (.content.closedAt // .updatedAt // .content.updatedAt // empty) as $ts
-              | select(($ts | length) > 0 and (($ts | fromdateiso8601? // now) < (now - 259200)))
-              | .id
-            ] | join(" ")
+            ]
+            | sort_by((.content.closedAt // .updatedAt // .content.updatedAt // "") | fromdateiso8601? // 0)
+            | reverse
+            | [.[39:][].id]
+            | join(" ")
           ' 2>/dev/null || true)
 
           echo "PROJECT_ID=${PROJECT_ID}" >> "$GITHUB_ENV"
@@ -533,7 +548,7 @@ jobs:
           PREVIOUS_PLAN=$(echo "$ISSUE_JSON" | jq -r '[.comments[].body | select(test("^# Plan:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")')
           DEV_COMMENTS=$(echo "$ISSUE_JSON" | jq -r '
             [.comments[]
-              | select((.body // "") | test("^(# (Think|Plan|Prove|Release|Release report)|⏸️ \\*\\*(Paused after|Blocked on)|Pull request opened for #|### Companion Game Editor Updates Dispatched|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
+              | select((.body // "") | test("^(# (Think|Plan|Code|Prove|Release|Release report)|⏸️ \\*\\*(Paused after|Blocked on)|⚠️ \\*\\*(Think|Plan|Code|Prove) failed|Pull request opened for #|### Companion Game Editor Updates Dispatched|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
               | select((.body // "") | gsub("\\s+"; "") | length > 0)
               | "### Comment by @" + (.author.login // "developer") + " (" + (.createdAt // "") + "):\n" + .body
             ] | join("\n\n")
@@ -596,6 +611,8 @@ jobs:
 
           export COPILOT_OTEL_ENABLED="true"
           export COPILOT_OTEL_FILE_EXPORTER_PATH="${RUNNER_TEMP}/copilot-otel.jsonl"
+          rm -f "$RUNNER_TEMP/copilot-plan.log" 2>/dev/null || true
+          COPILOT_EXIT=0
           copilot --model="${ISSUE_AI_MODEL:-claude-sonnet-5.5}" --reasoning-effort="${ISSUE_AI_EFFORT:-medium}" --agent="plan" --allow-all-tools \
             --prompt "Produce a validated Plan record at ${PLAN_FILE} derived strictly from ${THINK_FILE} for GitHub Issue #${ISSUE_NUMBER}.
           Issue Title: ${ISSUE_TITLE}
@@ -619,7 +636,9 @@ jobs:
           Every test in ## Test Plan must include its acceptance criterion ID ('AC-1', 'AC-2', etc.) in the test name (for example 'tests/<file>: AC-1 ...' or 'scripts/<file>: AC-1 ...') and start the Test Plan 'Test' cell with the relative test file path so criteria-verify can verify every criterion with --require-test-files.
           Do not modify any production or test files; only write ${PLAN_FILE}.
           Do not post comments or edit labels on GitHub issues; only write ${PLAN_FILE}.
-          Validate and cross-check the generated file with: node .agents/skills/plan/scripts/validate-plan.mjs --plan ${PLAN_FILE} --think ${THINK_FILE} and fix any validation errors until it exits with code 0."
+          Validate and cross-check the generated file with: node .agents/skills/plan/scripts/validate-plan.mjs --plan ${PLAN_FILE} --think ${THINK_FILE} and fix any validation errors until it exits with code 0." \
+            > "$RUNNER_TEMP/copilot-plan.log" 2>&1 || COPILOT_EXIT=$?
+          [ -f "$RUNNER_TEMP/copilot-plan.log" ] && cat "$RUNNER_TEMP/copilot-plan.log" || true
 
           STEP_COST_JSON=$(
             {
@@ -669,6 +688,21 @@ jobs:
             ((.cost_usd // 0) + $prior) as $cum |
             "\n\n---\n<!-- ai-cost-step:" + (. | tojson) + " -->\n💰 **AI Cost (" + .step + "):** `$" + fmt_usd(.cost_usd) + "` (`" + .model + "` · " + (.input_tokens | tostring) + " in / " + (.output_tokens | tostring) + " out tokens · " + (.requests | tostring) + (if .requests == 1 then " request" else " requests" end) + (if $prior > 0 then " · **Cumulative:** `$" + fmt_usd($cum) + "`" else "" end) + ")"
           ' > "${SPEC_DIR}/ai-cost-step.md"
+          if [ "$COPILOT_EXIT" -ne 0 ]; then
+            {
+              echo "Plan Agent (\`${ISSUE_AI_MODEL:-claude-sonnet-5.5}\` / effort \`${ISSUE_AI_EFFORT:-medium}\`) exited with status \`${COPILOT_EXIT}\` while producing \`${PLAN_FILE}\`."
+              if [ -s "$RUNNER_TEMP/copilot-plan.log" ]; then
+                echo ""
+                echo "<details><summary>Copilot CLI output (last 30 lines)</summary>"
+                echo ""
+                echo '```text'
+                tail -n 30 "$RUNNER_TEMP/copilot-plan.log"
+                echo '```'
+                echo "</details>"
+              fi
+            } > "$RUNNER_TEMP/plan-failure-reason.md"
+            exit "$COPILOT_EXIT"
+          fi
 
       - name: Close issue if already resolved on base branch
         id: already_resolved
@@ -755,8 +789,27 @@ jobs:
         run: |
           THINK_FILE="specs/issue-${ISSUE_NUMBER}/think.md"
           PLAN_FILE="specs/issue-${ISSUE_NUMBER}/plan.md"
-          node .agents/skills/plan/scripts/validate-plan.mjs --plan "$PLAN_FILE" --think "$THINK_FILE"
-          node -e '
+          if ! node .agents/skills/plan/scripts/validate-plan.mjs --plan "$PLAN_FILE" --think "$THINK_FILE" > "$RUNNER_TEMP/validate-plan.log" 2>&1; then
+            cat "$RUNNER_TEMP/validate-plan.log" >&2
+            {
+              echo "Plan contract validation (\`validate-plan.mjs\`) failed for \`${PLAN_FILE}\`:"
+              echo ""
+              echo '```text'
+              cat "$RUNNER_TEMP/validate-plan.log"
+              echo '```'
+              if [ -s "$RUNNER_TEMP/copilot-plan.log" ]; then
+                echo ""
+                echo "<details><summary>Copilot CLI output (last 30 lines)</summary>"
+                echo ""
+                echo '```text'
+                tail -n 30 "$RUNNER_TEMP/copilot-plan.log"
+                echo '```'
+                echo "</details>"
+              fi
+            } > "$RUNNER_TEMP/plan-failure-reason.md"
+            exit 1
+          fi
+          if ! node -e '
             const fs = require("fs");
             const plan = fs.readFileSync(process.argv[1], "utf8");
             const scopeSec = (plan.match(/^## File Scope & Boundaries[ \t]*\n([\s\S]*?)(?=\n## |(?![\s\S]))/m) || [])[1] || "";
@@ -775,7 +828,17 @@ jobs:
               console.error("::error::Test file(s) referenced in ## Test Plan are missing from ## File Scope & Boundaries (- **In Scope:**): " + missing.join(", "));
               process.exit(1);
             }
-          ' "$PLAN_FILE"
+          ' "$PLAN_FILE" > "$RUNNER_TEMP/validate-plan-scope.log" 2>&1; then
+            cat "$RUNNER_TEMP/validate-plan-scope.log" >&2
+            {
+              echo "Plan test scope check failed for \`${PLAN_FILE}\`:"
+              echo ""
+              echo '```text'
+              cat "$RUNNER_TEMP/validate-plan-scope.log"
+              echo '```'
+            } > "$RUNNER_TEMP/plan-failure-reason.md"
+            exit 1
+          fi
           cat "$PLAN_FILE" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Comment plan.md on issue
@@ -834,9 +897,11 @@ jobs:
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
         run: |
-          ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --json body,labels)
+          ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --json state,body,labels)
           PAUSE_PLAN=$(echo "$ISSUE_JSON" | jq -r '
-            (([.labels[].name] | any(. == "2-plan" or . == "pause:plan")))
+            ((.state // "OPEN") == "CLOSED")
+            or (([.labels[].name] | any(. == "2-plan" or . == "pause:plan")))
+            or ((([.labels[].name] | any(. == "1-think" or . == "2-plan" or . == "3-code" or . == "4-prove" or . == "5-release")) | not))
             or ((.body // "") | test("(\\[pause:plan\\]|- \\[[xX]\\] [Pp]ause after [Pp]lan)"))
           ')
 
@@ -888,4 +953,32 @@ jobs:
             GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh label create needs:developer --force --description "Pipeline failed or fix-loop limit reached; developer attention required" || true
             GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-prove,5-release" || true
             gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" || true
+            RUN_URL="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-$GH_REPO}/actions/runs/${GITHUB_RUN_ID:-}"
+            FAILURE_FILE="$RUNNER_TEMP/plan-failure-comment.md"
+            {
+              echo "⚠️ **Plan failed — issue stays in Plan with \`needs:developer\`**"
+              echo ""
+              if [ -s "$RUNNER_TEMP/plan-failure-reason.md" ]; then
+                cat "$RUNNER_TEMP/plan-failure-reason.md"
+              else
+                echo "The \`Pipeline - Plan\` workflow failed before producing a validated \`plan.md\` specification."
+                if [ -s "$RUNNER_TEMP/copilot-plan.log" ]; then
+                  echo ""
+                  echo "<details><summary>Copilot CLI output (last 30 lines)</summary>"
+                  echo ""
+                  echo '```text'
+                  tail -n 30 "$RUNNER_TEMP/copilot-plan.log"
+                  echo '```'
+                  echo "</details>"
+                fi
+              fi
+              echo ""
+              echo "- **Workflow run:** ${RUN_URL}"
+              echo "- **Next steps:** Inspect the failure details above (or adjust the \`# Think:\` specification / issue \`Model\` & \`Effort\` fields), then re-add \`2-plan\` or \`5-release\` to retry."
+              if [ -s "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md" ]; then
+                cat "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md"
+              fi
+            } > "$FAILURE_FILE"
+            gh issue comment "$ISSUE_NUMBER" --body-file "$FAILURE_FILE" || true
+            rm -f "specs/issue-${ISSUE_NUMBER}/ai-cost-pending.jsonl" "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md"
           fi

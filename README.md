@@ -156,7 +156,7 @@ Add these options to the Project's `Status` field:
 
 **Done means required release workflows succeeded.** DoomR waits for Pages. Libraries wait for npm publication when an automatic GitHub Release was created, plus applicable documentation deployment. Repositories without configured publication/deployment finish after merge.
 
-**Optional `AI Cost` field:** If the GitHub Project V2 board includes a custom field named **`AI Cost`** (`Number` or `Text`), each stage (`Think`, `Plan`, `Code`, `Prove`, `Release`, and `Done`) automatically syncs the issue's cumulative AI cost in USD alongside `Status`. Each pipeline comment (`# Think:`, `# Plan:`, `Pull request opened for #...`, `# Prove repair request`, `# Prove:`, and `# Release:`) also appends a per-step and cumulative AI cost footer (`<!-- ai-cost-step:{...} -->`), and `# Release report` includes an `## AI Cost Summary` table across all steps.
+**Optional `AI Cost` field:** If the GitHub Project V2 board includes a custom field named **`AI Cost`** (`Number` or `Text`), each stage (`Think`, `Plan`, `Code`, `Prove`, `Release`, and `Done`) automatically syncs the issue's cumulative AI cost in USD alongside `Status`. Each pipeline comment (`# Think:`, `# Plan:`, `# Code:` / `Pull request opened for #...`, `# Prove repair request`, `# Prove:`, and `# Release:`) also appends a per-step and cumulative AI cost footer (`<!-- ai-cost-step:{...} -->`), and `# Release report` includes an `## AI Cost Summary` table across all steps.
 
 In the GitHub Project's **Workflows** settings, disable any built-in automation that sets Status to Done when an issue is closed or a PR is merged. Merge can close the issue before publication finishes; only this pipeline should set Done for delivery.
 
@@ -194,12 +194,12 @@ In the GitHub Project's **Workflows** settings, disable any built-in automation 
 1. Restores both specs and prepares the implementation branch.
 2. Sets Project Status to **Code**.
 3. Runs the Code agent to implement the plan, verify tests/builds, and prepare the PR record (`pr.md`).
-4. Enters **Prove**, pushes the branch, and creates or updates the PR (deterministic exit gates run once in Prove rather than being duplicated in Code).
+4. Enters **Prove**, pushes the branch, creates or updates the PR, and posts a `# Code:` implementation summary comment on the issue (including changed files, the `pr.md` traceability record, and the Code agent output).
 5. If requested, returns to Code for manual PR review; otherwise, passes the specs and PR number to Prove.
 
 **Stops at:** an open PR for review or handoff to Prove. Code does not merge.
 
-Failed Think, Plan, or Code runs mark the issue `needs:developer`. They do not restart other issues.
+Failed Think, Plan, or Code runs mark the issue `needs:developer` and post an explanatory comment on the issue detailing the failure reason, any diagnostic output (such as Copilot CLI logs or contract validation errors), and a link to the workflow run. They do not restart other issues.
 
 ### Pipeline - Prove
 
@@ -221,7 +221,7 @@ Release completion does not launch duplicate workflows. It observes `publish-npm
 
 Each required workflow has a 30-minute completion timeout, including time queued or awaiting environment approval. A failed, cancelled, skipped, missing, or timed-out run prevents Done, leaves the issue in **Release**, and adds `needs:developer`. A **Release report** is posted on the issue and PR with run links and outcomes and included in `prove-spec`. Release failures before the wait step also post the delivery-run link. Fix/retry the failed release workflow and verify its result before manually moving the issue to Done; retrying publication alone does not automatically rerun the completion gate.
 
-**Stops at:** a requested Prove review pause (`4-prove` / `pause:prove`), successful merge and required publication/deployment completion, or a failure needing attention. At the fix limit, the PR stays open and the issue/PR get `needs:developer`. A failure after merge does not undo it.
+**Stops at:** a requested Prove review pause (`4-prove` / `pause:prove`), successful merge and required publication/deployment completion, or a failure needing attention. At the fix limit (or if Prove fails before Release), the PR stays open, the issue returns to **Code** with `needs:developer`, and an explanatory comment is posted on the issue with the failure reason and workflow run link. A failure after merge does not undo it.
 
 Manual Prove dispatch also permits auto-merge without a `5-release` label (unless `4-prove` or `pause:prove` is set on the issue). DoomR disables automatic npm release. Library npm publication runs separately.
 

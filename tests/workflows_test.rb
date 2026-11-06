@@ -15,7 +15,7 @@ class WorkflowsTest < Minitest::Test
     @directory = Dir.mktmpdir('coding-pal-workflows-')
     bin = File.join(@directory, 'bin')
     Dir.mkdir(bin)
-    %w[bash jq mkdir head uname cat rm tr sed chmod printf].each do |command|
+    %w[bash jq mkdir head tail awk grep uname cat rm tr sed chmod printf].each do |command|
       executable = ENV.fetch('PATH').split(File::PATH_SEPARATOR)
                       .map { |path| File.join(path, command) }
                       .find { |path| File.executable?(path) && !File.directory?(path) }
@@ -488,6 +488,12 @@ class WorkflowsTest < Minitest::Test
       edit = @calls.find { |args| args.first(2) == %w[issue edit] }
       assert_equal 'needs:developer', edit[edit.index('--add-label') + 1]
       assert_equal LABELS, edit[edit.index('--remove-label') + 1].split(',')
+      comment = @calls.find { |args| args.first(2) == %w[issue comment] }
+      refute_nil comment, "#{phase} failure must post an explanatory comment on the issue"
+      body = comment.include?('--body-file') ? File.read(comment[comment.index('--body-file') + 1]) : comment[comment.index('--body') + 1]
+      assert_includes body, "⚠️ **#{phase.capitalize} failed"
+      assert_includes body, 'needs:developer'
+      assert_includes body, 'https://github.com/test-owner/test-repo/actions/runs/123'
       assert_empty dispatches
     end
   end
@@ -701,8 +707,10 @@ class WorkflowsTest < Minitest::Test
     assert_equal 6, events.count { |event| event.start_with?('checks:') }
     refute_includes events, 'review'
     assert @calls.any? { |args| args.first(2) == %w[issue edit] && args.include?('needs:developer') }
+    assert @calls.any? { |args| args.first(2) == %w[issue comment] && args.include?('--body') && args.last.include?('⚠️ **Prove failed — returned to Code with `needs:developer`**') }
     refute @calls.any? { |args| args.first(2) == %w[pr merge] }
     assert_equal 'optionId=code', @calls.flat_map { |args| args.grep(/^optionId=/) }.last
+    assert File.exist?(File.join(@directory, 'prove-failure-reported'))
   end
 
   def test_final_pr_metadata_failure_also_returns_to_code_with_context
@@ -774,72 +782,77 @@ class WorkflowsTest < Minitest::Test
     assert @calls.any? { |args| args.include?('optionId=done') }
   end
 
-  def test_done_auto_archives_items_older_than_three_days_while_leaving_other_columns_untouched
-    stale_ts = (Time.now.utc - (4 * 86_400)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    recent_ts = (Time.now.utc - (1 * 86_400)).strftime('%Y-%m-%dT%H:%M:%SZ')
+  def test_done_auto_archives_items_beyond_forty_latest_while_leaving_other_columns_untouched
+    base_time = Time.now.utc
+    older_ts = (base_time - (5 * 86_400)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    oldest_ts = (base_time - (6 * 86_400)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    recent_done_nodes = (1..39).map do |idx|
+      ts = (base_time - (idx * 3600)).strftime('%Y-%m-%dT%H:%M:%SZ')
+      {
+        'id' => "DONE_RECENT_#{idx}",
+        'isArchived' => false,
+        'updatedAt' => ts,
+        'fieldValueByName' => { 'name' => 'Done', 'optionId' => 'done' },
+        'content' => { 'closedAt' => ts, 'updatedAt' => ts }
+      }
+    end
     board_with_items = project
     board_with_items['data']['repository']['owner']['projectsV2']['nodes'][0]['items'] = {
       'nodes' => [
         {
           'id' => 'DONE_STALE_CLOSED',
           'isArchived' => false,
-          'updatedAt' => stale_ts,
+          'updatedAt' => older_ts,
           'fieldValueByName' => { 'name' => 'Done', 'optionId' => 'done' },
-          'content' => { 'closedAt' => stale_ts, 'updatedAt' => stale_ts }
+          'content' => { 'closedAt' => older_ts, 'updatedAt' => older_ts }
         },
         {
           'id' => 'DONE_STALE_UPDATED_FALLBACK',
           'isArchived' => false,
-          'updatedAt' => stale_ts,
+          'updatedAt' => oldest_ts,
           'fieldValueByName' => { 'name' => 'Done', 'optionId' => 'done' },
           'content' => {}
         },
-        {
-          'id' => 'DONE_RECENT',
-          'isArchived' => false,
-          'updatedAt' => recent_ts,
-          'fieldValueByName' => { 'name' => 'Done', 'optionId' => 'done' },
-          'content' => { 'closedAt' => recent_ts, 'updatedAt' => recent_ts }
-        },
+        *recent_done_nodes,
         {
           'id' => 'DONE_ALREADY_ARCHIVED',
           'isArchived' => true,
-          'updatedAt' => stale_ts,
+          'updatedAt' => oldest_ts,
           'fieldValueByName' => { 'name' => 'Done', 'optionId' => 'done' },
-          'content' => { 'closedAt' => stale_ts, 'updatedAt' => stale_ts }
+          'content' => { 'closedAt' => oldest_ts, 'updatedAt' => oldest_ts }
         },
         {
           'id' => 'TRIAGE_STALE',
           'isArchived' => false,
-          'updatedAt' => stale_ts,
+          'updatedAt' => oldest_ts,
           'fieldValueByName' => { 'name' => 'Triage', 'optionId' => 'triage' },
-          'content' => { 'updatedAt' => stale_ts }
+          'content' => { 'updatedAt' => oldest_ts }
         },
         {
           'id' => 'CODE_STALE',
           'isArchived' => false,
-          'updatedAt' => stale_ts,
+          'updatedAt' => oldest_ts,
           'fieldValueByName' => { 'name' => 'Code', 'optionId' => 'code' },
-          'content' => { 'updatedAt' => stale_ts }
+          'content' => { 'updatedAt' => oldest_ts }
         },
         {
           'id' => 'ITEM',
           'isArchived' => false,
-          'updatedAt' => stale_ts,
+          'updatedAt' => oldest_ts,
           'fieldValueByName' => { 'name' => 'Done', 'optionId' => 'done' },
-          'content' => { 'closedAt' => stale_ts, 'updatedAt' => stale_ts }
+          'content' => { 'closedAt' => oldest_ts, 'updatedAt' => oldest_ts }
         }
       ]
     }
 
-    # 1. Release Done step archives stale Done items (>3d) and leaves recent Done & non-Done columns untouched
+    # 1. Release Done step keeps 40 latest Done items (current ITEM + 39 newest) and archives older overflow Done items
     done_step = status_step('release', 'Done')
     run_step(done_step, scenario([], project: board_with_items))
     archived_in_release = @calls.select { |args| args.any? { |arg| arg.include?('archiveProjectV2Item') } }
                                 .flat_map { |args| args.grep(/^itemId=/) }
     assert_equal %w[itemId=DONE_STALE_CLOSED itemId=DONE_STALE_UPDATED_FALLBACK], archived_in_release
 
-    # 2. Prove status helper archives stale Done items only when TARGET_STATUS=Done
+    # 2. Prove status helper archives overflow Done items only when TARGET_STATUS=Done
     prove_status = status_step('prove', 'Prove')
     run_step(prove_status, scenario([], project: board_with_items), { 'TARGET_STATUS' => 'Prove' })
     assert_empty(@calls.select { |args| args.any? { |arg| arg.include?('archiveProjectV2Item') } })
@@ -1013,6 +1026,7 @@ class WorkflowsTest < Minitest::Test
     marker = steps('prove').find { |item| item['name'] == 'Mark issue needs:developer if Prove failed' }
     run_step(marker, scenario)
     assert @calls.any? { |args| args.first(2) == %w[issue edit] && args.include?('needs:developer') }
+    refute @calls.any? { |args| args.first(2) == %w[issue comment] }, 'Must not duplicate issue comment when Release failure already reported it'
   end
 
   def test_documentation_path_gate_uses_real_git_and_selects_the_triggering_push
@@ -1440,6 +1454,7 @@ class WorkflowsTest < Minitest::Test
     comments = [
       '# Think: initial think spec',
       '⏸️ **Paused after Think for Manual Validation**',
+      '⚠️ **Code failed — issue stays in Code with `needs:developer`**',
       '# Plan: initial plan spec',
       'Pull request opened for #42: https://example.test/pr/99',
       'Please play the secret SFX when the door starts opening instead of on room entry.'
@@ -1458,6 +1473,7 @@ class WorkflowsTest < Minitest::Test
     assert_includes think_prompt, 'https://github.com/user-attachments/assets/e5b56372-2c9f-4641-9647-58700774e69a'
     refute_includes think_prompt, 'target under 350 words'
     refute_includes think_prompt, 'Paused after Think for Manual Validation'
+    refute_includes think_prompt, 'Code failed — issue stays in Code'
     refute_includes think_prompt, 'Pull request opened for #42'
 
     plan_step = steps('plan').find { |item| item['name'] == 'Fetch issue context and run Planner agent' }
@@ -1470,6 +1486,7 @@ class WorkflowsTest < Minitest::Test
     assert_includes plan_prompt, 'https://github.com/user-attachments/assets/e5b56372-2c9f-4641-9647-58700774e69a'
     refute_includes plan_prompt, '1 concise sentence per bullet'
     refute_includes plan_prompt, 'Paused after Think for Manual Validation'
+    refute_includes plan_prompt, 'Code failed — issue stays in Code'
 
     code_step = steps('code').find { |item| item['name'] == 'Run Code Agent to implement plan.md and prepare pr.md' }
     run_step(code_step, data, { 'BRANCH_NAME' => 'feature/issue-42-test', 'BASE_REF' => 'main' })
@@ -1478,6 +1495,7 @@ class WorkflowsTest < Minitest::Test
     assert_includes code_prompt, 'Attached Visual Evidence / Screenshots on Issue #42'
     assert_includes code_prompt, 'do NOT stop with zero commits'
     refute_includes code_prompt, 'Paused after Think for Manual Validation'
+    refute_includes code_prompt, 'Code failed — issue stays in Code'
   end
 
   def test_ai_cost_footers_are_appended_and_stripped_when_restoring_specs
@@ -1757,8 +1775,10 @@ class WorkflowsTest < Minitest::Test
     FileUtils.mkdir_p(validate_dir)
     File.write(File.join(validate_dir, 'validate-pr.mjs'), "export const TIERS = ['Low', 'Medium', 'High', 'Critical'];\nexport function readPlan() { return { tier: 'Low', criteria: ['AC-1'] }; }\nexport function readThink() { return { tier: 'Low', rollback: '_None._' }; }\n")
 
-    # 1. Reset feature branch to match origin/main with no edits -> should fail with explicit error
+    # 1. Reset feature branch to match origin/main with no edits -> should fail with explicit error and record detailed failure reason
     git_command('checkout', '-B', 'feature/issue-42-crates', 'refs/remotes/origin/main')
+    File.write(File.join(@directory, 'copilot-code.log'), "Agent started\nError: model quota or empty edit\n")
+    File.write(File.join(@repository, 'src_untracked_out_of_scope.js'), "export const stray = 1;\n")
     entry = steps('code').find { |item| item['name'] == 'Run deterministic Code exit gates' }
     data = scenario.merge('issue' => { 'title' => 'Add crates' })
     File.write(@environment.fetch('TEST_SCENARIO'), JSON.generate(data))
@@ -1774,6 +1794,28 @@ class WorkflowsTest < Minitest::Test
     )
     refute status.success?
     assert_includes "#{output}\n#{error}", 'Code Agent produced no commits or in-scope file changes'
+    reason_file = File.join(@directory, 'code-failure-reason.md')
+    assert File.file?(reason_file), 'Exit gate failure must write code-failure-reason.md'
+    reason_md = File.read(reason_file)
+    assert_includes reason_md, 'produced no commits or in-scope file changes'
+    assert_includes reason_md, '`src/crate.js`, `tests/crate.test.js`'
+    assert_includes reason_md, '`src_untracked_out_of_scope.js`'
+    assert_includes reason_md, '<details><summary>Copilot CLI output (last 30 lines)</summary>'
+    assert_includes reason_md, 'Error: model quota or empty edit'
+
+    fail_step = steps('code').find { |item| item['name'] == 'Mark issue needs:developer if Code fails' }
+    FileUtils.mkdir_p(File.join(@directory, 'specs/issue-42'))
+    File.write(File.join(@directory, 'specs/issue-42/ai-cost-step.md'), "\n\n---\n<!-- ai-cost-step:{\"step\":\"Code\",\"cost_usd\":0.12} -->\n💰 **AI Cost (Code):** `$0.1200`")
+    run_step(fail_step, data)
+    comment_call = @calls.find { |args| args.first(2) == %w[issue comment] }
+    refute_nil comment_call
+    posted_failure = File.read(comment_call[comment_call.index('--body-file') + 1])
+    assert_includes posted_failure, '⚠️ **Code failed — issue stays in Code with `needs:developer`**'
+    assert_includes posted_failure, '`src/crate.js`, `tests/crate.test.js`'
+    assert_includes posted_failure, '`src_untracked_out_of_scope.js`'
+    assert_includes posted_failure, 'Error: model quota or empty edit'
+    assert_includes posted_failure, '💰 **AI Cost (Code):** `$0.1200`'
+    FileUtils.rm_f(File.join(@repository, 'src_untracked_out_of_scope.js'))
 
     # 2. Agent leaves uncommitted in-scope changes -> exit gate auto-stages and commits them
     FileUtils.mkdir_p(File.join(@repository, 'src'))
@@ -1787,6 +1829,36 @@ class WorkflowsTest < Minitest::Test
     refute_empty git_command('log', 'refs/remotes/origin/main..HEAD', '--oneline')
     committed_files = git_command('diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD').lines.map(&:strip)
     assert_equal ['src/crate.js'], committed_files
+
+    # 3. Successful Code PR creation posts # Code: summary with changed files, pr.md, and Code Agent output
+    status_script = status_step('code', 'Code').fetch('run').split("<<'STATUS_SCRIPT'\n", 2).last.split("\nSTATUS_SCRIPT", 2).first
+    File.write(File.join(@directory, 'code-project-status.sh'), status_script)
+    pr_step = steps('code').find { |item| item['name'] == 'Enter Prove and create or update Pull Request' }
+    pr_data = scenario(['5-release'], project: project, pr: { 'number' => 99, 'url' => 'https://example.test/pr/99' }).merge('issue' => { 'title' => 'Add crates' })
+    File.write(@environment.fetch('TEST_SCENARIO'), JSON.generate(pr_data))
+    File.write(@environment.fetch('TEST_CALLS'), '')
+    File.write(@environment.fetch('TEST_VIOLATIONS'), '')
+    File.write(File.join(@directory, 'copilot-code.log'), "Implemented src/crate.js\nAll tests pass\n")
+    pr_env = @environment.merge(resolve_step_environment(pr_step)).merge(
+      'PATH' => "#{@environment.fetch('PATH')}#{File::PATH_SEPARATOR}#{ENV.fetch('PATH')}",
+      'BASE_REF' => 'main', 'BRANCH_NAME' => 'feature/issue-42-crates'
+    )
+    pr_out, pr_err, pr_status = Open3.capture3(
+      pr_env, 'bash', '--noprofile', '--norc', '-eo', 'pipefail',
+      stdin_data: pr_step.fetch('run'), chdir: @repository, unsetenv_others: true
+    )
+    assert pr_status.success?, "#{pr_out}\n#{pr_err}"
+    pr_calls = File.readlines(@environment.fetch('TEST_CALLS')).map { |line| JSON.parse(line) }
+    code_comment_call = pr_calls.find { |args| args.first(2) == %w[issue comment] }
+    refute_nil code_comment_call
+    code_comment_body = File.read(code_comment_call[code_comment_call.index('--body-file') + 1])
+    assert_includes code_comment_body, '# Code: Add crates'
+    assert_includes code_comment_body, 'Pull request opened for #42:'
+    assert_includes code_comment_body, '## Changed Files'
+    assert_includes code_comment_body, 'src/crate.js'
+    assert_includes code_comment_body, 'valid pr body'
+    assert_includes code_comment_body, '<details><summary>Code Agent output (last 40 lines)</summary>'
+    assert_includes code_comment_body, 'Implemented src/crate.js'
   end
 
   def test_audit_runner_creates_one_issue_per_finding_and_adds_to_project
@@ -2245,5 +2317,51 @@ class WorkflowsTest < Minitest::Test
     assert_includes prove_loop, '--test-cmd "bash $RUNNER_TEMP/run-tests.sh"'
     assert_includes prove_loop, '--agent="gate-fix"'
     refute_includes prove_loop, '--agent="code"'
+  end
+
+  def test_closed_or_superseded_runs_skip_without_mutating_issue
+    artifacts = {
+      'issue_number.txt' => "42\n",
+      'specs/issue-42/think.md' => "# Think: controls\n",
+      'specs/issue-42/plan.md' => "# Plan: controls\n"
+    }
+
+    # 1. Closed issue skips Think, Plan, and Code without editing issue or dispatching
+    closed_data = scenario(['5-release'], comments: ['# Think: controls', '# Plan: controls'], artifact_specs: artifacts)
+    closed_data['issue']['state'] = 'CLOSED'
+
+    think_closed = run_step(step('think', 'resume'), closed_data)
+    assert_equal 'skip', think_closed.fetch('resumed_stage')
+    refute @calls.any? { |args| args.first(2) == %w[issue edit] }
+    assert_empty dispatches
+
+    plan_closed = run_step(step('plan', 'resolve'), closed_data, { 'INPUT_ISSUE_NUMBER' => '', 'RUN_ID' => '777' })
+    assert_equal 'true', plan_closed.fetch('skip')
+    refute @calls.any? { |args| args.first(2) == %w[issue edit] }
+
+    code_closed = run_step(step('code', 'resolve'), closed_data, { 'INPUT_ISSUE_NUMBER' => '', 'RUN_ID' => '777' })
+    assert_equal 'true', code_closed.fetch('skip')
+    refute @calls.any? { |args| args.first(2) == %w[issue edit] }
+
+    # 2. Queued handoff (RUN_ID set) skips when an earlier run already stripped stage labels (e.g. merged in Prove while Release awaits deploy)
+    superseded_handoff = scenario([], comments: ['# Think: controls', '# Plan: controls', '# Prove: controls'], artifact_specs: artifacts)
+    code_superseded = run_step(step('code', 'resolve'), superseded_handoff, { 'INPUT_ISSUE_NUMBER' => '', 'RUN_ID' => '777' })
+    assert_equal 'true', code_superseded.fetch('skip')
+    refute @calls.any? { |args| args.first(2) == %w[issue edit] }
+
+    plan_superseded = run_step(step('plan', 'resolve'), superseded_handoff, { 'INPUT_ISSUE_NUMBER' => '', 'RUN_ID' => '777' })
+    assert_equal 'true', plan_superseded.fetch('skip')
+    refute @calls.any? { |args| args.first(2) == %w[issue edit] }
+
+    # 3. Queued direct Code run (RUN_ID empty) skips when Prove/Release already completed after latest Plan and removed stage labels
+    code_direct_done = run_step(step('code', 'resolve'), superseded_handoff, { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
+    assert_equal 'true', code_direct_done.fetch('skip')
+    refute @calls.any? { |args| args.first(2) == %w[issue edit] }
+
+    # 4. Checkpoints pause if all stage labels were removed while the phase was in flight
+    PHASES.each do |phase|
+      out = run_step(step(phase, 'checkpoint'), scenario([]))
+      assert_equal 'true', out.fetch('paused'), "#{phase} checkpoint must pause when all stage labels were removed"
+    end
   end
 end
