@@ -581,6 +581,22 @@ jobs:
               fs.writeFileSync(p, src);
             '
           fi
+          if [ -f .agents/skills/prove/scripts/verify-criteria.mjs ]; then
+            node -e '
+              const fs = require("fs");
+              const p = ".agents/skills/prove/scripts/verify-criteria.mjs";
+              let src = fs.readFileSync(p, "utf8");
+              src = src.replace(
+                "raw.match(/^(ok|not ok)\\s+\\d+\\s*(?:-\\s*)?(.*?)(?:\\s+#\\s*(SKIP|TODO)\\b.*)?$/i)",
+                "raw.match(/^(ok|not ok)\\s+(?:\\d+\\s*(?:-\\s*)?|-\\s+)(.*?)(?:\\s+#\\s*(SKIP|TODO)\\b.*)?$/i)"
+              );
+              src = src.replace(
+                "const hits = criteriaInText(test.match).filter((id) => ids.has(id));",
+                "const hits = criteriaInText(test.match).filter((id) => {\n\t\t\tif (!ids.has(id)) return false;\n\t\t\tconst planned = rows.filter((r) => r.criterion === id && r.path).map((r) => r.path);\n\t\t\treturn !planned.length || !test.file || planned.some((fp) => reportsFile([test.file], fp));\n\t\t});"
+              );
+              fs.writeFileSync(p, src);
+            '
+          fi
           mkdir -p .agents/skills/forge
           cp /tmp/1pizza-coding-pal/forge-catalog.json .agents/skills/forge/catalog.json
           for repo_cat in docs/forge/catalog.json .github/forge-catalog.json forge-catalog.json; do
@@ -929,6 +945,9 @@ jobs:
               }
               for (const p of paths) console.log(p);
             ' "${SPEC_DIR}/plan.md")
+            while IFS= read -r mod_test; do
+              [ -n "$mod_test" ] && SCOPE_ARGS+=(--scope "$mod_test")
+            done < <(git diff --name-only "origin/${BASE_REF}..HEAD" -- 'tests/**' 2>/dev/null || true)
             run_check "scope-guard" node .agents/skills/prove/scripts/scope-guard.mjs --git --base "origin/${BASE_REF}" "${SCOPE_ARGS[@]}"
 
             BUILD_CMD="npm run build"
@@ -1068,16 +1087,18 @@ jobs:
             fi
 
             BEFORE=$(git rev-parse HEAD)
-            rm -rf "${COPILOT_HOME:-$HOME/.copilot}/session-state" "$COPILOT_OTEL_FILE_EXPORTER_PATH" 2>/dev/null || true
+            rm -rf "${COPILOT_HOME:-$HOME/.copilot}/session-state" "$COPILOT_OTEL_FILE_EXPORTER_PATH" "$RUNNER_TEMP/copilot-repair.log" 2>/dev/null || true
             copilot --model="${ISSUE_AI_MODEL:-claude-sonnet-5.5}" --reasoning-effort="${ISSUE_AI_EFFORT:-medium}" --agent="gate-fix" --allow-all-tools \
               --prompt "Remediate the failing Prove controls and findings for Pull Request #${PR_NUMBER} (Issue #${ISSUE_NUMBER}, attempt ${NEXT}/${FIX_LOOP_LIMIT}).
 
             Read ${REPAIR_FILE}, gate-output.log, ${SPEC_DIR}/think.md, ${SPEC_DIR}/plan.md and pr.md. The repair request includes the current failed commands/output and, only when checks passed, the independent review findings. For failed GitHub checks, inspect their linked run logs with gh run view <run-id> --log-failed before fixing. Ignore stale review records. If the plan is invalid, report a blocking explanation and stop; do not broaden scope.
             Follow .github/instructions/prove.instructions.md and .github/agents/gate-fix.agent.md:
-            1. Fix only the application/test files within the In Scope paths of ${SPEC_DIR}/plan.md.
-            2. Never weaken, skip, or edit any control or spec file.
+            1. Fix only the application/test files within the In Scope paths of ${SPEC_DIR}/plan.md (and any existing tests/** file already modified on this PR branch when remediating test or R8 assertion findings).
+            2. Never weaken, skip, or edit any control or spec file, and never reduce the net assertion count in any test file (control-guard rule R8).
             3. Re-run the failed checks and node .agents/skills/prove/scripts/control-guard.mjs --git origin/${BASE_REF}.
-            4. Stage and commit your fix on ${BRANCH_NAME} with a clear message referencing #${ISSUE_NUMBER}."
+            4. Stage and commit your fix on ${BRANCH_NAME} with a clear message referencing #${ISSUE_NUMBER}." \
+              > "$RUNNER_TEMP/copilot-repair.log" 2>&1 || true
+            [ -f "$RUNNER_TEMP/copilot-repair.log" ] && cat "$RUNNER_TEMP/copilot-repair.log" || true
 
             record_ai_cost "Prove Repair #${NEXT}"
 
@@ -1120,6 +1141,9 @@ jobs:
                 }
                 for (const p of paths) console.log(p);
               ' "${SPEC_DIR}/plan.md")
+              while IFS= read -r mod_test; do
+                [ -n "$mod_test" ] && IN_SCOPE_PATHS+=("$mod_test")
+              done < <(git diff --name-only "origin/${BASE_REF}..HEAD" -- 'tests/**' 2>/dev/null || true)
               for scope_glob in "${IN_SCOPE_PATHS[@]}"; do
                 git add -- "$scope_glob" 2>/dev/null || true
               done
@@ -1135,6 +1159,32 @@ jobs:
             if [ "$(git rev-parse HEAD)" != "$BEFORE" ]; then
               node .agents/skills/prove/scripts/control-guard.mjs --git "origin/${BASE_REF}"
               git push origin "$BRANCH_NAME"
+            else
+              GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh label create needs:developer --force --description "Fix-loop limit reached or remediation produced no commit" || true
+              GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh pr edit "$PR_NUMBER" --add-label needs:developer
+              gh pr edit "$PR_NUMBER" --add-assignee "@me" || true
+              GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-label "needs:developer" --remove-label "1-think,2-plan,3-code,4-prove,5-release" || true
+              gh issue edit "$ISSUE_NUMBER" --add-assignee "@me" || true
+              if [ "$CONTROLS_OK" -eq 1 ] && [ -f "$PROVE_FILE" ]; then
+                gh pr review "$PR_NUMBER" --request-changes --body-file "$PROVE_FILE" 2>/dev/null || gh pr comment "$PR_NUMBER" --body-file "$PROVE_FILE"
+              fi
+              RUN_URL="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-$GH_REPO}/actions/runs/${GITHUB_RUN_ID:-}"
+              NO_COMMIT_MSG=$(
+                printf "⚠️ **Prove failed — returned to Code with \`needs:developer\`**\n\nAutomatic remediation attempt %s/%s produced no new commit on PR #%s (\`%s\`). Stopping the repair loop to avoid repeating identical checks on commit \`%s\`. The issue has been moved back to **Code** for developer attention.\n\n- **Latest failure details:** See the \`# Prove repair request\` comment above.\n- **Workflow run:** %s" "$NEXT" "$FIX_LOOP_LIMIT" "$PR_NUMBER" "$BRANCH_NAME" "$BEFORE" "$RUN_URL"
+                if [ -s "$RUNNER_TEMP/copilot-repair.log" ]; then
+                  printf "\n\n<details><summary>Copilot CLI output (Prove Repair #%s, last 30 lines)</summary>\n\n\`\`\`text\n" "$NEXT"
+                  tail -n 30 "$RUNNER_TEMP/copilot-repair.log"
+                  printf "\n\`\`\`\n</details>"
+                fi
+                if [ -s "${SPEC_DIR}/ai-cost-step.md" ]; then
+                  cat "${SPEC_DIR}/ai-cost-step.md"
+                fi
+              )
+              gh issue comment "$ISSUE_NUMBER" --body "$NO_COMMIT_MSG" || true
+              gh pr comment "$PR_NUMBER" --body "$NO_COMMIT_MSG" || true
+              rm -f "${SPEC_DIR}/ai-cost-pending.jsonl" "${SPEC_DIR}/ai-cost-step.md"
+              echo "reported=true" > "$RUNNER_TEMP/prove-failure-reported"
+              exit 1
             fi
             TARGET_STATUS=Prove bash -eo pipefail "$RUNNER_TEMP/prove-project-status.sh"
           done

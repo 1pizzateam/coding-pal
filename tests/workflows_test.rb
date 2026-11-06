@@ -607,7 +607,7 @@ class WorkflowsTest < Minitest::Test
     end
   end
 
-  def run_prove_loop(control_failures: 0, review_failures: 0, record_failures: 0, success: true)
+  def run_prove_loop(control_failures: 0, review_failures: 0, record_failures: 0, no_commit: false, success: true)
     entry = steps('prove').find { |item| item['name'] == 'Run Prove validation and auto-remediation loop' }.dup
     controls = <<~'BASH'
       run_deterministic_controls() {
@@ -637,10 +637,14 @@ class WorkflowsTest < Minitest::Test
         else
           report = File.read('reports/repair-attempt.md')
           File.write(File.join(ENV.fetch('RUNNER_TEMP'), "repair-#{fixes + 1}"), report)
-          File.write(count_path, (fixes + 1).to_s)
+          if ENV['TEST_NO_COMMIT'] == '1'
+            puts 'Blocked: plan scope requires developer replanning'
+          else
+            File.write(count_path, (fixes + 1).to_s)
+          end
         end
       when 'node'
-        if ARGV.first.include?('validate-prove')
+        if ARGV.first.to_s.include?('validate-prove')
           review_path = File.join(ENV.fetch('RUNNER_TEMP'), 'review-count')
           reviews = File.exist?(review_path) ? File.read(review_path).to_i : 0
           File.write(review_path, (reviews + 1).to_s)
@@ -675,7 +679,7 @@ class WorkflowsTest < Minitest::Test
     run_step(entry, data, {
       'BASE_REF' => 'main', 'BRANCH_NAME' => 'issue-42', 'FIX_LOOP_LIMIT' => '5',
       'TEST_CONTROL_FAILURES' => control_failures.to_s, 'TEST_REVIEW_FAILURES' => review_failures.to_s,
-      'TEST_RECORD_FAILURES' => record_failures.to_s
+      'TEST_RECORD_FAILURES' => record_failures.to_s, 'TEST_NO_COMMIT' => no_commit ? '1' : '0'
     }, success: success)
     File.readlines(File.join(@directory, 'events'), chomp: true)
   end
@@ -712,6 +716,18 @@ class WorkflowsTest < Minitest::Test
     assert @calls.any? { |args| args.first(2) == %w[issue comment] && args.include?('--body') && args.last.include?('⚠️ **Prove failed — returned to Code with `needs:developer`**') }
     refute @calls.any? { |args| args.first(2) == %w[pr merge] }
     assert_equal 'optionId=code', @calls.flat_map { |args| args.grep(/^optionId=/) }.last
+    assert File.exist?(File.join(@directory, 'prove-failure-reported'))
+  end
+
+  def test_no_commit_repair_stops_immediately_and_reports_agent_output
+    events = run_prove_loop(control_failures: 10, no_commit: true, success: false)
+    assert_equal %w[checks:1 repair], events
+    repair_comments = @calls.select { |args| args.first(2) == %w[issue comment] && args.include?('reports/repair-attempt.md') }
+    assert_equal 1, repair_comments.length, 'Must not post repeated repair request comments when gate-fix produces no commit'
+    handoff = @calls.find { |args| args.first(2) == %w[issue comment] && args.include?('--body') && args.last.include?('⚠️ **Prove failed — returned to Code with `needs:developer`**') }
+    refute_nil handoff
+    assert_includes handoff.last, 'produced no new commit on PR #99'
+    assert_includes handoff.last, 'Blocked: plan scope requires developer replanning'
     assert File.exist?(File.join(@directory, 'prove-failure-reported'))
   end
 
@@ -2312,6 +2328,8 @@ class WorkflowsTest < Minitest::Test
     assert_includes prove_install, 'for skill in think plan code prove; do'
     assert_includes prove_install, 'mkdir -p .agents/skills/forge'
     assert_includes prove_install, 'maxBuffer: 64 * 1024 * 1024'
+    assert_includes prove_install, '.agents/skills/prove/scripts/verify-criteria.mjs'
+    assert_includes prove_install, 'reportsFile([test.file], fp)'
     prove_loop = steps('prove').find { |item| item['name'] == 'Run Prove validation and auto-remediation loop' }.fetch('run')
     assert_includes prove_loop, '.agents/skills/prove/scripts/dependency-guard.mjs --git --base "origin/${BASE_REF}" --plan "${SPEC_DIR}/plan.md" --pr pr.md'
     assert_includes prove_loop, '--diff-filter=AM "origin/${BASE_REF}..HEAD"'
