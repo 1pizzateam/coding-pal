@@ -1074,7 +1074,7 @@ jobs:
 
             # 3. Record the exact upstream issue reference on the consumer issue
             gh issue comment "$CONSUMER_ISSUE_NUMBER" --repo "$CURRENT_REPO" \
-              --body "Blocked waiting on upstream library issue ${TARGET_REPO}#${LIB_ISSUE_NUMBER} (${LIB_ISSUE_URL}) for package \`${PKG}\`. Once \`${TARGET_REPO}\` merges and publishes the new release to npm, this issue will automatically be labeled \`5-release\` and resume implementation."
+              --body "Blocked waiting on upstream library issue ${TARGET_REPO}#${LIB_ISSUE_NUMBER} (${LIB_ISSUE_URL}) for package \`${PKG}\`."
 
             {
               echo ""

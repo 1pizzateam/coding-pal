@@ -1184,11 +1184,6 @@ jobs:
           echo "paused=true" >> "$GITHUB_OUTPUT"
           gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-prove,5-release,pause:prove" --add-assignee "@me" || true
           gh pr edit "$PR_NUMBER" --add-assignee "@me" || true
-          gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused after Prove for Manual Validation**
-
-          Pull Request #${PR_NUMBER} passed all 8 Prove controls and the independent review (\`# Prove:\` comment above).
-          - **Auto-merge & release:** Add the **\`5-release\`** label to this issue to merge PR #${PR_NUMBER} and run any configured release/deployment workflows.
-          - **Manual merge:** Merge PR #${PR_NUMBER} directly on GitHub."
 
       - name: Sync issue to Release on Project board
         id: release_stage
@@ -1298,8 +1293,8 @@ jobs:
             done < <(jq -c '.[]' "$EDITOR_REQ_FILE")
 
             if [ "${#DISPATCHED_LINKS[@]}" -gt 0 ]; then
-              COMMENT_BODY=$(printf "### Companion Game Editor Updates Dispatched\n\nNow that PR #%s is merged into \`%s\`, the following companion editor issues have been opened and labeled \`5-release\` to trigger their autonomous pipelines:\n\n%s\n" \
-                "$PR_NUMBER" "$BASE_REF" "$(printf '%s\n' "${DISPATCHED_LINKS[@]}")")
+              COMMENT_BODY=$(printf "### Companion Game Editor Updates Dispatched\n\n%s\n" \
+                "$(printf '%s\n' "${DISPATCHED_LINKS[@]}")")
               gh issue comment "$ISSUE_NUMBER" --body "$COMMENT_BODY"
             fi
           fi
@@ -1639,7 +1634,6 @@ jobs:
                 fi
                 echo ""
                 echo "- **Workflow run:** ${RUN_URL}"
-                echo "- **Next steps:** Inspect the failure details above, push a fix to the PR branch or adjust the specification, then re-add \`4-prove\` or \`5-release\` to retry."
                 if [ -s "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md" ]; then
                   cat "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md"
                 fi

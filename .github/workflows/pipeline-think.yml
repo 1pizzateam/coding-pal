@@ -619,6 +619,35 @@ jobs:
             > "$RUNNER_TEMP/copilot-think.log" 2>&1 || COPILOT_EXIT=$?
           [ -f "$RUNNER_TEMP/copilot-think.log" ] && cat "$RUNNER_TEMP/copilot-think.log" || true
 
+          think_is_complete() {
+            [ -s "$THINK_FILE" ] || return 1
+            if [ -f .agents/skills/think/scripts/validate-think.mjs ]; then
+              node .agents/skills/think/scripts/validate-think.mjs --think "$THINK_FILE" >/dev/null 2>&1 || return 1
+            fi
+            return 0
+          }
+          for RESUME_ATTEMPT in 1 2; do
+            [ "$COPILOT_EXIT" -eq 0 ] || break
+            think_is_complete && break
+            RESUME_ID=$(sed -nE 's/.*copilot --resume=([^[:space:]]+).*/\1/p' "$RUNNER_TEMP/copilot-think.log" 2>/dev/null | tail -n 1 || true)
+            if [ -z "$RESUME_ID" ]; then
+              for d in "${COPILOT_HOME:-$HOME/.copilot}"/session-state/*; do
+                [ -d "$d" ] && RESUME_ID=$(basename "$d")
+              done
+            fi
+            [ -n "$RESUME_ID" ] || break
+            echo "Thinker Agent exited before producing a valid ${THINK_FILE}; resuming session ${RESUME_ID} (attempt ${RESUME_ATTEMPT}/2)..."
+            copilot --model="${ISSUE_AI_MODEL:-claude-sonnet-5.5}" --reasoning-effort="${ISSUE_AI_EFFORT:-medium}" --resume="$RESUME_ID" --agent="think" --allow-all-tools \
+              --prompt "You stopped mid-task before producing a validated Think record at ${THINK_FILE} for Issue #${ISSUE_NUMBER}. Continue immediately from where you left off: write ${THINK_FILE} and validate it with 'node .agents/skills/think/scripts/validate-think.mjs --think ${THINK_FILE}' until it exits 0." \
+              > "$RUNNER_TEMP/copilot-think-resume.log" 2>&1 || COPILOT_EXIT=$?
+            if [ -f "$RUNNER_TEMP/copilot-think-resume.log" ]; then
+              cat "$RUNNER_TEMP/copilot-think-resume.log"
+              printf '\n' >> "$RUNNER_TEMP/copilot-think.log"
+              cat "$RUNNER_TEMP/copilot-think-resume.log" >> "$RUNNER_TEMP/copilot-think.log"
+              rm -f "$RUNNER_TEMP/copilot-think-resume.log"
+            fi
+          done
+
           STEP_COST_JSON=$(
             {
               for f in "${COPILOT_HOME:-$HOME/.copilot}"/session-state/*/events.jsonl "$COPILOT_OTEL_FILE_EXPORTER_PATH"; do
@@ -775,7 +804,6 @@ jobs:
             ED_SUMMARY=$(jq -r '.[]? | "- **\(.editor // .repo)** (`\(.repo)`): \(.title)"' "$EDITOR_REQ_FILE" 2>/dev/null || true)
             if [ -n "$ED_SUMMARY" ]; then
               gh issue comment "$ISSUE_NUMBER" --body "### Companion Game Editor Updates Scheduled
-          Once this issue merges into \`${GITHUB_REPOSITORY}\`, the pipeline will automatically open \`5-release\` issues in the affected game editor repositories:
           ${ED_SUMMARY}"
             fi
           fi
@@ -850,13 +878,9 @@ jobs:
           GH_TOKEN="${GITHUB_TOKEN:-$GH_TOKEN}" gh issue edit "$ISSUE_NUMBER" --add-label "blocked:upstream,upstream-escalated:1" --remove-label "1-think,2-plan,3-code,4-prove,5-release" || true
           gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused for Upstream Dependency Escalation**
 
-          The Think phase determined that \`${PKG}\` (\`${TARGET_REPO}\`) should be updated first before implementing #${ISSUE_NUMBER}.
-
           - **Waiting-Package:** \`${PKG}\`
           - **Waiting-Repo:** \`${TARGET_REPO}\`
-          - **Upstream-Issue:** ${TARGET_REPO}#${LIB_ISSUE_NUMBER} (${LIB_ISSUE_URL})
-
-          Once \`${TARGET_REPO}\` merges and publishes the new release, this issue will automatically be re-labeled \`5-release\` and resume implementation."
+          - **Upstream-Issue:** ${TARGET_REPO}#${LIB_ISSUE_NUMBER} (${LIB_ISSUE_URL})"
 
           echo "escalated=true" >> "$GITHUB_OUTPUT"
 
@@ -887,13 +911,6 @@ jobs:
 
           echo "paused=true" >> "$GITHUB_OUTPUT"
           gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-prove,5-release,pause:think" --add-assignee "@me" || true
-          gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused after Think for Manual Validation**
-
-          Review (and optionally edit) the \`# Think:\` specification comment above.
-          - To generate the **Plan** next and pause again for validation, add the **\`2-plan\`** label.
-          - To run **\`Plan → Code\`** and stop at the Pull Request without running Prove, add the **\`3-code\`** label.
-          - To run **\`Plan → Code → Prove\`** and pause after Prove validation without merging, add the **\`4-prove\`** label.
-          - To run **\`Plan → Code → Prove → Release\`** and auto-merge, add the **\`5-release\`** label."
 
       - name: Upload think.md artifact for Plan workflow
         id: handoff
@@ -955,7 +972,6 @@ jobs:
               fi
               echo ""
               echo "- **Workflow run:** ${RUN_URL}"
-              echo "- **Next steps:** Inspect the failure details above (or adjust the issue \`Model\` & \`Effort\` fields), then re-add \`1-think\` or \`5-release\` to retry."
               if [ -s "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md" ]; then
                 cat "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md"
               fi

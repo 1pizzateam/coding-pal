@@ -640,6 +640,36 @@ jobs:
             > "$RUNNER_TEMP/copilot-plan.log" 2>&1 || COPILOT_EXIT=$?
           [ -f "$RUNNER_TEMP/copilot-plan.log" ] && cat "$RUNNER_TEMP/copilot-plan.log" || true
 
+          plan_is_complete() {
+            [ -s "${SPEC_DIR}/already-resolved.json" ] && return 0
+            [ -s "$PLAN_FILE" ] || return 1
+            if [ -f .agents/skills/plan/scripts/validate-plan.mjs ]; then
+              node .agents/skills/plan/scripts/validate-plan.mjs --plan "$PLAN_FILE" --think "$THINK_FILE" >/dev/null 2>&1 || return 1
+            fi
+            return 0
+          }
+          for RESUME_ATTEMPT in 1 2; do
+            [ "$COPILOT_EXIT" -eq 0 ] || break
+            plan_is_complete && break
+            RESUME_ID=$(sed -nE 's/.*copilot --resume=([^[:space:]]+).*/\1/p' "$RUNNER_TEMP/copilot-plan.log" 2>/dev/null | tail -n 1 || true)
+            if [ -z "$RESUME_ID" ]; then
+              for d in "${COPILOT_HOME:-$HOME/.copilot}"/session-state/*; do
+                [ -d "$d" ] && RESUME_ID=$(basename "$d")
+              done
+            fi
+            [ -n "$RESUME_ID" ] || break
+            echo "Planner Agent exited before producing a valid ${PLAN_FILE}; resuming session ${RESUME_ID} (attempt ${RESUME_ATTEMPT}/2)..."
+            copilot --model="${ISSUE_AI_MODEL:-claude-sonnet-5.5}" --reasoning-effort="${ISSUE_AI_EFFORT:-medium}" --resume="$RESUME_ID" --agent="plan" --allow-all-tools \
+              --prompt "You stopped mid-task before producing a validated Plan record at ${PLAN_FILE} for Issue #${ISSUE_NUMBER}. Continue immediately from where you left off: write ${PLAN_FILE} derived from ${THINK_FILE} (or ${SPEC_DIR}/already-resolved.json if already resolved on the base branch) and validate it with 'node .agents/skills/plan/scripts/validate-plan.mjs --plan ${PLAN_FILE} --think ${THINK_FILE}' until it exits 0." \
+              > "$RUNNER_TEMP/copilot-plan-resume.log" 2>&1 || COPILOT_EXIT=$?
+            if [ -f "$RUNNER_TEMP/copilot-plan-resume.log" ]; then
+              cat "$RUNNER_TEMP/copilot-plan-resume.log"
+              printf '\n' >> "$RUNNER_TEMP/copilot-plan.log"
+              cat "$RUNNER_TEMP/copilot-plan-resume.log" >> "$RUNNER_TEMP/copilot-plan.log"
+              rm -f "$RUNNER_TEMP/copilot-plan-resume.log"
+            fi
+          done
+
           STEP_COST_JSON=$(
             {
               for f in "${COPILOT_HOME:-$HOME/.copilot}"/session-state/*/events.jsonl "$COPILOT_OTEL_FILE_EXPORTER_PATH"; do
@@ -912,12 +942,6 @@ jobs:
 
           echo "paused=true" >> "$GITHUB_OUTPUT"
           gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-prove,5-release,pause:plan" --add-assignee "@me" || true
-          gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused after Plan for Manual Validation**
-
-          Review (and optionally edit) the \`# Plan:\` specification comment above.
-          - To implement the plan (**Code**) and stop at the Pull Request without running Prove, add the **\`3-code\`** label.
-          - To run **\`Code → Prove\`** and pause after Prove validation without merging, add the **\`4-prove\`** label.
-          - To run **\`Code → Prove → Release\`** and auto-merge, add the **\`5-release\`** label."
 
       - name: Upload plan.md and think.md artifact
         id: handoff
@@ -974,7 +998,6 @@ jobs:
               fi
               echo ""
               echo "- **Workflow run:** ${RUN_URL}"
-              echo "- **Next steps:** Inspect the failure details above (or adjust the \`# Think:\` specification / issue \`Model\` & \`Effort\` fields), then re-add \`2-plan\` or \`5-release\` to retry."
               if [ -s "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md" ]; then
                 cat "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md"
               fi

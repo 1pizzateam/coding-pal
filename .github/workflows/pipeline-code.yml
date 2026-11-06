@@ -721,6 +721,33 @@ jobs:
             > "$RUNNER_TEMP/copilot-code.log" 2>&1 || COPILOT_EXIT=$?
           [ -f "$RUNNER_TEMP/copilot-code.log" ] && cat "$RUNNER_TEMP/copilot-code.log" || true
 
+          code_has_changes() {
+            [ -n "$(git log "refs/remotes/origin/${BASE_REF}..HEAD" --oneline 2>/dev/null || true)" ] && return 0
+            [ -n "$(git status --porcelain --untracked-files=all 2>/dev/null | awk '{print $2}' | grep -vE '^(specs/|pr\.md$|pr-body\.md$|\.agents/|\.github/)' || true)" ] && return 0
+            return 1
+          }
+          for RESUME_ATTEMPT in 1 2; do
+            [ "$COPILOT_EXIT" -eq 0 ] || break
+            code_has_changes && break
+            RESUME_ID=$(sed -nE 's/.*copilot --resume=([^[:space:]]+).*/\1/p' "$RUNNER_TEMP/copilot-code.log" 2>/dev/null | tail -n 1 || true)
+            if [ -z "$RESUME_ID" ]; then
+              for d in "${COPILOT_HOME:-$HOME/.copilot}"/session-state/*; do
+                [ -d "$d" ] && RESUME_ID=$(basename "$d")
+              done
+            fi
+            [ -n "$RESUME_ID" ] || break
+            echo "Code Agent exited without commits or in-scope file changes; resuming session ${RESUME_ID} (attempt ${RESUME_ATTEMPT}/2)..."
+            copilot --model="${ISSUE_AI_MODEL:-claude-sonnet-5.5}" --reasoning-effort="${ISSUE_AI_EFFORT:-medium}" --resume="$RESUME_ID" --agent="code" --allow-all-tools \
+              --prompt "You stopped mid-task before implementing, verifying, and committing the in-scope changes for Issue #${ISSUE_NUMBER}. Continue immediately from where you left off: implement all steps in ${PLAN_FILE} across its In Scope files, run 'npm test' and 'npm run build', stage and commit all modified in-scope files on branch ${BRANCH_NAME} referencing #${ISSUE_NUMBER}, and write pr.md." \
+              > "$RUNNER_TEMP/copilot-code-resume.log" 2>&1 || COPILOT_EXIT=$?
+            if [ -f "$RUNNER_TEMP/copilot-code-resume.log" ]; then
+              cat "$RUNNER_TEMP/copilot-code-resume.log"
+              printf '\n' >> "$RUNNER_TEMP/copilot-code.log"
+              cat "$RUNNER_TEMP/copilot-code-resume.log" >> "$RUNNER_TEMP/copilot-code.log"
+              rm -f "$RUNNER_TEMP/copilot-code-resume.log"
+            fi
+          done
+
           STEP_COST_JSON=$(
             {
               for f in "${COPILOT_HOME:-$HOME/.copilot}"/session-state/*/events.jsonl "$COPILOT_OTEL_FILE_EXPORTER_PATH"; do
@@ -982,30 +1009,13 @@ jobs:
           echo "PR_URL=${PR_URL}" >> "$GITHUB_ENV"
           CODE_COMMENT_FILE="$RUNNER_TEMP/code-comment.md"
           HEAD_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "")
-          DIFF_STAT=$(git diff --stat "refs/remotes/origin/${BASE_REF}..HEAD" 2>/dev/null || true)
           {
             echo "# Code: ${ISSUE_TITLE}"
             echo ""
             echo "Pull request opened for #${ISSUE_NUMBER}: ${PR_URL} (\`${BRANCH_NAME}\`${HEAD_SHA:+ @ \`${HEAD_SHA}\`})"
-            if [ -n "$DIFF_STAT" ]; then
-              echo ""
-              echo "## Changed Files"
-              echo '```text'
-              echo "$DIFF_STAT"
-              echo '```'
-            fi
-            if [ -s pr.md ]; then
-              echo ""
-              cat pr.md
-            fi
             if [ -s "$RUNNER_TEMP/copilot-code.log" ]; then
               echo ""
-              echo "<details><summary>Code Agent output (last 40 lines)</summary>"
-              echo ""
-              echo '```text'
-              tail -n 40 "$RUNNER_TEMP/copilot-code.log"
-              echo '```'
-              echo "</details>"
+              cat "$RUNNER_TEMP/copilot-code.log"
             fi
             if [ -s "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md" ]; then
               cat "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md"
@@ -1041,12 +1051,6 @@ jobs:
           TARGET_STATUS=Code bash -eo pipefail "$RUNNER_TEMP/code-project-status.sh"
           gh issue edit "$ISSUE_NUMBER" --remove-label "1-think,2-plan,3-code,4-prove,5-release,pause:code" --add-assignee "@me" || true
           gh pr edit "$PR_NUMBER" --add-assignee "@me" || true
-          gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Paused after Code for Manual PR Validation**
-
-          Pull Request #${PR_NUMBER} (${PR_URL}) is open and ready for your review.
-          - **Run Prove & pause before merge:** Add the **\`4-prove\`** label to this issue to run the 8 Prove controls and independent review without merging.
-          - **Run Prove & auto-merge:** Add the **\`5-release\`** label to this issue (or run \`Pipeline - Prove\` for PR #${PR_NUMBER}) to run Prove, merge, and release automatically.
-          - **Manual merge:** Review and merge PR #${PR_NUMBER} directly on GitHub."
 
       - name: Upload code-spec artifact for Prove workflow
         id: handoff
@@ -1100,7 +1104,6 @@ jobs:
               fi
               echo ""
               echo "- **Workflow run:** ${RUN_URL}"
-              echo "- **Next steps:** Inspect the failure details above (or adjust the \`# Plan:\` specification / issue \`Model\` & \`Effort\` fields), then re-add \`3-code\`, \`4-prove\`, or \`5-release\` to retry."
               if [ -s "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md" ]; then
                 cat "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md"
               fi

@@ -231,9 +231,9 @@ class WorkflowsTest < Minitest::Test
 
   def test_every_copilot_invocation_uses_expected_step_model
     expected_models = {
-      'pipeline-think.yml: Fetch issue context and run Thinker agent' => ['${ISSUE_AI_MODEL:-claude-sonnet-5.5}'],
-      'pipeline-plan.yml: Fetch issue context and run Planner agent' => ['${ISSUE_AI_MODEL:-claude-sonnet-5.5}'],
-      'pipeline-code.yml: Run Code Agent to implement plan.md and prepare pr.md' => ['${ISSUE_AI_MODEL:-claude-sonnet-5.5}'],
+      'pipeline-think.yml: Fetch issue context and run Thinker agent' => ['${ISSUE_AI_MODEL:-claude-sonnet-5.5}', '${ISSUE_AI_MODEL:-claude-sonnet-5.5}'],
+      'pipeline-plan.yml: Fetch issue context and run Planner agent' => ['${ISSUE_AI_MODEL:-claude-sonnet-5.5}', '${ISSUE_AI_MODEL:-claude-sonnet-5.5}'],
+      'pipeline-code.yml: Run Code Agent to implement plan.md and prepare pr.md' => ['${ISSUE_AI_MODEL:-claude-sonnet-5.5}', '${ISSUE_AI_MODEL:-claude-sonnet-5.5}'],
       'pipeline-prove.yml: Run Prove validation and auto-remediation loop' => ['${ISSUE_AI_MODEL:-claude-sonnet-5.5}', '${ISSUE_AI_MODEL:-claude-sonnet-5.5}'],
       'pipeline-prove.yml: Auto-release merged @1pizzateam/* library version' => ['gpt-6-luna'],
       'audit-runner.yml: Run ${{ inputs.agent }} agent' => ['gemini-3.8-flash']
@@ -260,7 +260,7 @@ class WorkflowsTest < Minitest::Test
         end
       end
     end
-    assert_equal 7, calls.length
+    assert_equal 10, calls.length
     assert_equal expected_models, actual_models
   end
 
@@ -302,6 +302,7 @@ class WorkflowsTest < Minitest::Test
         assert_equal paused.to_s, output.fetch('paused'), "#{phase} with #{label}"
         edits = @calls.select { |args| args.first(2) == %w[issue edit] }
         assert_equal paused ? 1 : 0, edits.length
+        assert_empty(@calls.select { |args| args.first(2) == %w[issue comment] })
         if paused
           edit = edits.first
           refute edit.include?('--add-label')
@@ -494,6 +495,7 @@ class WorkflowsTest < Minitest::Test
       assert_includes body, "⚠️ **#{phase.capitalize} failed"
       assert_includes body, 'needs:developer'
       assert_includes body, 'https://github.com/test-owner/test-repo/actions/runs/123'
+      refute_includes body, 'Next steps:'
       assert_empty dispatches
     end
   end
@@ -1830,7 +1832,7 @@ class WorkflowsTest < Minitest::Test
     committed_files = git_command('diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD').lines.map(&:strip)
     assert_equal ['src/crate.js'], committed_files
 
-    # 3. Successful Code PR creation posts # Code: summary with changed files, pr.md, and Code Agent output
+    # 3. Successful Code PR creation posts # Code: comment with PR link and untouched Code Agent output
     status_script = status_step('code', 'Code').fetch('run').split("<<'STATUS_SCRIPT'\n", 2).last.split("\nSTATUS_SCRIPT", 2).first
     File.write(File.join(@directory, 'code-project-status.sh'), status_script)
     pr_step = steps('code').find { |item| item['name'] == 'Enter Prove and create or update Pull Request' }
@@ -1854,11 +1856,10 @@ class WorkflowsTest < Minitest::Test
     code_comment_body = File.read(code_comment_call[code_comment_call.index('--body-file') + 1])
     assert_includes code_comment_body, '# Code: Add crates'
     assert_includes code_comment_body, 'Pull request opened for #42:'
-    assert_includes code_comment_body, '## Changed Files'
-    assert_includes code_comment_body, 'src/crate.js'
-    assert_includes code_comment_body, 'valid pr body'
-    assert_includes code_comment_body, '<details><summary>Code Agent output (last 40 lines)</summary>'
-    assert_includes code_comment_body, 'Implemented src/crate.js'
+    assert_includes code_comment_body, "Implemented src/crate.js\nAll tests pass"
+    refute_includes code_comment_body, '## Changed Files'
+    refute_includes code_comment_body, 'valid pr body'
+    refute_includes code_comment_body, '<details>'
   end
 
   def test_audit_runner_creates_one_issue_per_finding_and_adds_to_project
@@ -2363,5 +2364,110 @@ class WorkflowsTest < Minitest::Test
       out = run_step(step(phase, 'checkpoint'), scenario([]))
       assert_equal 'true', out.fetch('paused'), "#{phase} checkpoint must pause when all stage labels were removed"
     end
+  end
+
+  def test_agents_auto_resume_session_when_copilot_exits_early_without_output
+    calls_file = File.join(@directory, 'copilot_calls.jsonl')
+    copilot_bin = File.join(@directory, 'bin/copilot')
+    File.write(copilot_bin, <<~RUBY)
+      #!#{RbConfig.ruby}
+      require 'fileutils'
+      require 'json'
+
+      File.open(#{calls_file.inspect}, 'a') { |f| f.puts(JSON.generate(ARGV)) }
+      resume_arg = ARGV.find { |a| a.start_with?('--resume=') }
+      agent_arg = ARGV.find { |a| a.start_with?('--agent=') }&.split('=', 2)&.last
+
+      if resume_arg.nil?
+        puts "Reading files..."
+        puts "Resume     copilot --resume=1ef982ba-2ce3-426c-a081-08a8860953ec"
+        exit 0
+      end
+
+      case agent_arg
+      when 'think'
+        FileUtils.mkdir_p('specs/issue-42')
+        File.write('specs/issue-42/think.md', "# Think: controls\\n")
+        puts "Wrote think.md on resumed turn"
+      when 'plan'
+        FileUtils.mkdir_p('specs/issue-42')
+        File.write('specs/issue-42/plan.md', "# Plan: controls\\n")
+        puts "Wrote plan.md on resumed turn"
+      when 'code'
+        FileUtils.mkdir_p('src')
+        File.write('src/controls.js', "export const controls = true;\\n")
+        puts "Implemented src/controls.js on resumed turn"
+      end
+    RUBY
+    File.chmod(0o755, copilot_bin)
+    printf_exec = ENV.fetch('PATH').split(File::PATH_SEPARATOR)
+                     .map { |dir| File.join(dir, 'printf') }
+                     .find { |candidate| File.executable?(candidate) && !File.directory?(candidate) }
+    File.symlink(printf_exec, File.join(@directory, 'bin/printf')) if printf_exec && !File.exist?(File.join(@directory, 'bin/printf'))
+
+    data = scenario(['1-think'])
+    env_vars = {
+      'ISSUE_AI_MODEL' => 'gemini-3.8-flash',
+      'ISSUE_AI_EFFORT' => 'medium',
+      'BRANCH_NAME' => 'feature/issue-42-test',
+      'BASE_REF' => 'main'
+    }
+
+    # 1. Think auto-resumes with the same model and effort when initial turn exits 0 without think.md
+    FileUtils.rm_f(calls_file)
+    FileUtils.rm_rf(File.join(@directory, 'specs/issue-42'))
+    think_step = steps('think').find { |item| item['name'] == 'Fetch issue context and run Thinker agent' }
+    run_step(think_step, data, env_vars)
+    think_calls = File.readlines(calls_file).map { |l| JSON.parse(l) }
+    assert_equal 2, think_calls.length
+    assert_includes think_calls[0], '--model=gemini-3.8-flash'
+    assert_includes think_calls[0], '--reasoning-effort=medium'
+    refute think_calls[0].any? { |a| a.start_with?('--resume=') }
+    assert_includes think_calls[1], '--model=gemini-3.8-flash'
+    assert_includes think_calls[1], '--reasoning-effort=medium'
+    assert_includes think_calls[1], '--resume=1ef982ba-2ce3-426c-a081-08a8860953ec'
+    assert File.file?(File.join(@directory, 'specs/issue-42/think.md'))
+
+    # 2. Plan auto-resumes with the same model and effort when initial turn exits 0 without plan.md
+    FileUtils.rm_f(calls_file)
+    FileUtils.rm_f(File.join(@directory, 'specs/issue-42/plan.md'))
+    plan_step = steps('plan').find { |item| item['name'] == 'Fetch issue context and run Planner agent' }
+    run_step(plan_step, data, env_vars)
+    plan_calls = File.readlines(calls_file).map { |l| JSON.parse(l) }
+    assert_equal 2, plan_calls.length
+    assert_includes plan_calls[1], '--model=gemini-3.8-flash'
+    assert_includes plan_calls[1], '--reasoning-effort=medium'
+    assert_includes plan_calls[1], '--resume=1ef982ba-2ce3-426c-a081-08a8860953ec'
+    assert File.file?(File.join(@directory, 'specs/issue-42/plan.md'))
+
+    # 3. Code auto-resumes with the same model and effort when initial turn exits 0 without commits or in-scope changes
+    prepare_stale_pr
+    FileUtils.mkdir_p(File.join(@repository, 'specs/issue-42'))
+    git_exec = ENV.fetch('PATH').split(File::PATH_SEPARATOR)
+                  .map { |dir| File.join(dir, 'git') }
+                  .find { |candidate| File.executable?(candidate) && !File.directory?(candidate) }
+    File.symlink(git_exec, File.join(@directory, 'bin/git')) if git_exec && !File.exist?(File.join(@directory, 'bin/git'))
+    FileUtils.rm_f(calls_file)
+    git_command('checkout', '-B', 'feature/issue-42-test', 'refs/remotes/origin/main')
+    code_step = steps('code').find { |item| item['name'] == 'Run Code Agent to implement plan.md and prepare pr.md' }
+    code_env = @environment.merge(resolve_step_environment(code_step)).merge(env_vars)
+    File.write(@environment.fetch('TEST_SCENARIO'), JSON.generate(data))
+    output, error, status = Open3.capture3(
+      code_env, File.join(@directory, 'bin/bash'), '--noprofile', '--norc', '-e', '-o', 'pipefail',
+      stdin_data: code_step.fetch('run'), chdir: @repository, unsetenv_others: true
+    )
+    assert status.success?, "#{output}\n#{error}"
+    code_calls = File.readlines(calls_file).map { |l| JSON.parse(l) }
+    assert_equal 2, code_calls.length
+    assert_includes code_calls[0], '--model=gemini-3.8-flash'
+    assert_includes code_calls[0], '--reasoning-effort=medium'
+    refute code_calls[0].any? { |a| a.start_with?('--resume=') }
+    assert_includes code_calls[1], '--model=gemini-3.8-flash'
+    assert_includes code_calls[1], '--reasoning-effort=medium'
+    assert_includes code_calls[1], '--resume=1ef982ba-2ce3-426c-a081-08a8860953ec'
+    assert File.file?(File.join(@repository, 'src/controls.js'))
+    code_log = File.read(File.join(@directory, 'copilot-code.log'))
+    assert_includes code_log, 'Reading files...'
+    assert_includes code_log, 'Implemented src/controls.js on resumed turn'
   end
 end
