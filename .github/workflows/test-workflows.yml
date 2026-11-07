@@ -5,10 +5,12 @@ on:
     paths:
       - '.github/workflows/**'
       - 'tests/**'
+      - 'skills/release-bump/**'
   pull_request:
     paths:
       - '.github/workflows/**'
       - 'tests/**'
+      - 'skills/release-bump/**'
   workflow_dispatch:
 
 permissions:
@@ -38,3 +40,10 @@ jobs:
           actionlint -shellcheck= .github/workflows/*.yml
       - name: Run workflow regression tests
         run: ruby tests/workflows_test.rb
+      - name: Run release bump classifier tests
+        env:
+          TS_FROM: ${{ runner.temp }}/ts
+        run: |
+          mkdir -p "$TS_FROM"
+          npm install --prefix "$TS_FROM" --no-audit --no-fund typescript
+          node --test tests/classify-bump.test.mjs

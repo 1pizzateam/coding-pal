@@ -1385,13 +1385,60 @@ jobs:
           CURRENT_VERSION=$(node -p "require('./package.json').version")
           ISSUE_TITLE=$(gh issue view "$ISSUE_NUMBER" --json title --jq '.title // ""')
 
-          if echo "$CURRENT_VERSION" | grep -qE -- '-(alpha|beta|rc)'; then
-            BUMP_TYPE="prerelease"
-          elif echo "$ISSUE_TITLE" | grep -qiE '^fix(\(|:|\s)'; then
-            BUMP_TYPE="patch"
+          # Decide the bump from what actually ships: build the candidate, then compare its npm
+          # tarball with the currently published one (see .agents/skills/release-bump/SKILL.md).
+          PKG_NAME=$(node -p "require('./package.json').name")
+          ISSUE_LABELS=$(gh issue view "$ISSUE_NUMBER" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null || true)
+          PR_LABELS=$(gh pr view "$PR_NUMBER" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null || true)
+          ALL_LABELS="${ISSUE_LABELS},${PR_LABELS}"
+
+          if node -p "Boolean(require('./package.json').scripts?.['build:lib'])" | grep -q true; then
+            npm run build:lib
           else
-            BUMP_TYPE="minor"
+            npm run build
           fi
+
+          BUMP_DIR=$(mktemp -d)
+          mkdir -p "${BUMP_DIR}/next" "${BUMP_DIR}/prev" "${BUMP_DIR}/next-tgz" "${BUMP_DIR}/prev-tgz"
+          npm pack --ignore-scripts --silent --pack-destination "${BUMP_DIR}/next-tgz" >/dev/null
+          tar -xzf "${BUMP_DIR}"/next-tgz/*.tgz -C "${BUMP_DIR}/next" --strip-components=1
+
+          PREV_ARGS=()
+          if npm pack "${PKG_NAME}@${CURRENT_VERSION}" --ignore-scripts --silent --pack-destination "${BUMP_DIR}/prev-tgz" >/dev/null 2>"${BUMP_DIR}/prev-pack.err"; then
+            tar -xzf "${BUMP_DIR}"/prev-tgz/*.tgz -C "${BUMP_DIR}/prev" --strip-components=1
+            PREV_ARGS=(--prev "${BUMP_DIR}/prev")
+          elif grep -qE 'E404|404 Not Found' "${BUMP_DIR}/prev-pack.err"; then
+            echo "No published ${PKG_NAME}@${CURRENT_VERSION} found; classifying without a baseline."
+          else
+            cat "${BUMP_DIR}/prev-pack.err" >&2
+            echo "::error::Could not fetch the published baseline ${PKG_NAME}@${CURRENT_VERSION} from the registry; refusing to guess the version bump."
+            exit 1
+          fi
+
+          DECISION=$(node .agents/skills/release-bump/scripts/classify-bump.mjs \
+            --next "${BUMP_DIR}/next" ${PREV_ARGS[@]+"${PREV_ARGS[@]}"} \
+            --current-version "$CURRENT_VERSION" \
+            --title "$ISSUE_TITLE" \
+            --labels "$ALL_LABELS" \
+            --ts-from "$PWD")
+          echo "$DECISION"
+          BUMP_TYPE=$(echo "$DECISION" | jq -r '.bump')
+          BUMP_REASON=$(echo "$DECISION" | jq -r '.reason')
+          SHIPPED_SUMMARY=$(echo "$DECISION" | jq -r '(.shippedChanges | map("- " + .) | join("\n"))')
+
+          if [ "$(echo "$DECISION" | jq -r '.needsConfirmation')" = "true" ]; then
+            gh issue comment "$ISSUE_NUMBER" --body "$(printf '# Release blocked: breaking API change needs confirmation\nThe shipped API diff for `%s` is **major**, but nothing in the ticket declares it breaking.\n\n`%s`\n\nAdd the `breaking` label (or `release:major`) to this issue or PR, then re-run the release.' "$PKG_NAME" "$BUMP_REASON")" || true
+            echo "::error::Major API change detected without a breaking label/title marker. Add the 'breaking' label and re-run."
+            exit 1
+          fi
+
+          if [ "$BUMP_TYPE" = "none" ]; then
+            gh issue comment "$ISSUE_NUMBER" --body "$(printf '# No release\nNothing shipped in `%s` changed versus the published `%s` (docs, CI or test-only changes), so no new version was released.\n\n`%s`' "$PKG_NAME" "$CURRENT_VERSION" "$BUMP_REASON")" || true
+            echo "No shipped change versus ${PKG_NAME}@${CURRENT_VERSION}; skipping release."
+            exit 0
+          fi
+
+          gh issue comment "$ISSUE_NUMBER" --body "$(printf '# Release decision: %s\n`%s`\n\nShipped changes versus `%s@%s`:\n%s' "$BUMP_TYPE" "$BUMP_REASON" "$PKG_NAME" "$CURRENT_VERSION" "$SHIPPED_SUMMARY")" || true
 
           npm version "$BUMP_TYPE" --no-git-tag-version
           NEW_VERSION=$(node -p "require('./package.json').version")
@@ -1532,7 +1579,7 @@ jobs:
           git add package.json CHANGELOG.md README.md
           [ -f package-lock.json ] && git add package-lock.json
           [ -d website ] && git add website
-          git commit -m "chore(release): ${TAG_NAME} (for #${ISSUE_NUMBER})"
+          git commit -m "chore(release): ${TAG_NAME} (for #${ISSUE_NUMBER})" -m "Version bump: ${BUMP_REASON}"
           git tag "$TAG_NAME"
           git push origin "$BASE_REF" --follow-tags
 
