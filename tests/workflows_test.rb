@@ -1848,7 +1848,7 @@ class WorkflowsTest < Minitest::Test
     committed_files = git_command('diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD').lines.map(&:strip)
     assert_equal ['src/crate.js'], committed_files
 
-    # 3. Successful Code PR creation posts # Code: comment with PR link and untouched Code Agent output
+    # 3. Successful Code PR creation posts # Code: comment with PR link and final Code Agent output summary (excluding tool logs and CLI footer)
     status_script = status_step('code', 'Code').fetch('run').split("<<'STATUS_SCRIPT'\n", 2).last.split("\nSTATUS_SCRIPT", 2).first
     File.write(File.join(@directory, 'code-project-status.sh'), status_script)
     pr_step = steps('code').find { |item| item['name'] == 'Enter Prove and create or update Pull Request' }
@@ -1856,7 +1856,10 @@ class WorkflowsTest < Minitest::Test
     File.write(@environment.fetch('TEST_SCENARIO'), JSON.generate(pr_data))
     File.write(@environment.fetch('TEST_CALLS'), '')
     File.write(@environment.fetch('TEST_VIOLATIONS'), '')
-    File.write(File.join(@directory, 'copilot-code.log'), "Implemented src/crate.js\nAll tests pass\n")
+    File.write(
+      File.join(@directory, 'copilot-code.log'),
+      "● Read plan.md\n  │ specs/issue-42/plan.md\n  └ 10 lines read\n\nI will now implement src/crate.js.\n\n● Create src/crate.js +1\n\nImplemented src/crate.js\nAll tests pass\n\nChanges    +10 -0\nAI Credits 1.23 (10s)\nTokens     ↑ 10k • ↓ 1k\nResume     copilot --resume=12345678-1234-1234-1234-123456789abc\n"
+    )
     pr_env = @environment.merge(resolve_step_environment(pr_step)).merge(
       'PATH' => "#{@environment.fetch('PATH')}#{File::PATH_SEPARATOR}#{ENV.fetch('PATH')}",
       'BASE_REF' => 'main', 'BRANCH_NAME' => 'feature/issue-42-crates'
@@ -1873,6 +1876,9 @@ class WorkflowsTest < Minitest::Test
     assert_includes code_comment_body, '# Code: Add crates'
     assert_includes code_comment_body, 'Pull request opened for #42:'
     assert_includes code_comment_body, "Implemented src/crate.js\nAll tests pass"
+    refute_includes code_comment_body, '● Read plan.md'
+    refute_includes code_comment_body, 'I will now implement src/crate.js.'
+    refute_includes code_comment_body, 'copilot --resume='
     refute_includes code_comment_body, '## Changed Files'
     refute_includes code_comment_body, 'valid pr body'
     refute_includes code_comment_body, '<details>'

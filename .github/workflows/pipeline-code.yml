@@ -703,7 +703,7 @@ jobs:
 
           export COPILOT_OTEL_ENABLED="true"
           export COPILOT_OTEL_FILE_EXPORTER_PATH="${RUNNER_TEMP}/copilot-otel.jsonl"
-          rm -rf "${COPILOT_HOME:-$HOME/.copilot}/session-state" "$COPILOT_OTEL_FILE_EXPORTER_PATH" "$RUNNER_TEMP/copilot-code.log" 2>/dev/null || true
+          rm -rf "${COPILOT_HOME:-$HOME/.copilot}/session-state" "$COPILOT_OTEL_FILE_EXPORTER_PATH" "$RUNNER_TEMP/copilot-code.log" "$RUNNER_TEMP/copilot-code-summary.md" 2>/dev/null || true
 
           COPILOT_EXIT=0
           copilot --model="${ISSUE_AI_MODEL:-claude-sonnet-5.5}" --reasoning-effort="${ISSUE_AI_EFFORT:-medium}" --agent="code" --allow-all-tools \
@@ -786,6 +786,17 @@ jobs:
               }
             ' 2>/dev/null || echo '{"step":"Code","model":"auto","input_tokens":0,"output_tokens":0,"cached_tokens":0,"requests":1,"cost_usd":0}'
           )
+          {
+            for f in "${COPILOT_HOME:-$HOME/.copilot}"/session-state/*/events.jsonl; do
+              [ -f "$f" ] && cat "$f" || true
+            done
+          } | jq -sr '
+            [ .[]
+              | select(.type? == "assistant.message")
+              | .data.content? // empty
+              | select(type == "string" and (gsub("\\s+"; "") | length > 0))
+            ] | last // empty | sub("^\\s+"; "") | sub("\\s+$"; "")
+          ' > "$RUNNER_TEMP/copilot-code-summary.md" 2>/dev/null || true
           rm -rf "${COPILOT_HOME:-$HOME/.copilot}"/session-state/* "${COPILOT_OTEL_FILE_EXPORTER_PATH}"
           echo "$STEP_COST_JSON" >> "${SPEC_DIR}/ai-cost.jsonl"
           echo "$STEP_COST_JSON" > "${SPEC_DIR}/ai-cost-pending.jsonl"
@@ -1009,13 +1020,32 @@ jobs:
           echo "PR_URL=${PR_URL}" >> "$GITHUB_ENV"
           CODE_COMMENT_FILE="$RUNNER_TEMP/code-comment.md"
           HEAD_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "")
+          CODE_SUMMARY=""
+          if [ -s "$RUNNER_TEMP/copilot-code-summary.md" ]; then
+            CODE_SUMMARY=$(cat "$RUNNER_TEMP/copilot-code-summary.md")
+          elif [ -s "$RUNNER_TEMP/copilot-code.log" ]; then
+            CODE_SUMMARY=$(jq -Rsr '
+              split("\n")
+              | map(select(test("^(Changes\\s{2,}|AI Credits\\s+|Tokens\\s{2,}|Resume\\s{2,}|Total usage est:|Usage by model:|Total time:|Total code changes:)") | not))
+              | reduce .[] as $line (
+                  [""];
+                  if ($line | test("^([●✗/] |  [│└]|    Failed with exit code [0-9]+)")) then
+                    if (.[-1] | gsub("\\s+"; "") | length) > 0 then . + [""] else . end
+                  else
+                    .[-1] += (if (.[-1] | length) > 0 then "\n" else "" end) + $line
+                  end
+                )
+              | [ .[] | sub("^\\s+"; "") | sub("\\s+$"; "") | select(length > 0) ]
+              | last // empty
+            ' "$RUNNER_TEMP/copilot-code.log" 2>/dev/null || true)
+          fi
           {
             echo "# Code: ${ISSUE_TITLE}"
             echo ""
             echo "Pull request opened for #${ISSUE_NUMBER}: ${PR_URL} (\`${BRANCH_NAME}\`${HEAD_SHA:+ @ \`${HEAD_SHA}\`})"
-            if [ -s "$RUNNER_TEMP/copilot-code.log" ]; then
+            if [ -n "$CODE_SUMMARY" ]; then
               echo ""
-              cat "$RUNNER_TEMP/copilot-code.log"
+              printf "%s\n" "$CODE_SUMMARY"
             fi
             if [ -s "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md" ]; then
               cat "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md"
