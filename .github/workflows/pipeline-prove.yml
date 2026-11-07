@@ -1398,6 +1398,12 @@ jobs:
             npm run build
           fi
 
+          # The post-bump rebuild below is only needed when the built output embeds the version.
+          REBUILD_AFTER_BUMP=false
+          if [ ! -d dist ] || grep -rqF -- "$CURRENT_VERSION" dist; then
+            REBUILD_AFTER_BUMP=true
+          fi
+
           BUMP_DIR=$(mktemp -d)
           mkdir -p "${BUMP_DIR}/next" "${BUMP_DIR}/prev" "${BUMP_DIR}/next-tgz" "${BUMP_DIR}/prev-tgz"
           npm pack --ignore-scripts --silent --pack-destination "${BUMP_DIR}/next-tgz" >/dev/null
@@ -1496,10 +1502,14 @@ jobs:
             }
           ' "$NEW_VERSION" "$RELEASE_DATE" "$SPEC_DIR" "$ISSUE_TITLE"
 
-          if node -p "Boolean(require('./package.json').scripts?.['build:lib'])" | grep -q true; then
-            npm run build:lib
+          if [ "$REBUILD_AFTER_BUMP" = "true" ]; then
+            if node -p "Boolean(require('./package.json').scripts?.['build:lib'])" | grep -q true; then
+              npm run build:lib
+            else
+              npm run build
+            fi
           else
-            npm run build
+            echo "Built output does not embed ${CURRENT_VERSION}; reusing the pre-bump build."
           fi
 
           if ! node .agents/skills/release-readiness/scripts/verify-release-readiness.mjs \
