@@ -97,7 +97,8 @@ class WorkflowsTest < Minitest::Test
   def scenario(labels = [], comments: [], prs: [], queue: [], **extra)
     {
       'issue' => { 'labels' => labels.map { |name| { 'name' => name } },
-                   'body' => '', 'comments' => comments.map { |body| { 'body' => body } } },
+                   'body' => '',
+                   'comments' => comments.each_with_index.map { |entry, idx| entry.is_a?(Hash) ? entry : { 'id' => "IC_#{idx + 1}", 'body' => entry } } },
       'prs' => prs, 'queue' => queue
     }.merge(extra.transform_keys(&:to_s))
   end
@@ -2493,5 +2494,112 @@ class WorkflowsTest < Minitest::Test
     code_log = File.read(File.join(@directory, 'copilot-code.log'))
     assert_includes code_log, 'Reading files...'
     assert_includes code_log, 'Implemented src/controls.js on resumed turn'
+  end
+
+  def test_stage_reruns_update_existing_think_plan_code_and_prove_comments_in_place
+    FileUtils.mkdir_p(File.join(@directory, 'specs/issue-42'))
+
+    existing_think = "# Think: v1\n\n---\n<!-- ai-cost-step:{\"step\":\"Think\",\"model\":\"claude-sonnet-5.5\",\"input_tokens\":1000,\"output_tokens\":200,\"cached_tokens\":0,\"requests\":1,\"cost_usd\":0.01} -->\n💰 **AI Cost (Think):** `$0.0100`\n<!-- stage-rev:1 -->"
+    existing_plan = "# Plan: v1\n\n---\n<!-- ai-cost-step:{\"step\":\"Plan\",\"model\":\"claude-sonnet-5.5\",\"input_tokens\":2000,\"output_tokens\":400,\"cached_tokens\":0,\"requests\":1,\"cost_usd\":0.02} -->\n💰 **AI Cost (Plan):** `$0.0200`\n<!-- stage-rev:2 -->"
+    existing_code = "# Code: v1\n\nPull request opened for #42: https://example.test/pr/99 (`feature/issue-42-crates`)\n\n---\n<!-- ai-cost-step:{\"step\":\"Code\",\"model\":\"claude-sonnet-5.5\",\"input_tokens\":3000,\"output_tokens\":600,\"cached_tokens\":0,\"requests\":1,\"cost_usd\":0.03} -->\n💰 **AI Cost (Code):** `$0.0300`\n<!-- stage-rev:3 -->"
+    existing_prove = "# Prove: v1\n\n---\n<!-- ai-cost-step:{\"step\":\"Prove\",\"model\":\"claude-sonnet-5.5\",\"input_tokens\":1500,\"output_tokens\":300,\"cached_tokens\":0,\"requests\":1,\"cost_usd\":0.015} -->\n💰 **AI Cost (Prove):** `$0.0150`\n<!-- stage-rev:4 -->"
+
+    comments = [existing_think, existing_plan, existing_code, existing_prove]
+
+    # 1. Re-running Think updates IC_1 in-place, preserves prior Think cost tag, and bumps stage-rev to 5
+    File.write(File.join(@directory, 'specs/issue-42/think.md'), "# Think: v2\n\n## Business Need & Outcome\nUpdated think.")
+    File.write(File.join(@directory, 'specs/issue-42/ai-cost-step.md'), "\n\n---\n<!-- ai-cost-step:{\"step\":\"Think\",\"model\":\"claude-sonnet-5.5\",\"input_tokens\":1200,\"output_tokens\":250,\"cached_tokens\":0,\"requests\":1,\"cost_usd\":0.012} -->\n💰 **AI Cost (Think):** `$0.0120` · **Cumulative:** `$0.0870`")
+    think_comment_step = steps('think').find { |item| item['name'] == 'Comment think.md on issue' }
+    run_step(think_comment_step, scenario(['1-think'], comments: comments))
+    refute @calls.any? { |args| args.first(2) == %w[issue comment] }, 'Re-running Think must not add a new comment'
+    think_update = @calls.find { |args| args.any? { |a| a.include?('updateIssueComment') } }
+    refute_nil think_update
+    assert_includes think_update, 'id=IC_1'
+    updated_think_body = File.read(think_update.find { |a| a.start_with?('body=@') }.delete_prefix('body=@'))
+    assert_includes updated_think_body, '# Think: v2'
+    assert_includes updated_think_body, '"cost_usd":0.01}'
+    assert_includes updated_think_body, '"cost_usd":0.012}'
+    assert_includes updated_think_body, '<!-- stage-rev:5 -->'
+
+    # Because updated Think (stage-rev:5 at index 0) is newer than Plan v1 (stage-rev:2 at index 1),
+    # Smart Resume invalidates Plan v1 and resumes at Plan rather than jumping to Code
+    comments_after_think = [updated_think_body, existing_plan, existing_code, existing_prove]
+    prs = [{ 'number' => 99, 'headRefName' => 'feature/issue-42-crates', 'labels' => [] }]
+    resume_out = run_step(step('think', 'resume'), scenario(['5-release'], comments: comments_after_think, prs: prs))
+    assert_equal 'plan', resume_out.fetch('resumed_stage')
+    assert_equal "# Think: v2\n\n## Business Need & Outcome\nUpdated think.\n", File.read(File.join(@directory, 'specs/issue-42/think.md'))
+
+    # 2. Re-running Plan updates IC_2 in-place, preserves prior Plan cost tag, and bumps stage-rev to 6
+    File.write(File.join(@directory, 'specs/issue-42/plan.md'), "# Plan: v2\n\n## Implementation Checklist\nUpdated plan.")
+    File.write(File.join(@directory, 'specs/issue-42/ai-cost-step.md'), "\n\n---\n<!-- ai-cost-step:{\"step\":\"Plan\",\"model\":\"claude-sonnet-5.5\",\"input_tokens\":2200,\"output_tokens\":450,\"cached_tokens\":0,\"requests\":1,\"cost_usd\":0.022} -->\n💰 **AI Cost (Plan):** `$0.0220`")
+    plan_comment_step = steps('plan').find { |item| item['name'] == 'Comment plan.md on issue' }
+    run_step(plan_comment_step, scenario(['2-plan'], comments: comments_after_think))
+    refute @calls.any? { |args| args.first(2) == %w[issue comment] }, 'Re-running Plan must not add a new comment'
+    plan_update = @calls.find { |args| args.any? { |a| a.include?('updateIssueComment') } }
+    refute_nil plan_update
+    assert_includes plan_update, 'id=IC_2'
+    updated_plan_body = File.read(plan_update.find { |a| a.start_with?('body=@') }.delete_prefix('body=@'))
+    assert_includes updated_plan_body, '# Plan: v2'
+    assert_includes updated_plan_body, '"cost_usd":0.02}'
+    assert_includes updated_plan_body, '"cost_usd":0.022}'
+    assert_includes updated_plan_body, '<!-- stage-rev:6 -->'
+
+    # Because updated Plan (stage-rev:6 at index 1) is newer than Code v1 (stage-rev:3 at index 2),
+    # Smart Resume detects that the existing PR spec is stale and dispatches Code instead of Prove
+    comments_after_plan = [updated_think_body, updated_plan_body, existing_code, existing_prove]
+    resume_after_plan = run_step(step('think', 'resume'), scenario(['5-release'], comments: comments_after_plan, prs: prs))
+    assert_equal 'code', resume_after_plan.fetch('resumed_stage')
+    assert_equal [['workflow', 'run', 'code.yml', '-f', 'issue_number=42']], dispatches
+
+    # 3. Re-running Code updates IC_3 in-place, preserves prior Code cost tag, and bumps stage-rev to 7
+    prepare_stale_pr
+    status_script = status_step('code', 'Code').fetch('run').split("<<'STATUS_SCRIPT'\n", 2).last.split("\nSTATUS_SCRIPT", 2).first
+    File.write(File.join(@directory, 'code-project-status.sh'), status_script)
+    FileUtils.mkdir_p(File.join(@repository, 'specs/issue-42'))
+    File.write(File.join(@repository, 'pr.md'), "valid pr body\n")
+    File.write(File.join(@repository, 'specs/issue-42/ai-cost-step.md'), "\n\n---\n<!-- ai-cost-step:{\"step\":\"Code\",\"model\":\"claude-sonnet-5.5\",\"input_tokens\":3500,\"output_tokens\":700,\"cached_tokens\":0,\"requests\":1,\"cost_usd\":0.035} -->\n💰 **AI Cost (Code):** `$0.0350`")
+    File.write(File.join(@directory, 'copilot-code-summary.md'), "Updated implementation for v2.")
+    pr_step = steps('code').find { |item| item['name'] == 'Enter Prove and create or update Pull Request' }
+    pr_data = scenario(['5-release'], comments: comments_after_plan, project: project, pr: { 'number' => 99, 'url' => 'https://example.test/pr/99' })
+    pr_data['issue']['title'] = 'Add crates'
+    File.write(@environment.fetch('TEST_SCENARIO'), JSON.generate(pr_data))
+    File.write(@environment.fetch('TEST_CALLS'), '')
+    File.write(@environment.fetch('TEST_VIOLATIONS'), '')
+    pr_env = @environment.merge(resolve_step_environment(pr_step)).merge(
+      'PATH' => "#{@environment.fetch('PATH')}#{File::PATH_SEPARATOR}#{ENV.fetch('PATH')}",
+      'BASE_REF' => 'main', 'BRANCH_NAME' => 'feature/issue-42-test'
+    )
+    pr_out, pr_err, pr_status = Open3.capture3(
+      pr_env, 'bash', '--noprofile', '--norc', '-eo', 'pipefail',
+      stdin_data: pr_step.fetch('run'), chdir: @repository, unsetenv_others: true
+    )
+    assert pr_status.success?, "#{pr_out}\n#{pr_err}"
+    pr_calls = File.readlines(@environment.fetch('TEST_CALLS')).map { |line| JSON.parse(line) }
+    refute pr_calls.any? { |args| args.first(2) == %w[issue comment] }, 'Re-running Code must not add a new issue comment'
+    code_update = pr_calls.find { |args| args.any? { |a| a.include?('updateIssueComment') } }
+    refute_nil code_update
+    assert_includes code_update, 'id=IC_3'
+    updated_code_body = File.read(code_update.find { |a| a.start_with?('body=@') }.delete_prefix('body=@'))
+    assert_includes updated_code_body, '# Code: Add crates'
+    assert_includes updated_code_body, 'Updated implementation for v2.'
+    assert_includes updated_code_body, '"cost_usd":0.03}'
+    assert_includes updated_code_body, '"cost_usd":0.035}'
+    assert_includes updated_code_body, '<!-- stage-rev:7 -->'
+
+    # 4. Re-running Prove updates IC_4 in-place, preserves prior Prove cost tag, and bumps stage-rev to 8
+    comments_after_code = [updated_think_body, updated_plan_body, updated_code_body, existing_prove]
+    File.write(File.join(@directory, 'specs/issue-42/prove.md'), "# Prove: v2\n\n## Verdict\n- **Status:** PASS")
+    File.write(File.join(@directory, 'specs/issue-42/ai-cost-step.md'), "\n\n---\n<!-- ai-cost-step:{\"step\":\"Prove\",\"model\":\"claude-sonnet-5.5\",\"input_tokens\":1600,\"output_tokens\":320,\"cached_tokens\":0,\"requests\":1,\"cost_usd\":0.016} -->\n💰 **AI Cost (Prove):** `$0.0160`")
+    prove_comment_step = steps('prove').find { |item| item['name'] == 'Approve validated Pull Request' }
+    run_step(prove_comment_step, scenario(['4-prove'], comments: comments_after_code))
+    refute @calls.any? { |args| args.first(2) == %w[issue comment] }, 'Re-running Prove must not add a new issue comment'
+    prove_update = @calls.find { |args| args.any? { |a| a.include?('updateIssueComment') } }
+    refute_nil prove_update
+    assert_includes prove_update, 'id=IC_4'
+    updated_prove_body = File.read(prove_update.find { |a| a.start_with?('body=@') }.delete_prefix('body=@'))
+    assert_includes updated_prove_body, '# Prove: v2'
+    assert_includes updated_prove_body, '"cost_usd":0.015}'
+    assert_includes updated_prove_body, '"cost_usd":0.016}'
+    assert_includes updated_prove_body, '<!-- stage-rev:8 -->'
   end
 end

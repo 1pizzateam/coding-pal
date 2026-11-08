@@ -94,9 +94,10 @@ jobs:
           HAS_PROVE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("4-prove") != null')
           HAS_RELEASE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("5-release") != null')
           ALREADY_COMPLETED=$(echo "$ISSUE_VIEW" | jq -r '
+            def rank: ([.value | scan("<!-- stage-rev:([0-9]+) -->") | .[0] | tonumber] | last) // .key;
             (.comments | map(.body) | to_entries) as $all |
-            ([ $all[] | select(.value | test("^# (Think|Plan):"; "m")) | .key ] | last // -1) as $last_spec_idx |
-            ([ $all[] | select(.value | test("^# (Prove:|Release:|Release report)"; "m")) | .key ] | last // -1) as $last_done_idx |
+            ([ $all[] | select(.value | test("^# (Think|Plan):"; "m")) | rank ] | max // -1) as $last_spec_idx |
+            ([ $all[] | select(.value | test("^# (Prove:|Release:|Release report)"; "m")) | rank ] | max // -1) as $last_done_idx |
             ($last_done_idx >= 0 and $last_done_idx > $last_spec_idx)
           ')
 
@@ -131,16 +132,21 @@ jobs:
                 fi
               fi
             fi
-            EXISTING_THINK=$(echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")')
+            EXISTING_THINK=$(echo "$ISSUE_VIEW" | jq -r '
+              def rank: ([.value | scan("<!-- stage-rev:([0-9]+) -->") | .[0] | tonumber] | last) // .key;
+              [(.comments // []) | map(.body) | to_entries[] | select(.value | test("^# Think:"; "m"))] | sort_by(rank) | last | .value // empty | sub("\\n*(?:---\\n+)?<!-- (?:ai-cost-step|stage-rev):[^\\n]*-->[\\s\\S]*$"; "")
+            ')
             EXISTING_PLAN=$(echo "$ISSUE_VIEW" | jq -r '
+              def rank: ([.value | scan("<!-- stage-rev:([0-9]+) -->") | .[0] | tonumber] | last) // .key;
               (.comments | map(.body) | to_entries) as $all |
-              ([ $all[] | select(.value | test("^# Think:"; "m")) | .key ] | last // -1) as $last_think_idx |
-              [ $all[] | select(.key > $last_think_idx and (.value | test("^# Plan:"; "m"))) | .value ] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")
+              ([ $all[] | select(.value | test("^# Think:"; "m")) | rank ] | max // -1) as $last_think_idx |
+              [ $all[] | select((rank) > $last_think_idx and (.value | test("^# Plan:"; "m"))) ] | sort_by(rank) | last | .value // empty | sub("\\n*(?:---\\n+)?<!-- (?:ai-cost-step|stage-rev):[^\\n]*-->[\\s\\S]*$"; "")
             ')
             EXISTING_PR_STALE_SPEC=$(echo "$ISSUE_VIEW" | jq -r '
+              def rank: ([.value | scan("<!-- stage-rev:([0-9]+) -->") | .[0] | tonumber] | last) // .key;
               (.comments | map(.body) | to_entries) as $all |
-              ([ $all[] | select(.value | test("^# (Think|Plan):"; "m")) | .key ] | last // -1) as $last_spec_idx |
-              ([ $all[] | select(.value | test("^Pull request opened for #"; "m")) | .key ] | last // -1) as $last_pr_idx |
+              ([ $all[] | select(.value | test("^# (Think|Plan):"; "m")) | rank ] | max // -1) as $last_spec_idx |
+              ([ $all[] | select(.value | test("^(# Code:|Pull request opened for #)"; "m")) | rank ] | max // -1) as $last_pr_idx |
               ($last_pr_idx >= 0 and $last_spec_idx > $last_pr_idx)
             ')
             EXISTING_PR_JSON=$(gh pr list --state open --json number,headRefName,mergeable,labels \
@@ -176,7 +182,10 @@ jobs:
             if [ -z "${ISSUE_VIEW:-}" ]; then
               ISSUE_VIEW=$(gh issue view "$ISSUE_NUMBER" --json title,body,labels,comments)
             fi
-            echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "") | sub("\\n+## Forge Asset Bindings\\r?\\n[\\s\\S]*?(?=\\n## |$)"; "")' > "$THINK_FILE"
+            echo "$ISSUE_VIEW" | jq -r '
+              def rank: ([.value | scan("<!-- stage-rev:([0-9]+) -->") | .[0] | tonumber] | last) // .key;
+              [(.comments // []) | map(.body) | to_entries[] | select(.value | test("^# Think:"; "m"))] | sort_by(rank) | last | .value // empty | sub("\\n*(?:---\\n+)?<!-- (?:ai-cost-step|stage-rev):[^\\n]*-->[\\s\\S]*$"; "") | sub("\\n+## Forge Asset Bindings\\r?\\n[\\s\\S]*?(?=\\n## |$)"; "")
+            ' > "$THINK_FILE"
           fi
 
           if [ ! -s "$PLAN_FILE" ]; then
@@ -185,9 +194,10 @@ jobs:
               ISSUE_VIEW=$(gh issue view "$ISSUE_NUMBER" --json title,body,labels,comments)
             fi
             echo "$ISSUE_VIEW" | jq -r '
+              def rank: ([.value | scan("<!-- stage-rev:([0-9]+) -->") | .[0] | tonumber] | last) // .key;
               (.comments | map(.body) | to_entries) as $all |
-              ([ $all[] | select(.value | test("^# Think:"; "m")) | .key ] | last // -1) as $last_think_idx |
-              [ $all[] | select(.key > $last_think_idx and (.value | test("^# Plan:"; "m"))) | .value ] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")
+              ([ $all[] | select(.value | test("^# Think:"; "m")) | rank ] | max // -1) as $last_think_idx |
+              [ $all[] | select((rank) > $last_think_idx and (.value | test("^# Plan:"; "m"))) ] | sort_by(rank) | last | .value // empty | sub("\\n*(?:---\\n+)?<!-- (?:ai-cost-step|stage-rev):[^\\n]*-->[\\s\\S]*$"; "")
             ' > "$PLAN_FILE"
           fi
 
@@ -1039,19 +1049,40 @@ jobs:
               | last // empty
             ' "$RUNNER_TEMP/copilot-code.log" 2>/dev/null || true)
           fi
+          COST_STEP_FILE="specs/issue-${ISSUE_NUMBER}/ai-cost-step.md"
+          COMMENTS_JSON=$(gh issue view "$ISSUE_NUMBER" --json comments 2>/dev/null || echo '{"comments":[]}')
+          EXISTING_COMMENT_ID=$(echo "$COMMENTS_JSON" | jq -r '[.comments[]? | select((.body // "") | test("^(# Code:|Pull request opened for #)"; "m"))] | last | .id // empty')
+          PRIOR_STEP_TAGS=$(echo "$COMMENTS_JSON" | jq -r '[.comments[]? | select((.body // "") | test("^(# Code:|Pull request opened for #)"; "m"))] | last | .body // "" | [scan("<!-- ai-cost-step:\\{[^\\n]*?\\} -->")] | join("\n")')
+          NEXT_STAGE_REV=$(echo "$COMMENTS_JSON" | jq -r '(([.comments[]? | .body // "" | scan("<!-- stage-rev:([0-9]+) -->") | .[0] | tonumber] + [(.comments // [] | length)]) | max // 0) + 1')
           {
             echo "# Code: ${ISSUE_TITLE}"
             echo ""
             echo "Pull request opened for #${ISSUE_NUMBER}: ${PR_URL} (\`${BRANCH_NAME}\`${HEAD_SHA:+ @ \`${HEAD_SHA}\`})"
             if [ -n "$CODE_SUMMARY" ]; then
               echo ""
-              printf "%s\n" "$CODE_SUMMARY"
+              printf "%s" "$CODE_SUMMARY"
             fi
-            if [ -s "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md" ]; then
-              cat "specs/issue-${ISSUE_NUMBER}/ai-cost-step.md"
+            if [ -s "$COST_STEP_FILE" ]; then
+              printf "\n\n---\n"
+              if [ -n "$PRIOR_STEP_TAGS" ]; then
+                printf "%s\n" "$PRIOR_STEP_TAGS"
+              fi
+              sed '1,/^---$/d' "$COST_STEP_FILE"
+            elif [ -n "$PRIOR_STEP_TAGS" ]; then
+              printf "\n\n---\n%s\n" "$PRIOR_STEP_TAGS"
             fi
+            printf "\n<!-- stage-rev:%s -->\n" "$NEXT_STAGE_REV"
           } > "$CODE_COMMENT_FILE"
-          gh issue comment "$ISSUE_NUMBER" --body-file "$CODE_COMMENT_FILE"
+          if [ -n "$EXISTING_COMMENT_ID" ]; then
+            gh api graphql -f query='
+              mutation($id: ID!, $body: String!) {
+                updateIssueComment(input: { id: $id, body: $body }) {
+                  issueComment { id }
+                }
+              }' -f id="$EXISTING_COMMENT_ID" -F body=@"$CODE_COMMENT_FILE" >/dev/null
+          else
+            gh issue comment "$ISSUE_NUMBER" --body-file "$CODE_COMMENT_FILE"
+          fi
           rm -f "specs/issue-${ISSUE_NUMBER}/ai-cost-pending.jsonl"
 
       - name: Check for manual validation checkpoint after Code
