@@ -93,8 +93,6 @@ result = case ARGV.first(2)
              { 'data' => { 'setIssueFieldValue' => { 'issue' => { 'id' => 'ISSUE' } } } }
            when /addProjectV2ItemById/
              (warn('gh: Content already exists in this project') || exit(1)) if scenario['content_already_exists']; { 'data' => { 'addProjectV2ItemById' => { 'item' => { 'id' => 'ITEM' } } } }
-           when /updateIssueComment/
-             { 'data' => { 'updateIssueComment' => { 'issueComment' => { 'id' => 'COMMENT' } } } }
            when /projectsV2/
              scenario.fetch('project')
            when /issues\(states: \[OPEN\]/
@@ -123,7 +121,7 @@ result = case ARGV.first(2)
            value = responses.length > 1 ? responses.shift : responses.first
            File.write(ENV.fetch('TEST_SCENARIO'), JSON.generate(scenario))
            { 'workflow_runs' => value }
-         when ['label', 'create'], ['issue', 'edit'], ['issue', 'comment'], ['issue', 'close'], ['pr', 'comment'], ['pr', 'review']
+         when ['label', 'create'], ['issue', 'edit'], ['issue', 'comment'], ['issue', 'close'], ['pr', 'comment']
            nil
          else
            reject_command("Unexpected gh command: #{ARGV.inspect}")

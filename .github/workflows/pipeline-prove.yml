@@ -467,10 +467,7 @@ jobs:
             ISSUE_VIEW=$(gh issue view "$ISSUE_NUMBER" --json title,body,labels,comments)
           fi
           if [ ! -s "${SPEC_DIR}/think.md" ]; then
-            echo "$ISSUE_VIEW" | jq -r '
-              def rank: ([.value | scan("<!-- stage-rev:([0-9]+) -->") | .[0] | tonumber] | last) // .key;
-              [(.comments // []) | map(.body) | to_entries[] | select(.value | test("^# Think:"; "m"))] | sort_by(rank) | last | .value // empty | sub("\\n*(?:---\\n+)?<!-- (?:ai-cost-step|stage-rev):[^\\n]*-->[\\s\\S]*$"; "") | sub("\\n+## Forge Asset Bindings\\r?\\n[\\s\\S]*?(?=\\n## |$)"; "")
-            ' > "${SPEC_DIR}/think.md"
+            echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "") | sub("\\n+## Forge Asset Bindings\\r?\\n[\\s\\S]*?(?=\\n## |$)"; "")' > "${SPEC_DIR}/think.md"
             if [ ! -s "${SPEC_DIR}/think.md" ]; then
               HAS_AUDIT_LABEL=$(echo "$ISSUE_VIEW" | jq -r '[.labels[]?.name] | any(startswith("audit:"))')
               if [ "$HAS_AUDIT_LABEL" = "true" ]; then
@@ -541,10 +538,9 @@ jobs:
           fi
           if [ ! -s "${SPEC_DIR}/plan.md" ]; then
             echo "$ISSUE_VIEW" | jq -r '
-              def rank: ([.value | scan("<!-- stage-rev:([0-9]+) -->") | .[0] | tonumber] | last) // .key;
               (.comments | map(.body) | to_entries) as $all |
-              ([ $all[] | select(.value | test("^# Think:"; "m")) | rank ] | max // -1) as $last_think_idx |
-              [ $all[] | select((rank) > $last_think_idx and (.value | test("^# Plan:"; "m"))) ] | sort_by(rank) | last | .value // empty | sub("\\n*(?:---\\n+)?<!-- (?:ai-cost-step|stage-rev):[^\\n]*-->[\\s\\S]*$"; "")
+              ([ $all[] | select(.value | test("^# Think:"; "m")) | .key ] | last // -1) as $last_think_idx |
+              [ $all[] | select(.key > $last_think_idx and (.value | test("^# Plan:"; "m"))) | .value ] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")
             ' > "${SPEC_DIR}/plan.md"
           fi
 
@@ -1203,37 +1199,14 @@ jobs:
         run: |
           SPEC_DIR="specs/issue-${ISSUE_NUMBER}"
           PROVE_FILE="${SPEC_DIR}/prove.md"
-          COST_STEP_FILE="${SPEC_DIR}/ai-cost-step.md"
-          COMMENTS_JSON=$(gh issue view "$ISSUE_NUMBER" --json comments 2>/dev/null || echo '{"comments":[]}')
-          EXISTING_COMMENT_ID=$(echo "$COMMENTS_JSON" | jq -r '[.comments[]? | select((.body // "") | test("^# Prove:"; "m"))] | last | .id // empty')
-          PRIOR_STEP_TAGS=$(echo "$COMMENTS_JSON" | jq -r '[.comments[]? | select((.body // "") | test("^# Prove:"; "m"))] | last | .body // "" | [scan("<!-- ai-cost-step:\\{[^\\n]*?\\} -->")] | join("\n")')
-          NEXT_STAGE_REV=$(echo "$COMMENTS_JSON" | jq -r '(([.comments[]? | .body // "" | scan("<!-- stage-rev:([0-9]+) -->") | .[0] | tonumber] + [(.comments // [] | length)]) | max // 0) + 1')
           PROVE_COMMENT="$RUNNER_TEMP/prove-comment.md"
-          {
-            printf "%s" "$(cat "$PROVE_FILE")"
-            if [ -s "$COST_STEP_FILE" ]; then
-              printf "\n\n---\n"
-              if [ -n "$PRIOR_STEP_TAGS" ]; then
-                printf "%s\n" "$PRIOR_STEP_TAGS"
-              fi
-              sed '1,/^---$/d' "$COST_STEP_FILE"
-            elif [ -n "$PRIOR_STEP_TAGS" ]; then
-              printf "\n\n---\n%s\n" "$PRIOR_STEP_TAGS"
-            fi
-            printf "\n<!-- stage-rev:%s -->\n" "$NEXT_STAGE_REV"
-          } > "$PROVE_COMMENT"
+          cat "$PROVE_FILE" > "$PROVE_COMMENT"
+          if [ -s "${SPEC_DIR}/ai-cost-step.md" ]; then
+            cat "${SPEC_DIR}/ai-cost-step.md" >> "$PROVE_COMMENT"
+          fi
 
           gh pr review "$PR_NUMBER" --approve --body-file "$PROVE_COMMENT" 2>/dev/null || gh pr comment "$PR_NUMBER" --body-file "$PROVE_COMMENT"
-          if [ -n "$EXISTING_COMMENT_ID" ]; then
-            gh api graphql -f query='
-              mutation($id: ID!, $body: String!) {
-                updateIssueComment(input: { id: $id, body: $body }) {
-                  issueComment { id }
-                }
-              }' -f id="$EXISTING_COMMENT_ID" -F body=@"$PROVE_COMMENT" >/dev/null
-          else
-            gh issue comment "$ISSUE_NUMBER" --body-file "$PROVE_COMMENT"
-          fi
+          gh issue comment "$ISSUE_NUMBER" --body-file "$PROVE_COMMENT"
           rm -f "${SPEC_DIR}/ai-cost-pending.jsonl" "${SPEC_DIR}/ai-cost-step.md"
 
       - name: Check for manual validation checkpoint after Prove
