@@ -278,7 +278,7 @@ DoomR changes can require updates to Cadenza, FaceGun, MappR, PixelGun, PolyGun,
 
 ## Audits and repository contents
 
-[The audit runner](.github/workflows/audit-runner.yml) temporarily loads this repository's instructions and specialist audit agents, runs Copilot (`gemini-3.8-flash`) in read-only analysis mode, restores the application's original instructions, merges closely related findings (shared file, module stem, specific scope, or code symbol) into consolidated findings, and creates **1 GitHub Issue per consolidated finding** (labeled `audit:<agent>`, deduplicated against existing open issues) and attaches each created issue to the repository's GitHub Project V2 board without setting a pipeline trigger label—leaving findings in the default Project column for manual triage before adding `1-think` or `5-release`.
+[The audit runner](.github/workflows/audit-runner.yml) loads generic audit agents (`dead-code`, `test-gap`, `docs-sync`, `dependency-leverage`) from `ALTEN-group/coding-pal` along with this repository's instructions, `forge-catalog.json`, and 1PizzaTeam specialist audit agents (`vector-first`, `perf-audit`), runs Copilot (`gemini-3.8-flash`) in read-only analysis mode, merges closely related findings (shared file, module stem, specific scope, or code symbol) into consolidated findings, and creates **1 GitHub Issue per consolidated finding** (labeled `audit:<agent>`, deduplicated against existing open issues) and attaches each created issue to the repository's GitHub Project V2 board without setting a pipeline trigger label—leaving findings in the default Project column for manual triage before adding `1-think` or `5-release`.
 
 Audits can be triggered in three ways:
 1. **Activity-Gated Weekly Schedule (Public Repositories Only):** Each repository's `audits.yml` runs on a staggered weekly schedule (`Mon 06:00 UTC` for `dependency-audit` & `dead-code-audit`, `Wed 06:00 UTC` for `vector-first-audit` & `perf-audit`, `Fri 06:00 UTC` for `test-gap-audit` & `docs-sync-audit`). Private repositories (`github.event.repository.private`) are skipped at the job level (`!github.event.repository.private`) and in the runner preflight gate so they never trigger automatically or consume private runner minutes. Public scheduled runs also skip before invoking Copilot if the repository has had no commits in the last 7 days or already has 10+ open `audit:<agent>` issues awaiting triage.
@@ -288,7 +288,7 @@ Audits can be triggered in three ways:
 | Path | Contains |
 |---|---|
 | [instructions/](instructions/) | Engineering style, ecosystem synchronization, vector-first APIs, and hot-loop performance rules |
-| [agents/](agents/) | Dependency reuse, vector-first, performance, dead-code, test-gap, and documentation audits |
+| [agents/](agents/) | 1PizzaTeam-specific `vector-first` and `perf-audit` agents (generic `dead-code`, `test-gap`, `docs-sync`, and `dependency-leverage` agents live in `ALTEN-group/coding-pal`) |
 | [.github/workflows/](.github/workflows/) | Six audit workflows, their shared runner, central fleet dispatcher, and seven delivery/release workflows |
 | [skills/release-readiness/](skills/release-readiness/) | Library documentation, metadata, build, and package checks |
 

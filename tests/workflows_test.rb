@@ -2342,6 +2342,14 @@ class WorkflowsTest < Minitest::Test
     assert_includes prove_loop, '--test-cmd "bash $RUNNER_TEMP/run-tests.sh"'
     assert_includes prove_loop, '--agent="gate-fix"'
     refute_includes prove_loop, '--agent="code"'
+
+    audit_steps = YAML.load_file(File.join(ROOT, '.github/workflows/audit-runner.yml')).fetch('jobs').fetch('audit').fetch('steps')
+    audit_install = audit_steps.find { |item| item['name'] == 'Install ALTEN-group/coding-pal audit primitives' }.fetch('run')
+    assert_includes audit_install, 'for agent in dead-code test-gap docs-sync dependency-leverage; do'
+    assert_includes audit_install, 'cp /tmp/1pizza-coding-pal/agents/*.md .github/agents/'
+    assert_includes audit_install, '.agents/skills/forge/catalog.json'
+    assert_equal %w[perf-audit.agent.md vector-first.agent.md],
+                 Dir.children(File.join(ROOT, 'agents')).sort
   end
 
   def test_closed_or_superseded_runs_skip_without_mutating_issue

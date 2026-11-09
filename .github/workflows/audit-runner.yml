@@ -86,18 +86,42 @@ jobs:
 
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
-      - name: Inject 1pizzateam/coding-pal primitives
+      - name: Install ALTEN-group/coding-pal audit primitives
         if: steps.preflight.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
         run: |
-          git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/1pizzateam/coding-pal.git /tmp/coding-pal
+          git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/ALTEN-group/coding-pal.git /tmp/alten-coding-pal
+          git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/1pizzateam/coding-pal.git /tmp/1pizza-coding-pal
           rm -rf .github/instructions .github/agents .github/prompts .github/skills .github/copilot-instructions.md .agents .claude .cursor .gemini CLAUDE.md GEMINI.md AGENTS.md .cursorrules .windsurfrules
-          mkdir -p .github/instructions .github/agents .agents/skills
-          cp /tmp/coding-pal/instructions/*.md .github/instructions/
-          cp /tmp/coding-pal/agents/*.md .github/agents/
-          cp -R /tmp/coding-pal/skills/* .agents/skills/
-          rm -rf /tmp/coding-pal
+          mkdir -p .github/instructions .github/agents .agents/skills/forge
+          cp /tmp/1pizza-coding-pal/instructions/*.md .github/instructions/
+          [ -d tests ] && [ -f /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md ] && cp /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md .github/instructions/
+          [ -d website ] && [ -f /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md ] && cp /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md .github/instructions/
+          for agent in dead-code test-gap docs-sync dependency-leverage; do
+            [ -f "/tmp/alten-coding-pal/agents/${agent}.agent.md" ] && cp "/tmp/alten-coding-pal/agents/${agent}.agent.md" .github/agents/
+          done
+          cp /tmp/1pizza-coding-pal/agents/*.md .github/agents/
+          cp -R /tmp/1pizza-coding-pal/skills/* .agents/skills/
+          cp /tmp/1pizza-coding-pal/forge-catalog.json .agents/skills/forge/catalog.json
+          for repo_cat in docs/forge/catalog.json .github/forge-catalog.json forge-catalog.json; do
+            if [ -f "$repo_cat" ]; then
+              jq -s '.[0] as $base | .[1] as $ext | ($base * $ext) | .assets = (((($base.assets // []) + ($ext.assets // [])) | group_by(.id) | map(reduce .[] as $item ({}; . * $item))))' \
+                .agents/skills/forge/catalog.json "$repo_cat" > .agents/skills/forge/catalog.json.tmp && mv .agents/skills/forge/catalog.json.tmp .agents/skills/forge/catalog.json
+            fi
+          done
+          if [ -f package.json ]; then
+            jq --slurpfile pkg package.json '
+              (($pkg[0].dependencies // {}) + ($pkg[0].devDependencies // {})) as $deps |
+              .assets |= map(
+                . as $a |
+                ($deps["@1pizzateam/" + $a.id] // $deps[$a.id] // "") |
+                sub("^[~^>=<v]+"; "") as $v |
+                if ($v | test("^[0-9]+\\.[0-9]+\\.[0-9]+")) then ($a | .version = $v) else $a end
+              )
+            ' .agents/skills/forge/catalog.json > .agents/skills/forge/catalog.json.tmp && mv .agents/skills/forge/catalog.json.tmp .agents/skills/forge/catalog.json
+          fi
+          rm -rf /tmp/alten-coding-pal /tmp/1pizza-coding-pal
 
       - uses: actions/setup-node@v4
         if: steps.preflight.outputs.skip != 'true'
@@ -164,8 +188,19 @@ jobs:
               ) | join("\n"))
             else "" end
           ' 2>/dev/null || echo "")
+          ECOSYSTEM_PROMPT_CONTEXT=""
+          if [ -s .agents/skills/forge/catalog.json ]; then
+            LIB_LIST=$(jq -r '[.assets[]? | select(.kind == "library") | "`" + ((.artifact.ref // .id) | sub("@[0-9].*$"; "")) + "` -> `" + ((.repository // "") | sub("^https://github\\.com/"; "")) + "`"] | join(", ")' .agents/skills/forge/catalog.json 2>/dev/null || echo "")
+            if [ -n "$LIB_LIST" ]; then
+              ECOSYSTEM_PROMPT_CONTEXT="${ECOSYSTEM_PROMPT_CONTEXT} If an upstream catalog library (${LIB_LIST}) should be updated instead of (or prior to) changing this repository, consolidate requests per target library and write the structured request array to upstream-requests.json with objects \`{ \"package\": \"<npm package>\", \"repo\": \"<owner/repo>\", \"priority\": \"<Urgent|High|Medium|Low>\", \"model\": \"<claude-sonnet-5.5|claude-opus-5.5|claude-haiku-5.5|gpt-6.1-sol|gpt-6.1-terra|gpt-6-luna|gpt-5.3-codex|gemini-4-argon|gemini-3.8-flash|auto>\", \"effort\": \"<Low|Medium|High|Max>\", \"library_issue_title\": \"<upstream issue title>\", \"library_issue_body\": \"## Problem\\n\\n<problem>\\n\\n## Proposed API\\n\\n<proposed API>\\n\\n## Acceptance Criteria\\n\\n- **AC-1:** <criterion>\", \"consumer_issue_title\": \"<blocked consumer issue title>\", \"consumer_issue_body\": \"## Problem\\n\\n<problem>\\n\\n## Affected Files\\n\\n- \`<file>\`\\n\\n## Suggested Fix\\n\\n<fix>\\n\\n## Acceptance Criteria\\n\\n- **AC-1:** <criterion>\" }\`."
+            fi
+            ED_LIST=$(jq -r '[.assets[]? | select(.kind == "editor") | "`" + .id + "` -> `" + ((.repository // "") | sub("^https://github\\.com/"; "")) + "`"] | join(", ")' .agents/skills/forge/catalog.json 2>/dev/null || echo "")
+            if [ -n "$ED_LIST" ]; then
+              ECOSYSTEM_PROMPT_CONTEXT="${ECOSYSTEM_PROMPT_CONTEXT} If a finding requires a companion update in one of the catalog editors (${ED_LIST}), consolidate requests per target editor and write a JSON array to editor-requests.json with objects \`{ \"editor\": \"<editor id>\", \"repo\": \"<owner/repo>\", \"priority\": \"<Urgent|High|Medium|Low>\", \"model\": \"<claude-sonnet-5.5|claude-opus-5.5|claude-haiku-5.5|gpt-6.1-sol|gpt-6.1-terra|gpt-6-luna|gpt-5.3-codex|gemini-4-argon|gemini-3.8-flash|auto>\", \"effort\": \"<Low|Medium|High|Max>\", \"title\": \"<issue title>\", \"problem\": \"<what changed>\", \"affectedFiles\": [\"<file>\"], \"suggestedDirection\": \"<editor changes needed>\", \"body\": \"## Problem\\n\\n<problem>\\n\\n## Affected Files\\n\\n- \`<file>\`\\n\\n## Suggested Direction\\n\\n<direction>\" }\`."
+            fi
+          fi
           copilot --model="gemini-3.8-flash" --agent="$AGENT" --allow-all-tools \
-            --prompt "Scope: ${SCOPE}. ${EXTRA_PROMPT} ${OPEN_ISSUES_CONTEXT} Do not modify repository source, test, or documentation files. Keep each finding scoped to a single cohesive module/concern (do not bundle unrelated files or exports into one catch-all issue), merge closely related findings affecting the same file, module, paired source/test/doc files, or shared symbol/concern into a single consolidated finding before writing output files, and skip any symbol or file already tracked by an open issue. Write structured findings to audit-findings.json as a JSON array of objects, where each element has keys: { \"title\": \"<concise issue title>\", \"priority\": \"<Urgent|High|Medium|Low>\", \"model\": \"<claude-sonnet-5.5|claude-opus-5.5|claude-haiku-5.5|gpt-6.1-sol|gpt-6.1-terra|gpt-6-luna|gpt-5.3-codex|gemini-4-argon|gemini-3.8-flash|auto>\", \"effort\": \"<Low|Medium|High|Max>\", \"problem\": \"<clear problem explanation>\", \"affectedFiles\": [\"<file path>\"], \"suggestedFix\": \"<concrete remediation>\", \"acceptanceCriteria\": [\"- **AC-1:** <testable criterion>\"], \"body\": \"## Problem\\n\\n<problem>\\n\\n## Affected Files\\n\\n- \`<file>\`\\n\\n## Suggested Fix\\n\\n<fix>\\n\\n## Acceptance Criteria\\n\\n- **AC-1:** <criterion>\" } (or [] if no findings exist), choosing model and effort based on finding complexity and priority (e.g. gemini-3.8-flash/claude-haiku-5.5 + Low for trivial cleanup/docs, claude-sonnet-5.5 + Medium/High for standard code/tests/refactors, claude-opus-5.5 + High/Max for complex architectural/hot-loop changes), and write a brief Markdown summary of the audit to audit-report.md. Always separate Markdown headings and sections with real newlines (\\n\\n), never a single line. If an upstream @1pizzateam/* library (`@1pizzateam/roostr` -> `1pizzateam/RoostR.js`, `@1pizzateam/bumpr` -> `1pizzateam/BumpR.js`, `@1pizzateam/loopr` -> `1pizzateam/LoopR.js`, `@1pizzateam/spock` -> `1pizzateam/Spock.js`, `@1pizzateam/groovr` -> `1pizzateam/GroovR.js`, `@1pizzateam/facer` -> `1pizzateam/FaceR.js`) should be updated instead of (or prior to) changing this repository, consolidate requests per target library and write the structured request array to upstream-requests.json with objects `{ \"package\": \"@1pizzateam/<pkg>\", \"repo\": \"1pizzateam/<Repo>\", \"priority\": \"<Urgent|High|Medium|Low>\", \"model\": \"<claude-sonnet-5.5|claude-opus-5.5|claude-haiku-5.5|gpt-6.1-sol|gpt-6.1-terra|gpt-6-luna|gpt-5.3-codex|gemini-4-argon|gemini-3.8-flash|auto>\", \"effort\": \"<Low|Medium|High|Max>\", \"library_issue_title\": \"<upstream issue title>\", \"library_issue_body\": \"## Problem\\n\\n<problem>\\n\\n## Proposed API\\n\\n<proposed API>\\n\\n## Acceptance Criteria\\n\\n- **AC-1:** <criterion>\", \"consumer_issue_title\": \"<blocked consumer issue title>\", \"consumer_issue_body\": \"## Problem\\n\\n<problem>\\n\\n## Affected Files\\n\\n- \`<file>\`\\n\\n## Suggested Fix\\n\\n<fix>\\n\\n## Acceptance Criteria\\n\\n- **AC-1:** <criterion>\" }`. If a finding in DoomR.js requires a companion update in one of the 1PizzaTeam game editors (`cadenza` -> `1pizzateam/Cadenza`, `facegun` -> `1pizzateam/FaceGun`, `mappr` -> `1pizzateam/MappR`, `pixelgun` -> `1pizzateam/PixelGun`, `polygun` -> `1pizzateam/PolyGun`, `shadergun` -> `1pizzateam/ShaderGun`), consolidate requests per target editor and write a JSON array to editor-requests.json with objects `{ \"editor\": \"<cadenza|facegun|mappr|pixelgun|polygun|shadergun>\", \"repo\": \"1pizzateam/<Editor>\", \"priority\": \"<Urgent|High|Medium|Low>\", \"model\": \"<claude-sonnet-5.5|claude-opus-5.5|claude-haiku-5.5|gpt-6.1-sol|gpt-6.1-terra|gpt-6-luna|gpt-5.3-codex|gemini-4-argon|gemini-3.8-flash|auto>\", \"effort\": \"<Low|Medium|High|Max>\", \"title\": \"<issue title>\", \"problem\": \"<what changed in DoomR.js>\", \"affectedFiles\": [\"<DoomR.js file>\"], \"suggestedDirection\": \"<editor changes needed>\", \"body\": \"## Problem\\n\\n<problem>\\n\\n## Affected DoomR.js Files\\n\\n- \`<file>\`\\n\\n## Suggested Direction\\n\\n<direction>\" }`."
+            --prompt "Scope: ${SCOPE}. ${EXTRA_PROMPT} ${OPEN_ISSUES_CONTEXT} Do not modify repository source, test, or documentation files. Keep each finding scoped to a single cohesive module/concern (do not bundle unrelated files or exports into one catch-all issue), merge closely related findings affecting the same file, module, paired source/test/doc files, or shared symbol/concern into a single consolidated finding before writing output files, and skip any symbol or file already tracked by an open issue. Write structured findings to audit-findings.json as a JSON array of objects, where each element has keys: { \"title\": \"<concise issue title>\", \"priority\": \"<Urgent|High|Medium|Low>\", \"model\": \"<claude-sonnet-5.5|claude-opus-5.5|claude-haiku-5.5|gpt-6.1-sol|gpt-6.1-terra|gpt-6-luna|gpt-5.3-codex|gemini-4-argon|gemini-3.8-flash|auto>\", \"effort\": \"<Low|Medium|High|Max>\", \"problem\": \"<clear problem explanation>\", \"affectedFiles\": [\"<file path>\"], \"suggestedFix\": \"<concrete remediation>\", \"acceptanceCriteria\": [\"- **AC-1:** <testable criterion>\"], \"body\": \"## Problem\\n\\n<problem>\\n\\n## Affected Files\\n\\n- \`<file>\`\\n\\n## Suggested Fix\\n\\n<fix>\\n\\n## Acceptance Criteria\\n\\n- **AC-1:** <criterion>\" } (or [] if no findings exist), choosing model and effort based on finding complexity and priority (e.g. gemini-3.8-flash/claude-haiku-5.5 + Low for trivial cleanup/docs, claude-sonnet-5.5 + Medium/High for standard code/tests/refactors, claude-opus-5.5 + High/Max for complex architectural/hot-loop changes), and write a brief Markdown summary of the audit to audit-report.md. Always separate Markdown headings and sections with real newlines (\\n\\n), never a single line.${ECOSYSTEM_PROMPT_CONTEXT}"
 
       - name: Create issues for audit findings and add to Project
         id: create_findings
@@ -1256,6 +1291,9 @@ jobs:
               end
             ' editor-requests.json)
 
+            if [ -z "$TARGET_REPO" ] && [ -n "$EDITOR_NAME" ] && [ -s .agents/skills/forge/catalog.json ]; then
+              TARGET_REPO=$(jq -r --arg ed "$EDITOR_NAME" '[.assets[]? | select(.kind == "editor" and ((.id | ascii_downcase) == $ed)) | (.repository // "") | sub("^https://github\\.com/"; "")][0] // empty' .agents/skills/forge/catalog.json 2>/dev/null || echo "")
+            fi
             if [ -z "$TARGET_REPO" ] && [ -n "$EDITOR_NAME" ]; then
               case "$EDITOR_NAME" in
                 cadenza)   TARGET_REPO="1pizzateam/Cadenza" ;;
@@ -1267,10 +1305,17 @@ jobs:
               esac
             fi
 
-            case "$TARGET_REPO" in
-              1pizzateam/Cadenza|1pizzateam/FaceGun|1pizzateam/MappR|1pizzateam/PixelGun|1pizzateam/PolyGun|1pizzateam/ShaderGun) ;;
-              *) continue ;;
-            esac
+            if [ -s .agents/skills/forge/catalog.json ]; then
+              VALID_ED_REPO=$(jq -r --arg r "$TARGET_REPO" 'any(.assets[]?; .kind == "editor" and (((.repository // "") | sub("^https://github\\.com/"; "") | ascii_downcase) == ($r | ascii_downcase)))' .agents/skills/forge/catalog.json 2>/dev/null || echo "false")
+              if [ "$VALID_ED_REPO" != "true" ]; then
+                continue
+              fi
+            else
+              case "$TARGET_REPO" in
+                1pizzateam/Cadenza|1pizzateam/FaceGun|1pizzateam/MappR|1pizzateam/PixelGun|1pizzateam/PolyGun|1pizzateam/ShaderGun) ;;
+                *) continue ;;
+              esac
+            fi
 
             if [ -z "$ED_TITLE" ] || [ "$TARGET_REPO" = "$CURRENT_REPO" ]; then
               continue
