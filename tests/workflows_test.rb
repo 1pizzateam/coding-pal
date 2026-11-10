@@ -481,12 +481,12 @@ class WorkflowsTest < Minitest::Test
     end
 
     reopened_comments = [
-      { 'body' => "# Think: Old Spec\n\nOld think body" },
-      { 'body' => "# Plan: Old Plan\n\nOld plan body" },
-      { 'body' => "Pull request opened for #42: https://example.test/pr/99" },
-      { 'body' => "# Prove: Old Prove\n\nOld prove body" },
-      { 'body' => "# Release report\n\n- Issue: #42" },
-      { 'body' => 'Reopening: this still fails when reloading the level.' }
+      "# Think: Old Spec\n\nOld think body",
+      "# Plan: Old Plan\n\nOld plan body",
+      "Pull request opened for #42: https://example.test/pr/99",
+      "# Prove: Old Prove\n\nOld prove body",
+      "# Release report\n\n- Issue: #42",
+      'Reopening: this still fails when reloading the level.'
     ]
     %w[3-code 4-prove 5-release].each do |trigger_label|
       code_reopened = run_step(step('code', 'resolve'), scenario([trigger_label], comments: reopened_comments), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
@@ -503,8 +503,8 @@ class WorkflowsTest < Minitest::Test
     assert_equal [['workflow', 'run', 'think.yml', '-f', 'issue_number=42']], dispatches
 
     audit_reopened_comments = [
-      { 'body' => "✅ **Already Resolved on Base Branch**\n\nPreviously closed." },
-      { 'body' => 'Actually the dead export is still present in src/index.js.' }
+      "✅ **Already Resolved on Base Branch**\n\nPreviously closed.",
+      'Actually the dead export is still present in src/index.js.'
     ]
     code_audit_reopened = run_step(step('code', 'resolve'), scenario(%w[audit:dead-code 5-release], comments: audit_reopened_comments), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
     assert_equal 'true', code_audit_reopened.fetch('skip')
@@ -518,7 +518,7 @@ class WorkflowsTest < Minitest::Test
     assert_equal 'none', think_audit_reopened.fetch('resumed_stage')
     assert_empty dispatches
 
-    reopened_after_think = reopened_comments + [{ 'body' => "# Think: Revised Spec\n\nRevised think body" }]
+    reopened_after_think = reopened_comments + ["# Think: Revised Spec\n\nRevised think body"]
     think_after_new_think = run_step(step('think', 'resume'), scenario(['5-release'], comments: reopened_after_think))
     assert_equal 'plan', think_after_new_think.fetch('resumed_stage')
     assert_equal "# Think: Revised Spec\n\nRevised think body\n", File.read(File.join(@directory, 'specs/issue-42/think.md'))
@@ -531,7 +531,7 @@ class WorkflowsTest < Minitest::Test
     assert_equal 'true', code_after_new_think.fetch('skip')
     assert_equal [['workflow', 'run', 'plan.yml', '-f', 'issue_number=42']], dispatches
 
-    reopened_after_plan = reopened_after_think + [{ 'body' => "# Plan: Revised Plan\n\nRevised plan body" }]
+    reopened_after_plan = reopened_after_think + ["# Plan: Revised Plan\n\nRevised plan body"]
     think_after_new_plan = run_step(step('think', 'resume'), scenario(['5-release'], comments: reopened_after_plan))
     assert_equal 'code', think_after_new_plan.fetch('resumed_stage')
     assert_equal [['workflow', 'run', 'code.yml', '-f', 'issue_number=42']], dispatches
@@ -2098,6 +2098,7 @@ class WorkflowsTest < Minitest::Test
     assert_includes synthesized_think, 'audit:test-gap'
     assert_includes synthesized_think, '`src/engine/Raycaster.js`'
     assert_includes synthesized_think, 'Automated by coding-pal-audit on '
+    assert_includes synthesized_think, '- **Docs:** _None._ - Scoped audit remediation does not change public APIs or user-facing documentation.'
     refute @calls.any? { |args| args.first(2) == %w[issue comment] }, 'Plan must not post a # Think: comment on the issue'
 
     # 2. pipeline-code.yml on an audit:* issue labeled 5-release without plan.md dispatches plan.yml directly (skipping think.yml)

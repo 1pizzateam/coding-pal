@@ -529,7 +529,7 @@ jobs:
                   "- **Required:** no\n" +
                   "- **Reason:** Low-blast-radius audit remediation within existing architectural boundaries does not require an ADR.\n\n" +
                   "## Persistent Context Updates\n" +
-                  "_None._\n\n" +
+                  "- **Docs:** _None._ - Scoped audit remediation does not change public APIs or user-facing documentation.\n\n" +
                   "## Ambiguities & Open Questions\n" +
                   "_None._"
                 ' > "${SPEC_DIR}/think.md"
