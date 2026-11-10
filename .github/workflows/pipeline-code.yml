@@ -131,11 +131,24 @@ jobs:
                 fi
               fi
             fi
-            EXISTING_THINK=$(echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")')
-            EXISTING_PLAN=$(echo "$ISSUE_VIEW" | jq -r '
-              (.comments | map(.body) | to_entries) as $all |
-              ([ $all[] | select(.value | test("^# Think:"; "m")) | .key ] | last // -1) as $last_think_idx |
-              [ $all[] | select(.key > $last_think_idx and (.value | test("^# Plan:"; "m"))) | .value ] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")
+            EXISTING_PR_JSON=$(gh pr list --state open --json number,headRefName,mergeable,labels \
+              --jq "[.[] | select(.headRefName | test(\"^(feature|fix|chore)/issue-${ISSUE_NUMBER}-\"))][0] // empty" 2>/dev/null || true)
+            EXISTING_PR=$(echo "$EXISTING_PR_JSON" | jq -r '.number // empty')
+            EXISTING_PR_CONFLICT=$(echo "$EXISTING_PR_JSON" | jq -r '(.mergeable // "") == "CONFLICTING" or ([.labels[]?.name] | index("needs:rebase") != null)')
+            RESET_IDX=$(echo "$ISSUE_VIEW" | jq -r --arg has_open_pr "${EXISTING_PR:+true}" '
+              (.comments | map(.body // "") | to_entries) as $all |
+              ([ $all[] | select(.value | test(if $has_open_pr == "true" then "^(# (Release:|Release report|Release decision:|No release|Release blocked:)|✅ \\*\\*Already Resolved on Base Branch\\*\\*|### Companion Game Editor Updates Dispatched|Release failed or did not finish\\.)" else "^(# (Prove:|Release:|Release report|Release decision:|No release|Release blocked:)|✅ \\*\\*Already Resolved on Base Branch\\*\\*|Pull request opened for #|### Companion Game Editor Updates Dispatched|Release failed or did not finish\\.)" end; "m")) | .key ] | last // -1) as $last_done_idx |
+              ([ $all[] | select((.value | gsub("\\s+"; "") | length > 0) and ((.value | test("^(# (Think|Plan|Code|Prove|Release|Release report|Release decision|No release|Release blocked)|✅ \\*\\*Already Resolved on Base Branch\\*\\*|## Upstream Library Released|⏸️ \\*\\*(Paused (after|for)|Blocked on)|Blocked waiting on upstream library issue |⚠️ \\*\\*(Think|Plan|Code|Prove) failed|Pull request opened for #|### Companion Game Editor Updates (Dispatched|Scheduled)|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m")) | not)) | .key ] | last // -1) as $last_dev_idx |
+              ([$last_done_idx, $last_dev_idx] | max)
+            ')
+            EXISTING_THINK=$(echo "$ISSUE_VIEW" | jq -r --argjson reset_idx "${RESET_IDX:--1}" '
+              (.comments | map(.body // "") | to_entries) as $all |
+              [ $all[] | select(.key > $reset_idx and (.value | test("^# Think:"; "m"))) | .value ] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")
+            ')
+            EXISTING_PLAN=$(echo "$ISSUE_VIEW" | jq -r --argjson reset_idx "${RESET_IDX:--1}" '
+              (.comments | map(.body // "") | to_entries) as $all |
+              ([ $all[] | select(.key > $reset_idx and (.value | test("^# Think:"; "m"))) | .key ] | last // -1) as $last_think_idx |
+              [ $all[] | select(.key > $reset_idx and .key > $last_think_idx and (.value | test("^# Plan:"; "m"))) | .value ] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")
             ')
             EXISTING_PR_STALE_SPEC=$(echo "$ISSUE_VIEW" | jq -r '
               (.comments | map(.body) | to_entries) as $all |
@@ -143,12 +156,8 @@ jobs:
               ([ $all[] | select(.value | test("^Pull request opened for #"; "m")) | .key ] | last // -1) as $last_pr_idx |
               ($last_pr_idx >= 0 and $last_spec_idx > $last_pr_idx)
             ')
-            EXISTING_PR_JSON=$(gh pr list --state open --json number,headRefName,mergeable,labels \
-              --jq "[.[] | select(.headRefName | test(\"^(feature|fix|chore)/issue-${ISSUE_NUMBER}-\"))][0] // empty" 2>/dev/null || true)
-            EXISTING_PR=$(echo "$EXISTING_PR_JSON" | jq -r '.number // empty')
-            EXISTING_PR_CONFLICT=$(echo "$EXISTING_PR_JSON" | jq -r '(.mergeable // "") == "CONFLICTING" or ([.labels[]?.name] | index("needs:rebase") != null)')
 
-            if [ -n "$EXISTING_PR" ] && { [ -n "$EXISTING_THINK" ] || [ "$HAS_AUDIT_LABEL" = "true" ]; } && [ -n "$EXISTING_PLAN" ] && [ "$EXISTING_PR_STALE_SPEC" != "true" ] && { [ "$HAS_PROVE_TRIGGER" = "true" ] || [ "$HAS_RELEASE_TRIGGER" = "true" ]; } && [ "$EXISTING_PR_CONFLICT" != "true" ]; then
+            if [ -n "$EXISTING_PR" ] && { [ -n "$EXISTING_THINK" ] || { [ "$HAS_AUDIT_LABEL" = "true" ] && [ "${RESET_IDX:--1}" -lt 0 ]; }; } && [ -n "$EXISTING_PLAN" ] && [ "$EXISTING_PR_STALE_SPEC" != "true" ] && { [ "$HAS_PROVE_TRIGGER" = "true" ] || [ "$HAS_RELEASE_TRIGGER" = "true" ]; } && [ "$EXISTING_PR_CONFLICT" != "true" ]; then
               echo "Found open PR #${EXISTING_PR} for issue #${ISSUE_NUMBER}; dispatching Pipeline - Prove directly."
               gh pr edit "$EXISTING_PR" --remove-assignee "@me" 2>/dev/null || true
               gh workflow run prove.yml -f pr_number="$EXISTING_PR" -f issue_number="$ISSUE_NUMBER"
@@ -176,7 +185,10 @@ jobs:
             if [ -z "${ISSUE_VIEW:-}" ]; then
               ISSUE_VIEW=$(gh issue view "$ISSUE_NUMBER" --json title,body,labels,comments)
             fi
-            echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "") | sub("\\n+## Forge Asset Bindings\\r?\\n[\\s\\S]*?(?=\\n## |$)"; "")' > "$THINK_FILE"
+            echo "$ISSUE_VIEW" | jq -r --argjson reset_idx "${RESET_IDX:--1}" '
+              (.comments | map(.body // "") | to_entries) as $all |
+              [ $all[] | select(.key > $reset_idx and (.value | test("^# Think:"; "m"))) | .value ] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "") | sub("\\n+## Forge Asset Bindings\\r?\\n[\\s\\S]*?(?=\\n## |$)"; "")
+            ' > "$THINK_FILE"
           fi
 
           if [ ! -s "$PLAN_FILE" ]; then
@@ -184,16 +196,16 @@ jobs:
             if [ -z "${ISSUE_VIEW:-}" ]; then
               ISSUE_VIEW=$(gh issue view "$ISSUE_NUMBER" --json title,body,labels,comments)
             fi
-            echo "$ISSUE_VIEW" | jq -r '
-              (.comments | map(.body) | to_entries) as $all |
-              ([ $all[] | select(.value | test("^# Think:"; "m")) | .key ] | last // -1) as $last_think_idx |
-              [ $all[] | select(.key > $last_think_idx and (.value | test("^# Plan:"; "m"))) | .value ] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")
+            echo "$ISSUE_VIEW" | jq -r --argjson reset_idx "${RESET_IDX:--1}" '
+              (.comments | map(.body // "") | to_entries) as $all |
+              ([ $all[] | select(.key > $reset_idx and (.value | test("^# Think:"; "m"))) | .key ] | last // -1) as $last_think_idx |
+              [ $all[] | select(.key > $reset_idx and .key > $last_think_idx and (.value | test("^# Plan:"; "m"))) | .value ] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")
             ' > "$PLAN_FILE"
           fi
 
           if [ ! -s "$THINK_FILE" ]; then
             HAS_AUDIT_LABEL=$(echo "$ISSUE_VIEW" | jq -r '[.labels[]?.name] | any(startswith("audit:"))')
-            if [ "$HAS_AUDIT_LABEL" = "true" ]; then
+            if [ "$HAS_AUDIT_LABEL" = "true" ] && [ "${RESET_IDX:--1}" -lt 0 ]; then
               TODAY=$(date -u +%Y-%m-%d 2>/dev/null || echo "2026-01-01")
               echo "$ISSUE_VIEW" | jq -r --arg issue_number "$ISSUE_NUMBER" --arg today "$TODAY" '
                 ((.title // "") | gsub("[\\r\\n]+"; " ") | sub("^\\s+"; "") | sub("\\s+$"; "") | if length > 0 then . else "Audit Finding Remediation" end) as $title |
@@ -260,7 +272,7 @@ jobs:
           fi
 
           if [ -z "$RUN_ID" ] && { [ "${HAS_CODE_TRIGGER:-false}" = "true" ] || [ "${HAS_PROVE_TRIGGER:-false}" = "true" ] || [ "${HAS_RELEASE_TRIGGER:-false}" = "true" ]; }; then
-            if [ ! -s "$THINK_FILE" ] && [ "${HAS_AUDIT_LABEL:-false}" != "true" ]; then
+            if [ ! -s "$THINK_FILE" ] && { [ "${HAS_AUDIT_LABEL:-false}" != "true" ] || [ "${RESET_IDX:--1}" -ge 0 ]; }; then
               echo "No think.md found on issue #${ISSUE_NUMBER}; dispatching Pipeline - Think first."
               gh workflow run think.yml -f issue_number="$ISSUE_NUMBER"
               echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -634,7 +646,7 @@ jobs:
           ISSUE_BODY=$(echo "$ISSUE_JSON" | jq -r '.body // ""')
           DEV_COMMENTS=$(echo "$ISSUE_JSON" | jq -r '
             [.comments[]
-              | select((.body // "") | test("^(# (Think|Plan|Code|Prove|Release|Release report)|⏸️ \\*\\*(Paused after|Blocked on)|⚠️ \\*\\*(Think|Plan|Code|Prove) failed|Pull request opened for #|### Companion Game Editor Updates Dispatched|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
+              | select((.body // "") | test("^(# (Think|Plan|Code|Prove|Release|Release report|Release decision|No release|Release blocked)|✅ \\*\\*Already Resolved on Base Branch\\*\\*|## Upstream Library Released|⏸️ \\*\\*(Paused (after|for)|Blocked on)|Blocked waiting on upstream library issue |⚠️ \\*\\*(Think|Plan|Code|Prove) failed|Pull request opened for #|### Companion Game Editor Updates (Dispatched|Scheduled)|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
               | select((.body // "") | gsub("\\s+"; "") | length > 0)
               | "### Issue Comment by @" + (.author.login // "developer") + " (" + (.createdAt // "") + "):\n" + .body
             ] | join("\n\n")
@@ -643,7 +655,7 @@ jobs:
           if [ -n "$EXISTING_PR" ]; then
             PR_DEV_COMMENTS=$(gh pr view "$EXISTING_PR" --json comments --jq '
               [.comments[]
-                | select((.body // "") | test("^(# (Think|Plan|Code|Prove|Release|Release report)|⏸️ \\*\\*(Paused after|Blocked on)|⚠️ \\*\\*(Think|Plan|Code|Prove) failed|Pull request opened for #|### Companion Game Editor Updates Dispatched|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
+                | select((.body // "") | test("^(# (Think|Plan|Code|Prove|Release|Release report|Release decision|No release|Release blocked)|✅ \\*\\*Already Resolved on Base Branch\\*\\*|## Upstream Library Released|⏸️ \\*\\*(Paused (after|for)|Blocked on)|Blocked waiting on upstream library issue |⚠️ \\*\\*(Think|Plan|Code|Prove) failed|Pull request opened for #|### Companion Game Editor Updates (Dispatched|Scheduled)|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
                 | select((.body // "") | gsub("\\s+"; "") | length > 0)
                 | "### PR Comment by @" + (.author.login // "developer") + " (" + (.createdAt // "") + "):\n" + .body
               ] | join("\n\n")

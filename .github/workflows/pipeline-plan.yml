@@ -92,10 +92,19 @@ jobs:
 
           if [ ! -s "$THINK_FILE" ]; then
             echo "Fetching latest think.md from issue #${ISSUE_NUMBER} comments..."
-            echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "") | sub("\\n+## Forge Asset Bindings\\r?\\n[\\s\\S]*?(?=\\n## |$)"; "")' > "$THINK_FILE"
+            RESET_IDX=$(echo "$ISSUE_VIEW" | jq -r '
+              (.comments | map(.body // "") | to_entries) as $all |
+              ([ $all[] | select(.value | test("^(# (Prove:|Release:|Release report|Release decision:|No release|Release blocked:)|✅ \\*\\*Already Resolved on Base Branch\\*\\*|### Companion Game Editor Updates Dispatched|Release failed or did not finish\\.)"; "m")) | .key ] | last // -1) as $last_done_idx |
+              ([ $all[] | select((.value | gsub("\\s+"; "") | length > 0) and ((.value | test("^(# (Think|Plan|Code|Prove|Release|Release report|Release decision|No release|Release blocked)|✅ \\*\\*Already Resolved on Base Branch\\*\\*|## Upstream Library Released|⏸️ \\*\\*(Paused (after|for)|Blocked on)|Blocked waiting on upstream library issue |⚠️ \\*\\*(Think|Plan|Code|Prove) failed|Pull request opened for #|### Companion Game Editor Updates (Dispatched|Scheduled)|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m")) | not)) | .key ] | last // -1) as $last_dev_idx |
+              ([$last_done_idx, $last_dev_idx] | max)
+            ')
+            echo "$ISSUE_VIEW" | jq -r --argjson reset_idx "${RESET_IDX:--1}" '
+              (.comments | map(.body // "") | to_entries) as $all |
+              [ $all[] | select(.key > $reset_idx and (.value | test("^# Think:"; "m"))) | .value ] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "") | sub("\\n+## Forge Asset Bindings\\r?\\n[\\s\\S]*?(?=\\n## |$)"; "")
+            ' > "$THINK_FILE"
             if [ ! -s "$THINK_FILE" ]; then
               HAS_AUDIT_LABEL=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | any(startswith("audit:"))')
-              if [ "$HAS_AUDIT_LABEL" = "true" ]; then
+              if [ "$HAS_AUDIT_LABEL" = "true" ] && [ "${RESET_IDX:--1}" -lt 0 ]; then
                 echo "Audit finding issue #${ISSUE_NUMBER} detected; synthesizing think.md directly to skip Pipeline - Think."
                 TODAY=$(date -u +%Y-%m-%d 2>/dev/null || echo "2026-01-01")
                 echo "$ISSUE_VIEW" | jq -r --arg issue_number "$ISSUE_NUMBER" --arg today "$TODAY" '
@@ -548,7 +557,7 @@ jobs:
           PREVIOUS_PLAN=$(echo "$ISSUE_JSON" | jq -r '[.comments[].body | select(test("^# Plan:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")')
           DEV_COMMENTS=$(echo "$ISSUE_JSON" | jq -r '
             [.comments[]
-              | select((.body // "") | test("^(# (Think|Plan|Code|Prove|Release|Release report)|⏸️ \\*\\*(Paused after|Blocked on)|⚠️ \\*\\*(Think|Plan|Code|Prove) failed|Pull request opened for #|### Companion Game Editor Updates Dispatched|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
+              | select((.body // "") | test("^(# (Think|Plan|Code|Prove|Release|Release report|Release decision|No release|Release blocked)|✅ \\*\\*Already Resolved on Base Branch\\*\\*|## Upstream Library Released|⏸️ \\*\\*(Paused (after|for)|Blocked on)|Blocked waiting on upstream library issue |⚠️ \\*\\*(Think|Plan|Code|Prove) failed|Pull request opened for #|### Companion Game Editor Updates (Dispatched|Scheduled)|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
               | select((.body // "") | gsub("\\s+"; "") | length > 0)
               | "### Comment by @" + (.author.login // "developer") + " (" + (.createdAt // "") + "):\n" + .body
             ] | join("\n\n")
@@ -623,7 +632,7 @@ jobs:
 
           Follow .github/instructions/plan.instructions.md and .agents/skills/plan/SKILL.md (and its references/plan-contract.md).
           Read ${THINK_FILE} first and ground all file scopes, acceptance criteria, atomic implementation steps (with Files, Action, Verification, Bootable Check, and Serves), test plan rows, and blast radius checks in ${THINK_FILE} and the existing repository conventions.
-          - **Already-Resolved Short-Circuit:** Before writing ${PLAN_FILE}, inspect the current repository files on the checked-out base branch against Issue #${ISSUE_NUMBER}. If every problem, dead symbol/export, or defect described in the issue has **already been resolved on the base branch** (for example, an earlier commit/PR already removed the dead symbol or implemented the requested behavior), do NOT invent no-op steps or artificial churn—instead write {\"resolved\": true, \"summary\": \"<concise explanation of how and where the issue is already resolved on the base branch>\"} to ${SPEC_DIR}/already-resolved.json and stop without writing ${PLAN_FILE}.
+          - **Already-Resolved Short-Circuit:** Before writing ${PLAN_FILE}, inspect the current repository files on the checked-out base branch against ${THINK_FILE}, Issue #${ISSUE_NUMBER}, and any Developer Feedback / Follow-up Comments above. If every problem, dead symbol/export, or defect described in ${THINK_FILE}, the issue, and all follow-up developer comments has **already been resolved on the base branch** (for example, an earlier commit/PR already removed the dead symbol or implemented the requested behavior, and no follow-up developer comment reports a remaining or new defect), do NOT invent no-op steps or artificial churn—instead write {\"resolved\": true, \"summary\": \"<concise explanation of how and where the issue is already resolved on the base branch>\"} to ${SPEC_DIR}/already-resolved.json and stop without writing ${PLAN_FILE}.
           - **Test Files Must Be In Scope:** Every test file path referenced in ## Test Plan MUST also be listed in ## File Scope & Boundaries under '- **In Scope:**' (never under '- **Out of Scope:**') and in the Files field of its corresponding step in ## Implementation Checklist, even if ${THINK_FILE} only listed src/ files or stated not to modify tests. Before finalizing ## File Scope & Boundaries, search tests/ (grep -rn) for existing assertions on any strings, labels, constants, or method behaviors that your plan modifies or removes: any existing test file whose assertions must be updated to keep 'npm test' green MUST also be listed under '- **In Scope:**' (never under '- **Out of Scope:**') and updated without reducing the file's total assertion count (control-guard rule R8). If ${THINK_FILE}'s ## Blast Radius ('- **Affected:**') omitted a test file required by ## Test Plan or existing test updates, append that test file path to ${THINK_FILE}'s '- **Affected:**' list before running validate-plan.mjs so both validate-plan.mjs and downstream scope-guard pass.
           Order ## Implementation Checklist steps strictly so every step passes its Verification, Bootable Check, and full test suite immediately when executed in sequence: always place core implementation steps BEFORE the test steps that assert on their new behavior (never place a test step before the implementation step it depends on), and if an implementation step changes existing behavior asserted by an existing test file, update that existing assertion in the same implementation step (listing both files in Files) while reserving subsequent test steps for adding new AC-<n> tests.
           Keep the exact required headings and '- **<Label>:**' bullet keys enforced by validate-plan.mjs, while producing a comprehensive, IDE-grade implementation blueprint:

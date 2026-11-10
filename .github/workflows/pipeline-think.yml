@@ -67,11 +67,24 @@ jobs:
           HAS_CODE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("3-code") != null')
           HAS_PROVE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("4-prove") != null')
           HAS_RELEASE_TRIGGER=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("5-release") != null')
-          EXISTING_THINK=$(echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "") | sub("\\n+## Forge Asset Bindings\\r?\\n[\\s\\S]*?(?=\\n## |$)"; "")')
-          EXISTING_PLAN=$(echo "$ISSUE_VIEW" | jq -r '
-            (.comments | map(.body) | to_entries) as $all |
-            ([ $all[] | select(.value | test("^# Think:"; "m")) | .key ] | last // -1) as $last_think_idx |
-            [ $all[] | select(.key > $last_think_idx and (.value | test("^# Plan:"; "m"))) | .value ] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")
+          EXISTING_PR_JSON=$(gh pr list --state open --json number,headRefName,mergeable,labels \
+            --jq "[.[] | select(.headRefName | test(\"^(feature|fix|chore)/issue-${ISSUE_NUMBER}-\"))][0] // empty" 2>/dev/null || true)
+          EXISTING_PR=$(echo "$EXISTING_PR_JSON" | jq -r '.number // empty')
+          EXISTING_PR_CONFLICT=$(echo "$EXISTING_PR_JSON" | jq -r '(.mergeable // "") == "CONFLICTING" or ([.labels[]?.name] | index("needs:rebase") != null)')
+          RESET_IDX=$(echo "$ISSUE_VIEW" | jq -r --arg has_open_pr "${EXISTING_PR:+true}" '
+            (.comments | map(.body // "") | to_entries) as $all |
+            ([ $all[] | select(.value | test(if $has_open_pr == "true" then "^(# (Release:|Release report|Release decision:|No release|Release blocked:)|✅ \\*\\*Already Resolved on Base Branch\\*\\*|### Companion Game Editor Updates Dispatched|Release failed or did not finish\\.)" else "^(# (Prove:|Release:|Release report|Release decision:|No release|Release blocked:)|✅ \\*\\*Already Resolved on Base Branch\\*\\*|Pull request opened for #|### Companion Game Editor Updates Dispatched|Release failed or did not finish\\.)" end; "m")) | .key ] | last // -1) as $last_done_idx |
+            ([ $all[] | select((.value | gsub("\\s+"; "") | length > 0) and ((.value | test("^(# (Think|Plan|Code|Prove|Release|Release report|Release decision|No release|Release blocked)|✅ \\*\\*Already Resolved on Base Branch\\*\\*|## Upstream Library Released|⏸️ \\*\\*(Paused (after|for)|Blocked on)|Blocked waiting on upstream library issue |⚠️ \\*\\*(Think|Plan|Code|Prove) failed|Pull request opened for #|### Companion Game Editor Updates (Dispatched|Scheduled)|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m")) | not)) | .key ] | last // -1) as $last_dev_idx |
+            ([$last_done_idx, $last_dev_idx] | max)
+          ')
+          EXISTING_THINK=$(echo "$ISSUE_VIEW" | jq -r --argjson reset_idx "${RESET_IDX:--1}" '
+            (.comments | map(.body // "") | to_entries) as $all |
+            [ $all[] | select(.key > $reset_idx and (.value | test("^# Think:"; "m"))) | .value ] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "") | sub("\\n+## Forge Asset Bindings\\r?\\n[\\s\\S]*?(?=\\n## |$)"; "")
+          ')
+          EXISTING_PLAN=$(echo "$ISSUE_VIEW" | jq -r --argjson reset_idx "${RESET_IDX:--1}" '
+            (.comments | map(.body // "") | to_entries) as $all |
+            ([ $all[] | select(.key > $reset_idx and (.value | test("^# Think:"; "m"))) | .key ] | last // -1) as $last_think_idx |
+            [ $all[] | select(.key > $reset_idx and .key > $last_think_idx and (.value | test("^# Plan:"; "m"))) | .value ] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "")
           ')
           EXISTING_PR_STALE_SPEC=$(echo "$ISSUE_VIEW" | jq -r '
             (.comments | map(.body) | to_entries) as $all |
@@ -79,13 +92,9 @@ jobs:
             ([ $all[] | select(.value | test("^Pull request opened for #"; "m")) | .key ] | last // -1) as $last_pr_idx |
             ($last_pr_idx >= 0 and $last_spec_idx > $last_pr_idx)
           ')
-          EXISTING_PR_JSON=$(gh pr list --state open --json number,headRefName,mergeable,labels \
-            --jq "[.[] | select(.headRefName | test(\"^(feature|fix|chore)/issue-${ISSUE_NUMBER}-\"))][0] // empty" 2>/dev/null || true)
-          EXISTING_PR=$(echo "$EXISTING_PR_JSON" | jq -r '.number // empty')
-          EXISTING_PR_CONFLICT=$(echo "$EXISTING_PR_JSON" | jq -r '(.mergeable // "") == "CONFLICTING" or ([.labels[]?.name] | index("needs:rebase") != null)')
 
           # Smart Resume 0: An open PR already exists and the issue was explicitly marked for prove or release.
-          if [ -n "$EXISTING_PR" ] && { [ -n "$EXISTING_THINK" ] || [ "$HAS_AUDIT_LABEL" = "true" ]; } && [ -n "$EXISTING_PLAN" ] && [ "$EXISTING_PR_STALE_SPEC" != "true" ] && [ "$HAS_THINK_TRIGGER" != "true" ] && [ "$HAS_PLAN_TRIGGER" != "true" ] && { [ "$HAS_PROVE_TRIGGER" = "true" ] || [ "$HAS_RELEASE_TRIGGER" = "true" ]; } && [ "$EXISTING_PR_CONFLICT" != "true" ]; then
+          if [ -n "$EXISTING_PR" ] && { [ -n "$EXISTING_THINK" ] || { [ "$HAS_AUDIT_LABEL" = "true" ] && [ "${RESET_IDX:--1}" -lt 0 ]; }; } && [ -n "$EXISTING_PLAN" ] && [ "$EXISTING_PR_STALE_SPEC" != "true" ] && [ "$HAS_THINK_TRIGGER" != "true" ] && [ "$HAS_PLAN_TRIGGER" != "true" ] && { [ "$HAS_PROVE_TRIGGER" = "true" ] || [ "$HAS_RELEASE_TRIGGER" = "true" ]; } && [ "$EXISTING_PR_CONFLICT" != "true" ]; then
             echo "Found open PR #${EXISTING_PR} for issue #${ISSUE_NUMBER}; dispatching Pipeline - Prove directly."
             gh pr edit "$EXISTING_PR" --remove-assignee "@me" 2>/dev/null || true
             gh workflow run prove.yml -f pr_number="$EXISTING_PR" -f issue_number="$ISSUE_NUMBER"
@@ -94,7 +103,7 @@ jobs:
           fi
 
           # Smart Resume 1: Reuse specs for Code unless Think or Plan was explicitly requested.
-          if { [ -n "$EXISTING_THINK" ] || [ "$HAS_AUDIT_LABEL" = "true" ]; } && [ -n "$EXISTING_PLAN" ] && [ "$HAS_THINK_TRIGGER" != "true" ] && [ "$HAS_PLAN_TRIGGER" != "true" ]; then
+          if { [ -n "$EXISTING_THINK" ] || { [ "$HAS_AUDIT_LABEL" = "true" ] && [ "${RESET_IDX:--1}" -lt 0 ]; }; } && [ -n "$EXISTING_PLAN" ] && [ "$HAS_THINK_TRIGGER" != "true" ] && [ "$HAS_PLAN_TRIGGER" != "true" ]; then
             echo "Found validated # Plan: comment on issue #${ISSUE_NUMBER}; dispatching Pipeline - Code directly."
             gh workflow run code.yml -f issue_number="$ISSUE_NUMBER"
             echo "resumed_stage=code" >> "$GITHUB_OUTPUT"
@@ -112,7 +121,7 @@ jobs:
           fi
 
           # Smart Resume 3: Audit finding issues skip the Think agent unless explicitly tagged 1-think.
-          if [ "$HAS_AUDIT_LABEL" = "true" ] && { [ "$HAS_THINK_TRIGGER" != "true" ] || [ "$HAS_PLAN_TRIGGER" = "true" ] || [ "$HAS_CODE_TRIGGER" = "true" ] || [ "$HAS_PROVE_TRIGGER" = "true" ] || [ "$HAS_RELEASE_TRIGGER" = "true" ]; }; then
+          if [ "$HAS_AUDIT_LABEL" = "true" ] && [ "${RESET_IDX:--1}" -lt 0 ] && { [ "$HAS_THINK_TRIGGER" != "true" ] || [ "$HAS_PLAN_TRIGGER" = "true" ] || [ "$HAS_CODE_TRIGGER" = "true" ] || [ "$HAS_PROVE_TRIGGER" = "true" ] || [ "$HAS_RELEASE_TRIGGER" = "true" ]; }; then
             echo "Audit finding issue #${ISSUE_NUMBER} detected without explicit 1-think; skipping Pipeline - Think and starting Plan."
             mkdir -p "specs/issue-${ISSUE_NUMBER}"
             TODAY=$(date -u +%Y-%m-%d 2>/dev/null || echo "2026-01-01")
@@ -515,7 +524,7 @@ jobs:
           PREVIOUS_THINK=$(echo "$ISSUE_JSON" | jq -r '[.comments[].body | select(test("^# Think:"; "m"))] | last // empty | sub("\\n*(?:---\\n+)?<!-- ai-cost-step:[^\\n]*-->[\\s\\S]*$"; "") | sub("\\n+## Forge Asset Bindings\\r?\\n[\\s\\S]*?(?=\\n## |$)"; "")')
           DEV_COMMENTS=$(echo "$ISSUE_JSON" | jq -r '
             [.comments[]
-              | select((.body // "") | test("^(# (Think|Plan|Code|Prove|Release|Release report)|⏸️ \\*\\*(Paused after|Blocked on)|⚠️ \\*\\*(Think|Plan|Code|Prove) failed|Pull request opened for #|### Companion Game Editor Updates Dispatched|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
+              | select((.body // "") | test("^(# (Think|Plan|Code|Prove|Release|Release report|Release decision|No release|Release blocked)|✅ \\*\\*Already Resolved on Base Branch\\*\\*|## Upstream Library Released|⏸️ \\*\\*(Paused (after|for)|Blocked on)|Blocked waiting on upstream library issue |⚠️ \\*\\*(Think|Plan|Code|Prove) failed|Pull request opened for #|### Companion Game Editor Updates (Dispatched|Scheduled)|Fix-loop limit of|Release failed or did not finish\\.|PR #[0-9]+ (conflicts with|or its base changed))"; "m") | not)
               | select((.body // "") | gsub("\\s+"; "") | length > 0)
               | "### Comment by @" + (.author.login // "developer") + " (" + (.createdAt // "") + "):\n" + .body
             ] | join("\n\n")

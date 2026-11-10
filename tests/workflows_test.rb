@@ -479,6 +479,68 @@ class WorkflowsTest < Minitest::Test
       assert_equal 'false', code_out.fetch('skip')
       assert_empty dispatches
     end
+
+    reopened_comments = [
+      { 'body' => "# Think: Old Spec\n\nOld think body" },
+      { 'body' => "# Plan: Old Plan\n\nOld plan body" },
+      { 'body' => "Pull request opened for #42: https://example.test/pr/99" },
+      { 'body' => "# Prove: Old Prove\n\nOld prove body" },
+      { 'body' => "# Release report\n\n- Issue: #42" },
+      { 'body' => 'Reopening: this still fails when reloading the level.' }
+    ]
+    %w[3-code 4-prove 5-release].each do |trigger_label|
+      code_reopened = run_step(step('code', 'resolve'), scenario([trigger_label], comments: reopened_comments), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
+      assert_equal 'true', code_reopened.fetch('skip')
+      assert_equal [['workflow', 'run', 'think.yml', '-f', 'issue_number=42']], dispatches
+
+      think_reopened = run_step(step('think', 'resume'), scenario([trigger_label], comments: reopened_comments))
+      assert_equal 'none', think_reopened.fetch('resumed_stage')
+      assert_empty dispatches
+    end
+
+    plan_reopened = run_step(step('plan', 'resolve'), scenario(['2-plan'], comments: reopened_comments), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
+    assert_equal 'true', plan_reopened.fetch('skip')
+    assert_equal [['workflow', 'run', 'think.yml', '-f', 'issue_number=42']], dispatches
+
+    audit_reopened_comments = [
+      { 'body' => "✅ **Already Resolved on Base Branch**\n\nPreviously closed." },
+      { 'body' => 'Actually the dead export is still present in src/index.js.' }
+    ]
+    code_audit_reopened = run_step(step('code', 'resolve'), scenario(%w[audit:dead-code 5-release], comments: audit_reopened_comments), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
+    assert_equal 'true', code_audit_reopened.fetch('skip')
+    assert_equal [['workflow', 'run', 'think.yml', '-f', 'issue_number=42']], dispatches
+
+    plan_audit_reopened = run_step(step('plan', 'resolve'), scenario(%w[audit:dead-code 2-plan], comments: audit_reopened_comments), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
+    assert_equal 'true', plan_audit_reopened.fetch('skip')
+    assert_equal [['workflow', 'run', 'think.yml', '-f', 'issue_number=42']], dispatches
+
+    think_audit_reopened = run_step(step('think', 'resume'), scenario(%w[audit:dead-code 5-release], comments: audit_reopened_comments))
+    assert_equal 'none', think_audit_reopened.fetch('resumed_stage')
+    assert_empty dispatches
+
+    reopened_after_think = reopened_comments + [{ 'body' => "# Think: Revised Spec\n\nRevised think body" }]
+    think_after_new_think = run_step(step('think', 'resume'), scenario(['5-release'], comments: reopened_after_think))
+    assert_equal 'plan', think_after_new_think.fetch('resumed_stage')
+    assert_equal "# Think: Revised Spec\n\nRevised think body\n", File.read(File.join(@directory, 'specs/issue-42/think.md'))
+
+    plan_after_new_think = run_step(step('plan', 'resolve'), scenario(['5-release'], comments: reopened_after_think), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
+    assert_equal 'false', plan_after_new_think.fetch('skip')
+    assert_equal "# Think: Revised Spec\n\nRevised think body\n", File.read('/tmp/specs/issue-42/think.md')
+
+    code_after_new_think = run_step(step('code', 'resolve'), scenario(['5-release'], comments: reopened_after_think), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
+    assert_equal 'true', code_after_new_think.fetch('skip')
+    assert_equal [['workflow', 'run', 'plan.yml', '-f', 'issue_number=42']], dispatches
+
+    reopened_after_plan = reopened_after_think + [{ 'body' => "# Plan: Revised Plan\n\nRevised plan body" }]
+    think_after_new_plan = run_step(step('think', 'resume'), scenario(['5-release'], comments: reopened_after_plan))
+    assert_equal 'code', think_after_new_plan.fetch('resumed_stage')
+    assert_equal [['workflow', 'run', 'code.yml', '-f', 'issue_number=42']], dispatches
+
+    code_after_new_plan = run_step(step('code', 'resolve'), scenario(['5-release'], comments: reopened_after_plan), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
+    assert_equal 'false', code_after_new_plan.fetch('skip')
+    assert_empty dispatches
+    assert_equal "# Think: Revised Spec\n\nRevised think body\n", File.read('/tmp/specs/issue-42/think.md')
+    assert_equal "# Plan: Revised Plan\n\nRevised plan body\n", File.read('/tmp/specs/issue-42/plan.md')
   end
 
   def test_failures_remove_trigger_labels_without_restarting_other_issues
