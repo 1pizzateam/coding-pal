@@ -490,7 +490,7 @@ jobs:
                     | sub("\\s+$"; "")
                     | if length > 400 then .[0:400] + "..." elif length > 0 then . else $title end
                   ) as $summary |
-                  ([(.body // "") | scan("`([A-Za-z0-9_][A-Za-z0-9_./-]*\\.[A-Za-z0-9]+)`") | .[0] | select((startswith("/") or test("(^|/)\\.\\.(/|$)")) | not)] | unique | if length > 0 then (map("`" + . + "`") | join(", ")) else "Repository source and test modules identified in issue #" + $issue_number end) as $affected |
+                  ([(.body // "") | scan("`([A-Za-z0-9_][A-Za-z0-9_./-]*\\.[A-Za-z0-9]+)`") | .[0] | select((startswith("/") or test("(^|/)\\.\\.(/|$)")) | not)] | unique | if length > 0 then ((map("`" + . + "`") + ["`tests/`"]) | unique | join(", ")) else "Repository source and test modules identified in issue #" + $issue_number end) as $affected |
                   "# Think: " + $title + "\n\n" +
                   "## Business Need & Outcome\n" +
                   "- **Backlog Issue:** #" + $issue_number + " — " + $title + " (" + $audit_label + ")\n" +

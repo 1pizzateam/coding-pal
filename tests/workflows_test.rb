@@ -2097,6 +2097,7 @@ class WorkflowsTest < Minitest::Test
     assert_includes synthesized_think, '# Think: Add unit tests for Raycaster'
     assert_includes synthesized_think, 'audit:test-gap'
     assert_includes synthesized_think, '`src/engine/Raycaster.js`'
+    assert_includes synthesized_think, '`tests/`'
     assert_includes synthesized_think, 'Automated by coding-pal-audit on '
     assert_includes synthesized_think, '- **Docs:** _None._ - Scoped audit remediation does not change public APIs or user-facing documentation.'
     refute @calls.any? { |args| args.first(2) == %w[issue comment] }, 'Plan must not post a # Think: comment on the issue'
