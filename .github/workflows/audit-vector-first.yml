@@ -1,4 +1,4 @@
-name: Audit - Vector-first
+name: Audit agent - vector-first
 
 on:
   workflow_call:

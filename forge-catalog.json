@@ -561,6 +561,65 @@
       "composesWith": ["facer", "roostr", "spock", "loopr"],
       "replacement": null,
       "removalDate": null
+    },
+    {
+      "id": "ctrltab",
+      "name": "CtrlTab.js",
+      "kind": "library",
+      "summary": "Shortcut key bindings library with multiple keystroke detection: named commands with modifier keys, grouped enable/disable, runtime rebinding, and key-repeat control. Use it for every keyboard control in 1PizzaTeam projects instead of hand-rolled keydown/keyup handlers.",
+      "capabilities": [
+        "Named keyboard commands with ctrl/alt/shift modifiers and multi-key (keystroke chord) detection",
+        "Command groups that can be enabled and disabled at runtime with listen(group) and ignore(group)",
+        "Runtime rebinding of commands with setInputs() and reset to defaults with default()",
+        "Per-command options: preventDefault, key repeat, callback scope, and key-down/key-up callbacks"
+      ],
+      "keywords": [
+        "keyboard",
+        "key binding",
+        "keybinding",
+        "keystroke",
+        "shortcut",
+        "shortcuts",
+        "hotkey",
+        "controls",
+        "input",
+        "keydown",
+        "keyup",
+        "rebind",
+        "ctrltab"
+      ],
+      "owner": "dwtechs",
+      "version": "3.0.1",
+      "maturity": "stable",
+      "status": "active",
+      "releasedAt": "2021-05-23",
+      "interface": {
+        "type": "TypeScript ESM/IIFE Library",
+        "docs": "https://github.com/DWTechs/CtrlTab.js#readme",
+        "integrationGuide": "https://github.com/DWTechs/CtrlTab.js#readme",
+        "contract": "TypeScript declarations (dist/ctrltab) published in @dwtechs/ctrltab; entry point is the Keyboard class"
+      },
+      "artifacts": [
+        {
+          "type": "npm-package",
+          "ref": "@dwtechs/ctrltab"
+        },
+        {
+          "type": "git-repository",
+          "ref": "https://github.com/DWTechs/CtrlTab.js"
+        }
+      ],
+      "docs": "https://github.com/DWTechs/CtrlTab.js#readme",
+      "repository": "https://github.com/DWTechs/CtrlTab.js",
+      "license": "MIT",
+      "tests": {
+        "ci": "https://github.com/DWTechs/CtrlTab.js"
+      },
+      "composesWith": [
+        "loopr"
+      ],
+      "replacement": null,
+      "removalDate": null
     }
   ]
 }

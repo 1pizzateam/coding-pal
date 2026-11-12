@@ -1,4 +1,4 @@
-name: Audit - Test coverage gaps
+name: Audit agent - test-gap
 
 on:
   workflow_call:

@@ -1,4 +1,4 @@
-name: Audit - Documentation sync
+name: Audit agent - docs-sync
 
 on:
   workflow_call:

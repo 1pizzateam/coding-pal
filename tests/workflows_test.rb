@@ -291,7 +291,7 @@ class WorkflowsTest < Minitest::Test
       end
     end
     audits = Dir.glob(File.join(ROOT, '.github/workflows/*audit*.yml'))
-    audits.each { |path| assert File.basename(path).start_with?('audit-'), path }
+    audits.each { |path| assert File.basename(path).start_with?('audit-') || File.basename(path) == 'harness-audits.yml', path }
   end
 
   def test_checkpoints_pause_only_at_the_requested_phase
@@ -1767,7 +1767,7 @@ class WorkflowsTest < Minitest::Test
     catalog = JSON.parse(File.read(catalog_path))
     assert_equal 1, catalog.fetch('version')
     asset_ids = catalog.fetch('assets').map { |a| a.fetch('id') }
-    assert_equal %w[spock bumpr loopr roostr groovr facer cadenza facegun mappr pixelgun polygun shadergun].sort, asset_ids.sort
+    assert_equal %w[spock bumpr loopr roostr groovr facer ctrltab cadenza facegun mappr pixelgun polygun shadergun].sort, asset_ids.sort
 
     %w[think plan code prove].each do |phase|
       content = File.read(File.join(ROOT, ".github/workflows/pipeline-#{phase}.yml"))
@@ -1806,7 +1806,7 @@ class WorkflowsTest < Minitest::Test
     }))
     File.write(File.join(@directory, 'package.json'), JSON.generate({
       'dependencies' => { '@1pizzateam/roostr' => '^0.12.0' },
-      'devDependencies' => { '@1pizzateam/bumpr' => '~1.4.2' }
+      'devDependencies' => { '@1pizzateam/bumpr' => '~1.4.2', '@dwtechs/ctrltab' => '^3.1.0' }
     }))
 
     install_script = steps('think').find { |item| item['name'] == 'Install ALTEN-group/coding-pal think primitives' }.fetch('run')
@@ -1823,6 +1823,7 @@ class WorkflowsTest < Minitest::Test
     assert merged_by_id.key?('external-glsl-lint'), 'Repo-local forge-catalog.json asset must be merged'
     assert_equal '0.12.0', merged_by_id.dig('roostr', 'version')
     assert_equal '1.4.2', merged_by_id.dig('bumpr', 'version')
+    assert_equal '3.1.0', merged_by_id.dig('ctrltab', 'version')
   end
 
   def test_code_exit_gates_auto_commit_in_scope_edits_and_reject_empty_branches
@@ -2409,7 +2410,7 @@ class WorkflowsTest < Minitest::Test
 
     audit_steps = YAML.load_file(File.join(ROOT, '.github/workflows/audit-runner.yml')).fetch('jobs').fetch('audit').fetch('steps')
     audit_install = audit_steps.find { |item| item['name'] == 'Install ALTEN-group/coding-pal audit primitives' }.fetch('run')
-    assert_includes audit_install, 'for agent in dead-code test-gap docs-sync dependency-leverage; do'
+    assert_includes audit_install, 'for agent in dead-code test-gap docs-sync dependency-leverage token-audit; do'
     assert_includes audit_install, 'cp /tmp/1pizza-coding-pal/agents/*.md .github/agents/'
     assert_includes audit_install, '.agents/skills/forge/catalog.json'
     assert_equal %w[perf-audit.agent.md vector-first.agent.md],

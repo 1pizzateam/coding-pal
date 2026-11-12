@@ -1,4 +1,4 @@
-name: Pipeline - Code (reusable)
+name: Pipeline - Code
 
 on:
   workflow_call:
@@ -575,7 +575,7 @@ jobs:
               (($pkg[0].dependencies // {}) + ($pkg[0].devDependencies // {})) as $deps |
               .assets |= map(
                 . as $a |
-                ($deps["@1pizzateam/" + $a.id] // $deps[$a.id] // "") |
+                ($deps["@1pizzateam/" + $a.id] // $deps["@dwtechs/" + $a.id] // $deps[$a.id] // "") |
                 sub("^[~^>=<v]+"; "") as $v |
                 if ($v | test("^[0-9]+\\.[0-9]+\\.[0-9]+")) then ($a | .version = $v) else $a end
               )

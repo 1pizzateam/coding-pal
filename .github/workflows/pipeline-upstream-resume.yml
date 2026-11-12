@@ -1,4 +1,4 @@
-name: Pipeline - Resume upstream (reusable)
+name: Pipeline - Resume upstream
 
 on:
   workflow_call:

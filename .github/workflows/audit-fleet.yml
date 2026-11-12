@@ -1,4 +1,4 @@
-name: Audit - Fleet dispatch
+name: Audit fleet (all repos)
 
 on:
   workflow_dispatch:

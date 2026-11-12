@@ -1,4 +1,4 @@
-name: Audit - Dead code
+name: Audit agent - dead-code
 
 on:
   workflow_call:

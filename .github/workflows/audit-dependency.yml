@@ -1,4 +1,4 @@
-name: Audit - Dependencies
+name: Audit agent - dependency-leverage
 
 on:
   workflow_call:

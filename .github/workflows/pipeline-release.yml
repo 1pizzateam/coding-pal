@@ -1,4 +1,4 @@
-name: Pipeline - Release (reusable)
+name: Pipeline - Release
 
 on:
   workflow_call:

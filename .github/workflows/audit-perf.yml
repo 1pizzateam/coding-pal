@@ -1,4 +1,4 @@
-name: Audit - Performance & Zero-GC
+name: Audit agent - perf-audit
 
 on:
   workflow_call:

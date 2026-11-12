@@ -1,4 +1,4 @@
-name: Audit - Runner
+name: Audit engine (run agent and file issues)
 
 on:
   workflow_call:
@@ -98,7 +98,7 @@ jobs:
           cp /tmp/1pizza-coding-pal/instructions/*.md .github/instructions/
           [ -d tests ] && [ -f /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md ] && cp /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md .github/instructions/
           [ -d website ] && [ -f /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md ] && cp /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md .github/instructions/
-          for agent in dead-code test-gap docs-sync dependency-leverage; do
+          for agent in dead-code test-gap docs-sync dependency-leverage token-audit; do
             [ -f "/tmp/alten-coding-pal/agents/${agent}.agent.md" ] && cp "/tmp/alten-coding-pal/agents/${agent}.agent.md" .github/agents/
           done
           cp /tmp/1pizza-coding-pal/agents/*.md .github/agents/
@@ -115,7 +115,7 @@ jobs:
               (($pkg[0].dependencies // {}) + ($pkg[0].devDependencies // {})) as $deps |
               .assets |= map(
                 . as $a |
-                ($deps["@1pizzateam/" + $a.id] // $deps[$a.id] // "") |
+                ($deps["@1pizzateam/" + $a.id] // $deps["@dwtechs/" + $a.id] // $deps[$a.id] // "") |
                 sub("^[~^>=<v]+"; "") as $v |
                 if ($v | test("^[0-9]+\\.[0-9]+\\.[0-9]+")) then ($a | .version = $v) else $a end
               )
