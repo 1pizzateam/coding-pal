@@ -548,6 +548,7 @@ jobs:
           git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/ALTEN-group/coding-pal.git /tmp/alten-coding-pal
           git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/1pizzateam/coding-pal.git /tmp/1pizza-coding-pal
           rm -rf .github/instructions .github/agents .github/prompts .github/skills .github/copilot-instructions.md .agents .claude .cursor .gemini CLAUDE.md GEMINI.md AGENTS.md .cursorrules .windsurfrules
+          git checkout -- .claude .cursor .gemini CLAUDE.md GEMINI.md AGENTS.md .cursorrules .windsurfrules 2>/dev/null || true
           mkdir -p .github/instructions .github/agents .agents/skills
           cp /tmp/1pizza-coding-pal/instructions/*.md .github/instructions/
           cp -R /tmp/1pizza-coding-pal/skills/* .agents/skills/
