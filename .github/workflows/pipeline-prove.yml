@@ -981,6 +981,7 @@ jobs:
             fi
 
             if node -e 'const pkg=require("./package.json"); process.exit((pkg.dependencies?.vite || pkg.devDependencies?.vite) ? 0 : 1)' 2>/dev/null; then
+              [ -d dist ] || $BUILD_CMD >/tmp/vite-build.log 2>&1 || true
               npx vite preview --port 4173 --host 127.0.0.1 >/tmp/vite-preview.log 2>&1 &
               PREVIEW_PID=$!
               run_check "preview-smoke" node .agents/skills/prove/scripts/preview-smoke.mjs --url http://127.0.0.1:4173 --routes /tmp/preview-routes.json --timeout-ms 5000 --retries 5 --retry-delay-ms 1000
