@@ -150,7 +150,7 @@ jobs:
         if: steps.preflight.outputs.skip != 'true'
         run: |
           if [ -f package-lock.json ]; then
-            npm ci --ignore-scripts 2>/dev/null || npm ci || true
+            npm ci --ignore-scripts --prefer-offline --no-audit 2>/dev/null || npm ci --prefer-offline --no-audit || true
           fi
 
       - name: Cache Copilot CLI

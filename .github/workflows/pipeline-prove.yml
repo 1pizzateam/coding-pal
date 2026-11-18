@@ -654,7 +654,7 @@ jobs:
           esac
 
       - if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true'
-        run: npm ci
+        run: npm ci --prefer-offline --no-audit
 
       - name: Cache Copilot CLI
         if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true'
@@ -662,7 +662,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.copilot-cli
-          key: copilot-cli-${{ runner.os }}-${{ inputs.node_version }}
+          key: copilot-cli-${{ runner.os }}-node${{ inputs.node_version }}
 
       - name: Install Copilot CLI
         if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true'
