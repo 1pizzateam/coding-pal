@@ -38,6 +38,7 @@ on:
           - dead-code-audit
           - test-gap-audit
           - docs-sync-audit
+          - a11y-audit
       scope:
         description: 'Path to audit (e.g. src/)'
         type: string
@@ -113,6 +114,17 @@ jobs:
                 *)
                   echo "Skipping ${REPO}: docs-sync-audit is not configured for this repository."
                   echo "| \`1pizzateam/${REPO}\` | Skipped (\`docs-sync-audit\` not applicable) |" >> "$GITHUB_STEP_SUMMARY"
+                  continue
+                  ;;
+              esac
+            fi
+
+            if [ "$AUDIT" = "a11y-audit" ]; then
+              case "$REPO" in
+                Cadenza|DoomR.js|FaceGun|MappR|PixelGun|PolyGun|ShaderGun) ;;
+                *)
+                  echo "Skipping ${REPO}: a11y-audit is only configured for UI/editor repositories."
+                  echo "| \`1pizzateam/${REPO}\` | Skipped (\`a11y-audit\` not applicable) |" >> "$GITHUB_STEP_SUMMARY"
                   continue
                   ;;
               esac

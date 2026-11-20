@@ -2083,6 +2083,14 @@ class WorkflowsTest < Minitest::Test
     out_editors_docs = run_step(dispatch_step, scenario, { 'TARGET' => 'editors', 'AUDIT' => 'docs-sync-audit' })
     assert_equal '1', out_editors_docs.fetch('dispatched_count')
     assert_equal [['workflow', 'run', 'audits.yml', '--repo', '1pizzateam/FaceGun', '-f', 'audit=docs-sync-audit', '-f', 'scope=src/', '-f', 'dependency=all']], dispatches
+
+    out_libs_a11y = run_step(dispatch_step, scenario, { 'TARGET' => 'libraries', 'AUDIT' => 'a11y-audit' })
+    assert_equal '0', out_libs_a11y.fetch('dispatched_count')
+    assert_empty dispatches
+
+    out_editors_a11y = run_step(dispatch_step, scenario, { 'TARGET' => 'editors', 'AUDIT' => 'a11y-audit' })
+    assert_equal '6', out_editors_a11y.fetch('dispatched_count')
+    assert_equal 6, dispatches.length
   end
 
   def test_audit_finding_issues_skip_think_and_synthesize_valid_think_spec
@@ -2410,7 +2418,7 @@ class WorkflowsTest < Minitest::Test
 
     audit_steps = YAML.load_file(File.join(ROOT, '.github/workflows/audit-runner.yml')).fetch('jobs').fetch('audit').fetch('steps')
     audit_install = audit_steps.find { |item| item['name'] == 'Install ALTEN-group/coding-pal audit primitives' }.fetch('run')
-    assert_includes audit_install, 'for agent in dead-code test-gap docs-sync dependency-leverage token-audit; do'
+    assert_includes audit_install, 'for agent in dead-code test-gap docs-sync dependency-leverage token-audit a11y-audit; do'
     assert_includes audit_install, 'cp /tmp/1pizza-coding-pal/agents/*.md .github/agents/'
     assert_includes audit_install, '.agents/skills/forge/catalog.json'
     assert_equal %w[perf-audit.agent.md vector-first.agent.md],

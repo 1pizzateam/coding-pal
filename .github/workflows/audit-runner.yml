@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       agent:
-        description: 'Copilot agent name (e.g. dependency-leverage, vector-first, perf-audit, dead-code, test-gap, docs-sync)'
+        description: 'Copilot agent name (e.g. dependency-leverage, vector-first, perf-audit, dead-code, test-gap, docs-sync, a11y-audit)'
         required: true
         type: string
       scope:
@@ -55,6 +55,16 @@ jobs:
           REPO_PRIVATE: ${{ github.event.repository.private }}
           AGENT: ${{ inputs.agent }}
         run: |
+          if [ "$AGENT" = "a11y-audit" ]; then
+            UI_FILES=$(find . -maxdepth 4 \( -path './.git' -o -path './node_modules' -o -path './website' -o -path './dist' \) -prune -o -type f \( -name '*.html' -o -name '*.tsx' -o -name '*.jsx' -o -name '*.vue' -o -name '*.svelte' -o -name '*.css' -o -name '*.scss' \) -print 2>/dev/null | head -n 1 || true)
+            if [ -z "$UI_FILES" ]; then
+              echo "::notice::Skipping ${AGENT} audit: no UI files found in ${CURRENT_REPO}."
+              echo "Skipped \`${AGENT}\` audit: no UI files found in repository." >> "$GITHUB_STEP_SUMMARY"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
           if [ "$EVENT_NAME" != "schedule" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -98,7 +108,7 @@ jobs:
           cp /tmp/1pizza-coding-pal/instructions/*.md .github/instructions/
           [ -d tests ] && [ -f /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md ] && cp /tmp/alten-coding-pal/instructions/node-unit-tests.instructions.md .github/instructions/
           [ -d website ] && [ -f /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md ] && cp /tmp/alten-coding-pal/instructions/vitepress-docs.instructions.md .github/instructions/
-          for agent in dead-code test-gap docs-sync dependency-leverage token-audit; do
+          for agent in dead-code test-gap docs-sync dependency-leverage token-audit a11y-audit; do
             [ -f "/tmp/alten-coding-pal/agents/${agent}.agent.md" ] && cp "/tmp/alten-coding-pal/agents/${agent}.agent.md" .github/agents/
           done
           cp /tmp/1pizza-coding-pal/agents/*.md .github/agents/
