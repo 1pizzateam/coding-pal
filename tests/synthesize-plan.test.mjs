@@ -29,7 +29,7 @@ const BODY = `## Problem
 ---
 _Reported by \`dead-code\` audit in \`src/\`._`;
 
-const THINK = '## Blast Radius\n- **Tier:** Low\n';
+const THINK = '## Chosen Approach\n- **Approved By:** Automated by coding-pal-audit on 2026-11-21\n\n## Blast Radius\n- **Tier:** Low\n';
 
 function repo({ test = true } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'fastpath-'));
@@ -54,6 +54,14 @@ test('eligibility is exactly: audit issue and low effort', () => {
   for (const label of ['audit:perf-audit', 'audit:vector-first', 'audit:test-gap']) {
     assert.equal(run({ labels: [label] }).eligible, true, label);
   }
+});
+
+test('an AI-written Think (after an earlier failure) is never overridden: the AI Planner is used', () => {
+  const aiThink = '## Chosen Approach\n- **Approved By:** Automated by Thinker agent on 2026-11-21\n\n## Constraints & Invariants\n- **Non-Negotiable Rules:** `website/docs/api/time.md` must remain untouched.\n\n## Blast Radius\n- **Tier:** Low\n';
+  const r = synthesizePlan({ issue: issue(), issueNumber: 70, effort: 'low', think: aiThink, root: repo(), today: 'x' });
+  assert.equal(r.eligible, false);
+  assert.match(r.reason, /not synthesized/);
+  assert.equal(synthesizePlan({ issue: issue(), issueNumber: 70, effort: 'low', think: '', root: repo(), today: 'x' }).eligible, false);
 });
 
 test('parses affected files, fix text and acceptance criteria', () => {

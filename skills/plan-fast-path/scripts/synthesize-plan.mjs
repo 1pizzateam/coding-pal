@@ -4,7 +4,9 @@
  * (Affected Files, Suggested Fix, Acceptance Criteria) instead of running the AI Planner, the same way
  * Plan already synthesizes think.md for audit issues.
  *
- * Eligibility is only: the issue has an `audit:*` label AND its effort is Low.
+ * Eligibility is: the issue has an `audit:*` label AND its effort is Low, and think.md is the one the pipeline
+ * synthesized for audit issues. After an earlier failure an audit issue gets an AI-written Think instead; that Think
+ * can carry constraints (files that must stay untouched), so the AI Planner must derive the plan from it.
  * The result is not trusted blindly: pipeline-plan.yml validates it with the regular validate-plan.mjs and
  * falls back to the AI Planner when it does not pass.
  *
@@ -17,6 +19,7 @@ import path from 'node:path';
 
 const TEST_PATH = /(^|\/)(tests?|__tests__)\/|\.(test|spec)\.[cm]?[jt]sx?$/i;
 export const isTestPath = (p) => TEST_PATH.test(p);
+const SYNTHESIZED_THINK = /^- \*\*Approved By:\*\*\s*Automated by coding-pal-audit\b/m;
 const DOC_PATH = /^(website\/docs\/|docs\/)|\.(md|mdx)$/i;
 export const isDocPath = (p) => DOC_PATH.test(p);
 
@@ -59,6 +62,8 @@ export function synthesizePlan({ issue, issueNumber, effort, think, root, today 
   const audit = labelNames(issue.labels).find((l) => l.toLowerCase().startsWith('audit:'));
   if (!audit) return { eligible: false, reason: 'not an audit issue' };
   if (String(effort || '').toLowerCase() !== 'low') return { eligible: false, reason: `effort is ${effort || 'unset'}, not low` };
+
+  if (!SYNTHESIZED_THINK.test(think || '')) return { eligible: false, reason: 'think.md was not synthesized by the pipeline; the AI Planner derives the plan from it' };
 
   const { files, fix, acs } = parseIssueBody(issue.body || '');
   const scope = files.filter((f) => !f.startsWith('/') && !/(^|\/)\.\.(\/|$)/.test(f));
