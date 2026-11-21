@@ -18,7 +18,10 @@
  *     "issues":    [{ "number", "labels": [...], "milestone": {"title"} | null }],   // open issues of the repo
  *     "mergedPrs": [{ "headRefName" }],                            // merged PRs of the repository
  *     "openPrs":   [{ "headRefName" }] }                           // open PRs of the repository
- * An issue is merged / has an open PR when a PR from branch `feature/issue-<n>-*` exists.
+ * An issue is merged when a PR from branch `feature/issue-<n>-*` merged. An issue is IN FLIGHT only while work is
+ * actually queued or running for it: it carries a stage label (`3-code`, `4-prove`, `5-release`) and has an open
+ * PR (intercept) or just the label (advance). An open PR alone does not count: a parked (`ready`) or paused issue
+ * keeps its PR, and counting it would let two issues block each other forever.
  * `needs:developer` issues never block and are never started: a failure stops the chain, it does not jam it.
  */
 import { mergedIssueNumbers } from './plan-batch.mjs';
@@ -38,13 +41,16 @@ export function planChain({ mode, issueNumber, milestone = '', issues = [], merg
     .filter((i) => !i.labels.includes('needs:developer'));
 
   if (mode === 'intercept') {
-    const blockers = others.filter((i) => withOpenPr.has(i.number)).map((i) => i.number).sort((a, b) => a - b);
+    const blockers = others
+      .filter((i) => withOpenPr.has(i.number) && i.labels.some((l) => STAGE_LABELS.includes(l)))
+      .map((i) => i.number)
+      .sort((a, b) => a - b);
     return { action: blockers.length ? 'intercept' : 'proceed', blockers };
   }
 
   if (mode === 'advance') {
     const busy = others
-      .filter((i) => withOpenPr.has(i.number) || i.labels.some((l) => STAGE_LABELS.includes(l)))
+      .filter((i) => i.labels.some((l) => STAGE_LABELS.includes(l)))
       .map((i) => i.number)
       .sort((a, b) => a - b);
     if (busy.length) return { action: 'none', reason: 'busy', busy };

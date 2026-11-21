@@ -678,6 +678,7 @@ jobs:
           - **Documentation Steps:** Every '- **Docs:**' path in ${THINK_FILE}'s ## Persistent Context Updates MUST be listed under '- **In Scope:**' and in the Files field of its own atomic step placed after the first step that changes code (validate-plan.mjs enforces this order), serving the relevant AC-<n>. Do NOT add any new level-two heading to ${PLAN_FILE}: the plan contract allows only its fixed headings.
           ${LIBRARY_DOCS_HINT}
           Every test in ## Test Plan must include its acceptance criterion ID ('AC-1', 'AC-2', etc.) in the test name (for example 'tests/<file>: AC-1 ...' or 'scripts/<file>: AC-1 ...') and start the Test Plan 'Test' cell with the relative test file path so criteria-verify can verify every criterion with --require-test-files.
+          A documentation or changelog criterion is still verified by a test file: name the test file that asserts the documentation content (never a .md or source file) and add that test to the Step that serves the criterion.
           Do not modify any production or test files; only write ${PLAN_FILE}.
           Do not post comments or edit labels on GitHub issues; only write ${PLAN_FILE}.
           Validate and cross-check the generated file with: node .agents/skills/plan/scripts/validate-plan.mjs --plan ${PLAN_FILE} --think ${THINK_FILE} and fix any validation errors until it exits with code 0." \
@@ -909,6 +910,17 @@ jobs:
               echo ""
               echo '```text'
               cat "$RUNNER_TEMP/validate-plan-scope.log"
+              echo '```'
+            } > "$RUNNER_TEMP/plan-failure-reason.md"
+            exit 1
+          fi
+          if [ -f .agents/skills/plan-fast-path/scripts/check-test-plan.mjs ] && ! node .agents/skills/plan-fast-path/scripts/check-test-plan.mjs --plan "$PLAN_FILE" > "$RUNNER_TEMP/check-test-plan.log" 2>&1; then
+            cat "$RUNNER_TEMP/check-test-plan.log" >&2
+            {
+              echo "Plan Test Plan check failed for \`${PLAN_FILE}\`:"
+              echo ""
+              echo '```text'
+              cat "$RUNNER_TEMP/check-test-plan.log"
               echo '```'
             } > "$RUNNER_TEMP/plan-failure-reason.md"
             exit 1
