@@ -26,4 +26,5 @@ node .agents/skills/release-bump/scripts/classify-bump.mjs \
 - Intent only raises the bump: `feat...` floors at minor, `fix...` at patch, `feat!:` / `BREAKING CHANGE` / label `breaking` or `release:major` floors at major. `release:minor` / `release:patch` labels also set floors.
 - A **major** derived from evidence alone (no `breaking`/`release:major`/`!` marker) is not released: the step fails with an issue comment asking for the `breaking` label, then the release is re-run.
 - `0.x` stable versions release breaking changes as `minor`. Prerelease versions (`-alpha/-beta/-rc`) release any shipped change as `prerelease`.
+- `private` and `#private` class members are stripped from both `.d.ts` sets before comparing: they are not public API, and TypeScript would otherwise treat any private-member change as an incompatible class. `protected` members still count.
 - Compatibility is judged from the consumer side with the TypeScript checker (`isTypeAssignableTo`, old and new declarations in one program), so `typescript` must be resolvable from `--ts-from`; without it a changed `.d.ts` is treated as at least minor.

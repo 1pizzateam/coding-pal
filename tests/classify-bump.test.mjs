@@ -117,3 +117,29 @@ test('intent floor parsing', () => {
   assert.deepEqual(intentFloor('feat!: y', []), { level: 'major', confirmedMajor: true });
   assert.equal(intentFloor('anything', ['breaking']).level, 'major');
 });
+
+test('private/#private class members are not public API: adding them is patch, not major', () => {
+  const prev = pkg({ dts: 'export declare class C {\n  private a;\n  private static s;\n  x: number;\n  m(): void;\n}\n' });
+  const next = pkg({
+    js: '// perf\n',
+    dts: 'export declare class C {\n  private a;\n  private b;\n  #p;\n  private static s;\n  x: number;\n  m(): void;\n}\n',
+  });
+  const r = run(prev, next);
+  assert.equal(r.bump, 'patch');
+  assert.equal(r.needsConfirmation, false);
+  assert.deepEqual(r.apiChanges, []);
+});
+
+test('class: removing a public member is still major, adding a public member is minor', () => {
+  const prev = pkg({ dts: 'export declare class C {\n  private a;\n  x: number;\n  m(): void;\n}\n' });
+  const removed = run(prev, pkg({ js: '// r\n', dts: 'export declare class C {\n  private a;\n  x: number;\n}\n' }));
+  assert.equal(removed.bump, 'major');
+  const added = run(prev, pkg({ js: '// a\n', dts: 'export declare class C {\n  private a;\n  private b;\n  x: number;\n  m(): void;\n  n(): void;\n}\n' }));
+  assert.equal(added.bump, 'minor');
+});
+
+test('class: changing a public member type incompatibly is major even with private changes', () => {
+  const prev = pkg({ dts: 'export declare class C {\n  private a;\n  x: number;\n}\n' });
+  const r = run(prev, pkg({ js: '// t\n', dts: 'export declare class C {\n  private a;\n  private b;\n  x: string;\n}\n' }));
+  assert.equal(r.bump, 'major');
+});

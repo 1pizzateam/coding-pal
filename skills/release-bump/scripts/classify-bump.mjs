@@ -109,8 +109,34 @@ function loadTypeScript(tsFrom) {
  * Compare exported declarations of two .d.ts entry points inside ONE TypeScript program,
  * so consumer-side assignability can be checked across old and new types.
  */
+/**
+ * Private members (`private x`, `#x`) are not public API, but TypeScript compares classes
+ * nominally when they have private members: two declarations of the same class are never
+ * mutually assignable once any private member differs. Strip them from every .d.ts the
+ * program reads so only the public surface is compared.
+ */
+function stripPrivateMembers(ts, sf) {
+  const isPrivate = (member) =>
+    (member.name && ts.isPrivateIdentifier(member.name)) ||
+    (ts.canHaveModifiers(member) &&
+      (ts.getModifiers(member) || []).some((m) => m.kind === ts.SyntaxKind.PrivateKeyword));
+  const visit = (node, context) => {
+    if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+      const kept = node.members.filter((m) => ts.isConstructorDeclaration(m) || !isPrivate(m));
+      node = ts.isClassDeclaration(node)
+        ? ts.factory.updateClassDeclaration(node, node.modifiers, node.name, node.typeParameters, node.heritageClauses, kept)
+        : ts.factory.updateClassExpression(node, node.modifiers, node.name, node.typeParameters, node.heritageClauses, kept);
+    }
+    return ts.visitEachChild(node, (child) => visit(child, context), context);
+  };
+  const result = ts.transform(sf, [(context) => (root) => ts.visitNode(root, (n) => visit(n, context))]);
+  const text = ts.createPrinter({ removeComments: true }).printFile(result.transformed[0]);
+  result.dispose();
+  return ts.createSourceFile(sf.fileName, text, sf.languageVersion, true);
+}
+
 function diffApi(ts, prevTypes, nextTypes) {
-  const program = ts.createProgram([prevTypes, nextTypes], {
+  const options = {
     noEmit: true,
     skipLibCheck: true,
     strict: true,
@@ -118,7 +144,16 @@ function diffApi(ts, prevTypes, nextTypes) {
     target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.ESNext,
     moduleResolution: ts.ModuleResolutionKind.Bundler,
-  });
+  };
+  const host = ts.createCompilerHost(options);
+  const getSourceFile = host.getSourceFile.bind(host);
+  host.getSourceFile = (fileName, ...rest) => {
+    const sf = getSourceFile(fileName, ...rest);
+    return sf && /\.d\.[cm]?ts$/.test(fileName) && !/[\\/]node_modules[\\/]typescript[\\/]/.test(fileName)
+      ? stripPrivateMembers(ts, sf)
+      : sf;
+  };
+  const program = ts.createProgram([prevTypes, nextTypes], options, host);
   const checker = program.getTypeChecker();
   const printer = ts.createPrinter({ removeComments: true });
   const exportsOf = (file) => {
