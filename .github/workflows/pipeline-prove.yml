@@ -1414,7 +1414,7 @@ jobs:
           BATCH_MEMBERS=""
           BATCH_TITLES=""
           if [ -n "$MILESTONE_TITLE" ]; then
-            MILESTONE_ISSUES=$(gh issue list --milestone "$MILESTONE_TITLE" --state all --limit 500 --json number,title,labels)
+            MILESTONE_ISSUES=$(gh issue list --milestone "$MILESTONE_TITLE" --state all --limit 500 --json number,title,state,labels)
             MERGED_PRS=$(gh pr list --state merged --limit 500 --json number,headRefName)
             BATCH_PLAN=$(jq -n --argjson issue "$ISSUE_NUMBER" --argjson issues "$MILESTONE_ISSUES" --argjson prs "$MERGED_PRS" --arg labels "$ALL_LABELS" \
               '{issueNumber: $issue, issues: $issues, mergedPrs: $prs, labels: ($labels | split(",") | map(select(length > 0)))}' \

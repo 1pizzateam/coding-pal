@@ -8,12 +8,14 @@
  *
  * Reads JSON on stdin:
  *   { "issueNumber": 70,
- *     "issues":    [{ "number", "title", "labels": ["a"] | [{"name"}] }],   // whole milestone, any state
+ *     "issues":    [{ "number", "title", "state": "OPEN" | "CLOSED", "labels": ["a"] | [{"name"}] }],   // whole milestone, any state
  *     "mergedPrs": [{ "number", "headRefName" }],                           // merged PRs of the repo
  *     "labels":    ["release:now", ...] }                                   // labels on this issue + PR
  * Writes JSON: { hold, forced, members, pending, titles, labels }
  *   members - this issue plus every other milestone issue already merged (released together)
- *   pending - milestone issues not merged yet (the train waits for them)
+ *   pending - open milestone issues not merged yet (the train waits for them). A CLOSED issue is never pending:
+ *             one closed without a PR (for example "Already Resolved on Base Branch") has nothing left to ship, and
+ *             would otherwise hold the train forever.
  *
  * The `release:now` label ships the train without waiting for the pending issues.
  */
@@ -34,7 +36,7 @@ export function planBatch({ issueNumber, issues = [], mergedPrs = [], labels = [
   const self = Number(issueNumber);
   const forced = labelNames(labels).some((l) => l.toLowerCase() === 'release:now');
   const members = issues.filter((i) => i.number === self || merged.has(i.number));
-  const pending = issues.filter((i) => i.number !== self && !merged.has(i.number));
+  const pending = issues.filter((i) => i.number !== self && !merged.has(i.number) && String(i.state || 'OPEN').toUpperCase() !== 'CLOSED');
   const memberLabels = new Set(labelNames(labels).map((l) => l.toLowerCase()));
   for (const issue of members) for (const l of labelNames(issue.labels)) memberLabels.add(l.toLowerCase());
   return {

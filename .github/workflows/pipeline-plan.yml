@@ -859,6 +859,31 @@ jobs:
             fi
           fi
 
+      - name: Advance chain after an already-resolved closure
+        if: steps.resolve.outputs.skip != 'true' && steps.already_resolved.outputs.resolved == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+        run: |
+          # An issue closed as already resolved never gets a PR, so Prove never runs and its "Advance chain" step never
+          # fires. Start the next `ready` issue here so the chain does not stall. Same rules as Prove's step:
+          # nothing else in flight, lowest-numbered ready issue (same milestone first). See plan-chain.mjs.
+          rm -rf /tmp/chain-coding-pal
+          git clone --depth 1 -q "https://x-access-token:${GH_TOKEN}@github.com/1pizzateam/coding-pal.git" /tmp/chain-coding-pal 2>/dev/null || exit 0
+          MILESTONE_TITLE=$(gh issue view "$ISSUE_NUMBER" --json milestone --jq '.milestone.title // ""' 2>/dev/null || true)
+          CHAIN=$(jq -n --arg mode advance --argjson issue "$ISSUE_NUMBER" --arg milestone "$MILESTONE_TITLE" \
+            --argjson issues "$(gh issue list --state open --limit 500 --json number,labels,milestone)" \
+            --argjson merged "$(gh pr list --state merged --limit 500 --json headRefName)" \
+            --argjson open "$(gh pr list --state open --limit 200 --json headRefName)" \
+            '{mode: $mode, issueNumber: $issue, milestone: $milestone, issues: $issues, mergedPrs: $merged, openPrs: $open}' \
+            | node /tmp/chain-coding-pal/skills/release-bump/scripts/plan-chain.mjs)
+          echo "$CHAIN"
+          [ "$(echo "$CHAIN" | jq -r '.action')" = "trigger" ] || exit 0
+          NEXT=$(echo "$CHAIN" | jq -r '.issue')
+          gh issue edit "$NEXT" --remove-label ready >/dev/null 2>&1 || true
+          gh issue edit "$NEXT" --add-label 5-release
+          gh issue comment "$NEXT" --body "Started by the chain after #${ISSUE_NUMBER} was closed as already resolved." || true
+          echo "Started #${NEXT}."
+
       - name: Validate plan.md contract and cross-check against think.md
         if: steps.resolve.outputs.skip != 'true' && steps.already_resolved.outputs.resolved != 'true'
         run: |

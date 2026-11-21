@@ -41,3 +41,22 @@ test('the issue being released always counts as merged', () => {
   assert.equal(plan.hold, false);
   assert.deepEqual(plan.members, [43]);
 });
+
+test('a closed issue without a merged PR (already resolved) never holds the train', () => {
+  const withClosed = [
+    { number: 43, title: 'a', state: 'OPEN', labels: [] },
+    { number: 56, title: 'b', state: 'CLOSED', labels: [] },
+    { number: 55, title: 'c', state: 'OPEN', labels: [] },
+  ];
+  const plan = planBatch({ issueNumber: 55, issues: withClosed, mergedPrs: prs(43, 55) });
+  assert.equal(plan.hold, false);
+  assert.deepEqual(plan.pending, []);
+  assert.deepEqual(plan.members, [43, 55]);
+});
+
+test('an open unmerged issue still holds the train; a missing state counts as open', () => {
+  const mixed = [{ number: 1, title: 'a', labels: [] }, { number: 2, title: 'b', state: 'OPEN', labels: [] }, { number: 3, title: 'c', state: 'CLOSED', labels: [] }];
+  const plan = planBatch({ issueNumber: 1, issues: mixed, mergedPrs: prs(1) });
+  assert.equal(plan.hold, true);
+  assert.deepEqual(plan.pending, [2]);
+});
