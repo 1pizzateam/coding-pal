@@ -438,6 +438,34 @@ class WorkflowsTest < Minitest::Test
     assert_equal [['workflow', 'run', 'plan.yml', '-f', 'issue_number=42']], dispatches
   end
 
+  # Regression (#65): comments the pipeline posts itself (queued by single-flight, started by the chain, train
+  # bookkeeping) must not be read as developer feedback, or the issue is reset to Think instead of being resumed.
+  def test_own_pipeline_comments_do_not_reset_a_resumable_issue
+    prs = [{ 'number' => 99, 'headRefName' => 'feature/issue-42-test', 'labels' => [] }]
+    base = [
+      'Started by the chain after #41 merged.',
+      '# Think: scope', '# Plan: steps', 'Pull request opened for #42: https://example.test/pr/99',
+      "\u26A0\uFE0F **Prove failed \u2014 returned to Code with `needs:developer`**\n\nFix-loop limit of 5 automatic remediation attempts reached on PR #99."
+    ]
+    [
+      "# Queued\nIssue(s) #67 are already in flight, so this issue is marked `ready` instead of being coded on a stale main.",
+      'Started by the chain (5.0.0) after #41 merged.',
+      'Milestone train complete (no new npm version was needed). Closed out together with #41.',
+      'Released together with #41 in v5.0.0: milestone train published.'
+    ].each do |own_comment|
+      comments = base + [own_comment]
+      code_out = run_step(step('code', 'resolve'), scenario(['5-release'], comments: comments, prs: prs), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
+      assert_equal 'true', code_out.fetch('skip'), own_comment
+      assert_equal [['workflow', 'run', 'prove.yml', '-f', 'pr_number=99', '-f', 'issue_number=42']], dispatches, "resumed at Prove, not reset to Think after: #{own_comment[0, 30]}"
+      assert_equal 'prove', run_step(step('think', 'resume'), scenario(['5-release'], comments: comments, prs: prs)).fetch('resumed_stage'), own_comment
+    end
+
+    # A real developer comment still resets the issue to Think.
+    dev = run_step(step('code', 'resolve'), scenario(['5-release'], comments: base + ['Actually it still fails when reloading.'], prs: prs), { 'INPUT_ISSUE_NUMBER' => '42', 'RUN_ID' => '' })
+    assert_equal [['workflow', 'run', 'think.yml', '-f', 'issue_number=42']], dispatches
+    assert_equal 'true', dev.fetch('skip')
+  end
+
   def test_existing_pr_is_proven_only_for_release
     prs = [{ 'number' => 99, 'headRefName' => 'feature/issue-42-test', 'labels' => [] }]
     comments = ['# Think: scope', '# Plan: steps']
