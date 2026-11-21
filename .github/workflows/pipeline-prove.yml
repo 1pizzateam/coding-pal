@@ -961,7 +961,18 @@ jobs:
             fi
             run_check "task-gate" node .agents/skills/prove/scripts/task-gate.mjs "${TASK_STAGES[@]}"
 
-            if [ -f "./node_modules/jest/bin/jest.js" ]; then
+            # A documentation-only change (every changed file is docs) has no code under test, so a test per
+            # acceptance criterion cannot exist: report criteria-verify as N/A instead of failing it. The test
+            # suite, the build and every other control still run.
+            DOCS_ONLY=false
+            CHANGED_FILES=$(git diff --name-only "origin/${BASE_REF}..HEAD" | grep -Ev "^(${SPEC_DIR}/|pr\.md$|gate-output\.log$|failed-gates\.log$|reports/)" || true)
+            if [ -n "$CHANGED_FILES" ] && ! echo "$CHANGED_FILES" | grep -Evq '^(website/docs/|docs/)|\.(md|mdx)$'; then
+              DOCS_ONLY=true
+            fi
+            if [ "$DOCS_ONLY" = "true" ]; then
+              echo "=== Control: criteria-verify ===" >> gate-output.log
+              echo "N/A (documentation-only change: no code under test to map acceptance criteria to)" >> gate-output.log
+            elif [ -f "./node_modules/jest/bin/jest.js" ]; then
               run_check "criteria-verify" node .agents/skills/prove/scripts/verify-criteria.mjs --plan "${SPEC_DIR}/plan.md" --report reports/test-report.json --require-test-files
             else
               run_check "criteria-verify" node .agents/skills/prove/scripts/verify-criteria.mjs --plan "${SPEC_DIR}/plan.md" --report reports/test-report.log --require-test-files
