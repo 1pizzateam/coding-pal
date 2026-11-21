@@ -479,6 +479,7 @@ jobs:
           cp /tmp/alten-coding-pal/agents/plan.agent.md .github/agents/
           cp -R /tmp/alten-coding-pal/skills/think .agents/skills/think
           cp -R /tmp/alten-coding-pal/skills/plan .agents/skills/plan
+          [ -d /tmp/1pizza-coding-pal/skills/plan-fast-path ] && cp -R /tmp/1pizza-coding-pal/skills/plan-fast-path .agents/skills/plan-fast-path
           if [ -f .agents/skills/plan/scripts/validate-plan.mjs ]; then
             node -e '
               const fs = require("fs");
@@ -577,6 +578,27 @@ jobs:
           SPEC_DIR="specs/issue-${ISSUE_NUMBER}"
           THINK_FILE="${SPEC_DIR}/think.md"
           PLAN_FILE="${SPEC_DIR}/plan.md"
+
+          # Plan fast path: an audit issue with Low effort gets plan.md built from the issue's own Affected Files /
+          # Suggested Fix / Acceptance Criteria (no AI Planner), exactly like think.md is synthesized for audit issues.
+          # The result must pass the regular validate-plan.mjs; otherwise the AI Planner runs below as usual.
+          # See .agents/skills/plan-fast-path/scripts/synthesize-plan.mjs.
+          if [ -f .agents/skills/plan-fast-path/scripts/synthesize-plan.mjs ] && [ -s "$THINK_FILE" ]; then
+            gh issue view "$ISSUE_NUMBER" --json title,body,labels > "$RUNNER_TEMP/plan-issue.json"
+            FAST_PLAN=$(node .agents/skills/plan-fast-path/scripts/synthesize-plan.mjs \
+              --issue "$RUNNER_TEMP/plan-issue.json" --issue-number "$ISSUE_NUMBER" --effort "${ISSUE_AI_EFFORT:-}" \
+              --think "$THINK_FILE" --out "$PLAN_FILE" --root "$PWD" 2>/dev/null || echo '{"eligible":false,"reason":"synthesizer error"}')
+            echo "Plan fast path: $FAST_PLAN"
+            if [ "$(echo "$FAST_PLAN" | jq -r '.eligible')" = "true" ]; then
+              if node .agents/skills/plan/scripts/validate-plan.mjs --plan "$PLAN_FILE" --think "$THINK_FILE" >/dev/null 2>&1; then
+                echo "::notice::Plan synthesized from audit issue #${ISSUE_NUMBER} (no AI Planner): $(echo "$FAST_PLAN" | jq -r '.reason')"
+                rm -f "${SPEC_DIR}/ai-cost-step.md" "${SPEC_DIR}/ai-cost-pending.jsonl"
+                exit 0
+              fi
+              echo "::notice::Synthesized plan did not pass validate-plan.mjs; running the AI Planner."
+              rm -f "$PLAN_FILE"
+            fi
+          fi
 
           IMAGE_URLS=$(echo "$ISSUE_JSON" | jq -r '
             [ (.body // ""), (.comments[]?.body // "") ]

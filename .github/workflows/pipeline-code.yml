@@ -87,6 +87,34 @@ jobs:
             exit 0
           fi
 
+          # Single-flight: only one issue is in flight (Code -> Prove -> merge) at a time, repository-wide, so every
+          # issue is coded on a main that already contains the previous ones. If another issue already has an open
+          # pipeline PR, park this one as `ready` (no AI call); the chain starts it after that PR merges.
+          # See .agents/skills/release-bump/scripts/plan-chain.mjs.
+          rm -rf /tmp/chain-coding-pal
+          if git clone --depth 1 -q "https://x-access-token:${GH_TOKEN}@github.com/1pizzateam/coding-pal.git" /tmp/chain-coding-pal 2>/dev/null; then
+            CHAIN=$(jq -n --arg mode intercept --argjson issue "$ISSUE_NUMBER" \
+              --argjson issues "$(gh issue list --state open --limit 500 --json number,labels,milestone)" \
+              --argjson merged "$(gh pr list --state merged --limit 500 --json headRefName)" \
+              --argjson open "$(gh pr list --state open --limit 200 --json headRefName)" \
+              '{mode: $mode, issueNumber: $issue, issues: $issues, mergedPrs: $merged, openPrs: $open}' \
+              | node /tmp/chain-coding-pal/skills/release-bump/scripts/plan-chain.mjs 2>/dev/null || echo '{"action":"proceed"}')
+            if [ "$(echo "$CHAIN" | jq -r '.action')" = "intercept" ]; then
+              BLOCKERS=$(echo "$CHAIN" | jq -r '.blockers | map("#" + tostring) | join(", ")')
+              gh label create ready --force --description "Eligible for automatic start by the chain" >/dev/null 2>&1 || true
+              for stage_label in 3-code 4-prove 5-release; do
+                if echo "$ISSUE_VIEW" | jq -e --arg l "$stage_label" '[.labels[].name] | index($l) != null' >/dev/null; then
+                  gh issue edit "$ISSUE_NUMBER" --remove-label "$stage_label" >/dev/null 2>&1 || true
+                fi
+              done
+              gh issue edit "$ISSUE_NUMBER" --add-label ready >/dev/null 2>&1 || true
+              gh issue comment "$ISSUE_NUMBER" --body "$(printf '# Queued\nIssue(s) %s are already in flight, so this issue is marked `ready` instead of being coded on a stale main. It starts automatically after the previous one merges.' "$BLOCKERS")" || true
+              echo "Issue #${ISSUE_NUMBER} parked as ready: ${BLOCKERS} in flight."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
           HAS_AUDIT_LABEL=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | any(startswith("audit:"))')
           HAS_BLOCKED_UPSTREAM=$(echo "$ISSUE_VIEW" | jq -r '[.labels[].name] | index("blocked:upstream") != null')
           HAS_UPSTREAM_RELEASED=$(echo "$ISSUE_VIEW" | jq -r '[.comments[].body | select(test("^## Upstream Library Released"; "m"))] | length > 0')

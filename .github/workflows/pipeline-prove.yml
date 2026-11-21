@@ -1763,6 +1763,32 @@ jobs:
             echo "dispatched=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Advance chain
+        if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true' && steps.checkpoint.outputs.paused != 'true' && steps.start_release.conclusion == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+        run: |
+          # This issue is merged. If nothing else is in flight, start the next `ready` issue by adding `5-release`:
+          # first one of the same milestone, then the lowest number overall. Never starts an issue that is not `ready`.
+          # See .agents/skills/release-bump/scripts/plan-chain.mjs.
+          [ -f .agents/skills/release-bump/scripts/plan-chain.mjs ] || exit 0
+          MILESTONE_TITLE=$(gh issue view "$ISSUE_NUMBER" --json milestone --jq '.milestone.title // ""' 2>/dev/null || true)
+
+          CHAIN=$(jq -n --arg mode advance --argjson issue "$ISSUE_NUMBER" --arg milestone "$MILESTONE_TITLE" \
+            --argjson issues "$(gh issue list --state open --limit 500 --json number,labels,milestone)" \
+            --argjson merged "$(gh pr list --state merged --limit 500 --json headRefName)" \
+            --argjson open "$(gh pr list --state open --limit 200 --json headRefName)" \
+            '{mode: $mode, issueNumber: $issue, milestone: $milestone, issues: $issues, mergedPrs: $merged, openPrs: $open}' \
+            | node .agents/skills/release-bump/scripts/plan-chain.mjs)
+          echo "$CHAIN"
+          [ "$(echo "$CHAIN" | jq -r '.action')" = "trigger" ] || exit 0
+
+          NEXT=$(echo "$CHAIN" | jq -r '.issue')
+          gh issue edit "$NEXT" --remove-label ready >/dev/null 2>&1 || true
+          gh issue edit "$NEXT" --add-label 5-release
+          gh issue comment "$NEXT" --body "Started by the chain after #${ISSUE_NUMBER} merged." || true
+          echo "Started #${NEXT}."
+
       - name: Upload prove.md artifact
         if: steps.resolve.outputs.skip != 'true' && steps.freshness.outputs.conflict != 'true' && always()
         uses: actions/upload-artifact@v4

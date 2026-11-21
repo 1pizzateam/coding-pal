@@ -54,6 +54,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           REPO_PRIVATE: ${{ github.event.repository.private }}
           AGENT: ${{ inputs.agent }}
+          SCOPE: ${{ inputs.scope }}
         run: |
           if [ "$AGENT" = "a11y-audit" ]; then
             UI_FILES=$(find . -maxdepth 4 \( -path './.git' -o -path './node_modules' -o -path './website' -o -path './dist' \) -prune -o -type f \( -name '*.html' -o -name '*.tsx' -o -name '*.jsx' -o -name '*.vue' -o -name '*.svelte' -o -name '*.css' -o -name '*.scss' \) -print 2>/dev/null | head -n 1 || true)
@@ -77,10 +78,18 @@ jobs:
             exit 0
           fi
 
-          RECENT_COMMIT=$(git log -1 --since="7 days ago" --format="%H" 2>/dev/null || true)
+          # Only a change inside the audited scope is worth a new audit: release bumps, test-only merges and docs
+          # elsewhere in the repository leave the audited code untouched. Each audit kind runs once a week, so
+          # "7 days" is "since the last scheduled run". Without a usable path scope, fall back to the whole repository.
+          SCOPE_PATH="${SCOPE%/}"
+          if [ -n "$SCOPE_PATH" ] && [ -e "$SCOPE_PATH" ]; then
+            RECENT_COMMIT=$(git log -1 --since="7 days ago" --no-merges --invert-grep --grep='^chore(release)' --format="%H" -- "$SCOPE_PATH" 2>/dev/null || true)
+          else
+            RECENT_COMMIT=$(git log -1 --since="7 days ago" --no-merges --invert-grep --grep='^chore(release)' --format="%H" 2>/dev/null || true)
+          fi
           if [ -z "$RECENT_COMMIT" ]; then
-            echo "::notice::Skipping scheduled ${AGENT} audit: no new commits in ${CURRENT_REPO} in the last 7 days."
-            echo "Skipped scheduled \`${AGENT}\` audit: no new commits in the last 7 days." >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::Skipping scheduled ${AGENT} audit: no new commits touching ${SCOPE:-the repository} in ${CURRENT_REPO} in the last 7 days."
+            echo "Skipped scheduled \`${AGENT}\` audit: no new commits touching \`${SCOPE:-the repository}\` in the last 7 days." >> "$GITHUB_STEP_SUMMARY"
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
