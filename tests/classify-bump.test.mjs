@@ -143,3 +143,28 @@ test('class: changing a public member type incompatibly is major even with priva
   const r = run(prev, pkg({ js: '// t\n', dts: 'export declare class C {\n  private a;\n  private b;\n  x: string;\n}\n' }));
   assert.equal(r.bump, 'major');
 });
+
+test('milestone named like a version declares the intended level', async () => {
+  const { milestoneFloor } = await import('../skills/release-bump/scripts/classify-bump.mjs');
+  assert.deepEqual(milestoneFloor('5.0.0', '4.6.0'), { level: 'major', confirmedMajor: true });
+  assert.deepEqual(milestoneFloor('v4.7.0', '4.6.0'), { level: 'minor', confirmedMajor: false });
+  assert.deepEqual(milestoneFloor('4.6.1', '4.6.0'), { level: 'patch', confirmedMajor: false });
+  assert.equal(milestoneFloor('perf-batch', '4.6.0').level, 'none');
+  assert.equal(milestoneFloor('4.6.0', '4.6.0').level, 'none');
+});
+
+test('milestone 5.0.0 confirms an API-breaking release without a breaking label', () => {
+  const prev = pkg({ dts: 'export declare const a: number;\nexport declare const b: number;\n' });
+  const next = pkg({ js: '// r\n' });
+  assert.equal(run(prev, next).needsConfirmation, true);
+  const r = run(prev, next, { milestone: '2.0.0' });
+  assert.equal(r.needsConfirmation, false);
+  assert.equal(r.bump, 'major');
+});
+
+test('every title of a batch counts toward the floor', () => {
+  const prev = pkg();
+  const next = pkg({ js: 'export const a = 2;\n' });
+  const r = run(prev, next, { titles: ['fix: a', 'feat: b'], title: 'fix: a' });
+  assert.equal(r.bump, 'minor');
+});

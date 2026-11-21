@@ -53,6 +53,11 @@ on:
         required: false
         type: string
         default: ''
+      batch_issues:
+        description: 'Space-separated numbers of the other merged issues released together in the same milestone train (moved to Done with this issue)'
+        required: false
+        type: string
+        default: ''
     secrets:
       PIPELINE_GITHUB_TOKEN:
         required: true
@@ -467,6 +472,20 @@ jobs:
                   item { id }
                 }
               }' -f projectId="$PROJECT_ID" -f itemId="$STALE_ITEM_ID" >/dev/null 2>&1 || true
+          done
+
+      - name: Sync milestone train members to Done on Project board
+        if: steps.release_completion.outcome == 'success' && inputs.batch_issues != ''
+        env:
+          GH_TOKEN: ${{ secrets.PIPELINE_GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          PROJECT_TITLE: ${{ inputs.project_title }}
+          BATCH_ISSUES: ${{ inputs.batch_issues }}
+        run: |
+          for member in $BATCH_ISSUES; do
+            gh issue comment "$member" --body "Released together with #${ISSUE_NUMBER}${RELEASE_TAG:+ in ${RELEASE_TAG}}: milestone train published." || true
+            ISSUE_NUMBER="$member" TARGET_STATUS=Done bash -eo pipefail "$RUNNER_TEMP/prove-project-status.sh" || true
           done
 
       - name: Upload release.md artifact

@@ -74,7 +74,9 @@ class WorkflowsTest < Minitest::Test
       'inputs.dependency' => 'all',
       'env.ISSUE_NUMBER' => '42',
       'steps.release.outputs.release_sha' => '',
-      'steps.release.outputs.release_tag' => ''
+      'steps.release.outputs.release_tag' => '',
+      'steps.release.outputs.held' => '',
+      'steps.release.outputs.batch_members' => ''
     }
   end
 

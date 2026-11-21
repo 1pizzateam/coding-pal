@@ -28,3 +28,29 @@ node .agents/skills/release-bump/scripts/classify-bump.mjs \
 - `0.x` stable versions release breaking changes as `minor`. Prerelease versions (`-alpha/-beta/-rc`) release any shipped change as `prerelease`.
 - `private` and `#private` class members are stripped from both `.d.ts` sets before comparing: they are not public API, and TypeScript would otherwise treat any private-member change as an incompatible class. `protected` members still count.
 - Compatibility is judged from the consumer side with the TypeScript checker (`isTypeAssignableTo`, old and new declarations in one program), so `typescript` must be resolvable from `--ts-from`; without it a changed `.d.ts` is treated as at least minor.
+
+## Test, docs and CI PRs never release
+
+`pr-ships.mjs` inspects the merged PR's changed files. If none can ship (tests, `*.test.*`, docs, `website/`, CI, specs, markdown, config), the issue gets `# No release` and the release step ends, even when master carries earlier unreleased changes. Those wait for the next PR that changes shipped code, and the changelog of that release lists every shipping commit since the previous tag. Exceptions: a milestone train release, and the `release:now` label.
+
+## Milestone release trains
+
+Issues that share a GitHub milestone release together instead of one by one (`plan-batch.mjs`):
+
+- Without a milestone an issue releases on its own right after merge.
+- With a milestone, a merged issue is held in the **Release** column (comment `# Release held: milestone ...`). When the last open issue of the milestone merges, one release ships the whole train: one bump, one changelog (issue titles), one npm publish, and every member moves to Done.
+- A milestone named like a version declares the intent: `5.0.0` over a published `4.6.0` is a confirmed major (no `breaking` label needed); `4.7.0` floors at minor, `4.6.1` at patch. Evidence from the tarball diff can still raise the level, never lower it.
+- Labels and titles of all merged members count toward the floor. A milestone issue counts as merged when a merged PR from branch `feature/issue-<n>-*` exists.
+- Add the `release:now` label to an issue to ship what is merged so far without waiting for the rest.
+
+### Automatic milestones (audits)
+
+When an audit creates an issue in a published `@1pizzateam/*` library, `plan-milestone.mjs` picks its train (one train at a time):
+
+- Issues that need no release (`test`, `docs`, `ci`, `style`, `build` titles) get no milestone.
+- The level comes from the title and labels: `feat` = minor, `!` / `breaking` / `release:major` / `audit:vector-first` = major, everything else = patch.
+- An open milestone named like a version above the published npm version is the train in progress: the issue joins it. If the issue needs a higher level than the train, the milestone is renamed up (`4.7.0` becomes `5.0.0`), never split.
+- With no train in progress, a milestone is created at the next version for that level (`4.6.1` + patch = `4.6.2`, minor = `4.7.0`, major = `5.0.0`).
+- When the train releases (or ends with no release) its milestone is closed, so the next audit opens a fresh one. A partial `release:now` release leaves it open.
+- Issues created by hand are not assigned automatically; set the milestone yourself.
+

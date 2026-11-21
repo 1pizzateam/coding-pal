@@ -32,14 +32,17 @@ const rank = (level) => LEVELS.indexOf(level);
 const maxLevel = (a, b) => (rank(a) >= rank(b) ? a : b);
 
 export function parseArgs(argv) {
-  const opts = { next: '', prev: '', currentVersion: '', title: '', labels: [], tsFrom: process.cwd() };
+  const opts = { next: '', prev: '', currentVersion: '', title: '', titles: [], milestone: '', labels: [], tsFrom: process.cwd() };
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i];
     const value = argv[i + 1];
     if (arg === '--next' && value) opts.next = path.resolve(argv[++i]);
     else if (arg === '--prev' && value) opts.prev = path.resolve(argv[++i]);
     else if (arg === '--current-version' && value) opts.currentVersion = argv[++i].replace(/^v/, '');
-    else if (arg === '--title' && value !== undefined) opts.title = argv[++i];
+    else if (arg === '--title' && value !== undefined) {
+      opts.title = argv[++i];
+      opts.titles.push(opts.title);
+    } else if (arg === '--milestone' && value !== undefined) opts.milestone = argv[++i];
     else if (arg === '--labels' && value !== undefined) {
       opts.labels = argv[++i].split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
     } else if (arg === '--ts-from' && value) opts.tsFrom = path.resolve(argv[++i]);
@@ -58,6 +61,22 @@ export function intentFloor(title, labels) {
   if (breakingMarker) return { level: 'major', confirmedMajor: true };
   if (labels.includes('release:minor') || /^feat(\(|:|\s|!)/i.test(t)) return { level: 'minor', confirmedMajor: false };
   if (labels.includes('release:patch') || /^fix(\(|:|\s)/i.test(t)) return { level: 'patch', confirmedMajor: false };
+  return { level: 'none', confirmedMajor: false };
+}
+
+/**
+ * A milestone named like a version (`5.0.0`, `v4.7.0`) declares the intended release level
+ * relative to the version currently published, e.g. `5.0.0` over `4.6.0` is a confirmed major.
+ */
+export function milestoneFloor(milestone, currentVersion) {
+  const target = /^v?(\d+)\.(\d+)\.(\d+)$/.exec((milestone || '').trim());
+  const current = /^(\d+)\.(\d+)\.(\d+)/.exec(currentVersion || '');
+  if (!target || !current) return { level: 'none', confirmedMajor: false };
+  const [tMajor, tMinor, tPatch] = target.slice(1).map(Number);
+  const [cMajor, cMinor, cPatch] = current.slice(1).map(Number);
+  if (tMajor > cMajor) return { level: 'major', confirmedMajor: true };
+  if (tMajor === cMajor && tMinor > cMinor) return { level: 'minor', confirmedMajor: false };
+  if (tMajor === cMajor && tMinor === cMinor && tPatch > cPatch) return { level: 'patch', confirmedMajor: false };
   return { level: 'none', confirmedMajor: false };
 }
 
@@ -244,8 +263,15 @@ export function classify(opts) {
     notes: [],
     reason: '',
   };
-  const { level: floor, confirmedMajor } = intentFloor(opts.title, opts.labels);
+  const titles = opts.titles && opts.titles.length ? opts.titles : [opts.title];
+  const floors = [
+    ...titles.map((t) => intentFloor(t, opts.labels)),
+    milestoneFloor(opts.milestone, opts.currentVersion),
+  ];
+  const floor = floors.map((f) => f.level).reduce(maxLevel, 'none');
+  const confirmedMajor = floors.some((f) => f.confirmedMajor);
   result.floor = floor;
+  if (opts.milestone) result.notes.push(`milestone ${opts.milestone}`);
 
   let evidence;
   if (!opts.prev) {

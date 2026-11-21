@@ -493,6 +493,42 @@ jobs:
             ) | map(merge_cluster(.))
           ')
 
+          # Release trains: published @1pizzateam/* libraries put issues that need a release into the
+          # milestone in progress (or create one). See .agents/skills/release-bump/scripts/plan-milestone.mjs.
+          PUBLISHED_VERSION=""
+          if [ -f package.json ] && [ "$(node -p 'const p = require("./package.json"); String(Boolean(p.name && p.name.startsWith("@1pizzateam/") && !p.private))' 2>/dev/null)" = "true" ] \
+            && [ -f .agents/skills/release-bump/scripts/plan-milestone.mjs ]; then
+            PUBLISHED_VERSION=$(npm view "$(node -p 'require("./package.json").name')" version 2>/dev/null || true)
+            if [ -z "$PUBLISHED_VERSION" ]; then
+              PUBLISHED_VERSION=$(gh release view --repo "$CURRENT_REPO" --json tagName --jq '.tagName' 2>/dev/null | sed 's/^v//' || true)
+            fi
+          fi
+
+          assign_release_milestone() {
+            local number="$1" title="$2" milestones plan action ms_title ms_number
+            [ -n "$PUBLISHED_VERSION" ] || return 0
+            milestones=$(gh api "repos/${CURRENT_REPO}/milestones?state=open&per_page=100" --jq '[.[] | {number, title}]' 2>/dev/null || echo '[]')
+            plan=$(jq -n --arg published "$PUBLISHED_VERSION" --arg title "$title" --arg label "$AUDIT_LABEL" --argjson milestones "$milestones" \
+              '{published: $published, title: $title, labels: [$label], milestones: $milestones}' \
+              | node .agents/skills/release-bump/scripts/plan-milestone.mjs) || return 0
+            action=$(echo "$plan" | jq -r '.action')
+            ms_title=$(echo "$plan" | jq -r '.title // ""')
+            ms_number=$(echo "$plan" | jq -r '.number // ""')
+            case "$action" in
+              create)
+                gh api "repos/${CURRENT_REPO}/milestones" -f title="$ms_title" \
+                  -f description="Release train: issues here ship together as one release (coding-pal release-bump skill)." >/dev/null || return 0
+                ;;
+              rename)
+                gh api -X PATCH "repos/${CURRENT_REPO}/milestones/${ms_number}" -f title="$ms_title" >/dev/null || return 0
+                ;;
+              use) ;;
+              *) return 0 ;;
+            esac
+            gh issue edit "$number" --repo "$CURRENT_REPO" --milestone "$ms_title" >/dev/null || true
+            echo "Issue #${number} -> release milestone ${ms_title} (${action})"
+          }
+
           MERGED_COUNT=$(echo "$MERGED_FINDINGS" | jq 'length')
           CREATED_COUNT=0
           for ((i = 0; i < MERGED_COUNT; i++)); do
@@ -517,6 +553,7 @@ jobs:
               --body "$FULL_BODY")
             ISSUE_NUMBER="${ISSUE_URL##*/}"
             CREATED_COUNT=$((CREATED_COUNT + 1))
+            assign_release_milestone "$ISSUE_NUMBER" "$TITLE" || true
 
             OPEN_ISSUES=$(echo "$OPEN_ISSUES" | jq -c --argjson num "${ISSUE_NUMBER:-0}" --arg title "$TITLE" --arg body "$FULL_BODY" '. + [{"number": $num, "title": $title, "body": $body}]')
 
