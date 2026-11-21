@@ -101,7 +101,7 @@ jobs:
               | node /tmp/chain-coding-pal/skills/release-bump/scripts/plan-chain.mjs 2>/dev/null || echo '{"action":"proceed"}')
             if [ "$(echo "$CHAIN" | jq -r '.action')" = "intercept" ]; then
               BLOCKERS=$(echo "$CHAIN" | jq -r '.blockers | map("#" + tostring) | join(", ")')
-              gh label create ready --force --description "Eligible for automatic start by the chain" >/dev/null 2>&1 || true
+              gh label create ready --description "Eligible for automatic start by the chain" --color 0E8A16 >/dev/null 2>&1 || true
               for stage_label in 3-code 4-prove 5-release; do
                 if echo "$ISSUE_VIEW" | jq -e --arg l "$stage_label" '[.labels[].name] | index($l) != null' >/dev/null; then
                   gh issue edit "$ISSUE_NUMBER" --remove-label "$stage_label" >/dev/null 2>&1 || true
