@@ -17,6 +17,8 @@ import path from 'node:path';
 
 const TEST_PATH = /(^|\/)(tests?|__tests__)\/|\.(test|spec)\.[cm]?[jt]sx?$/i;
 export const isTestPath = (p) => TEST_PATH.test(p);
+const DOC_PATH = /^(website\/docs\/|docs\/)|\.(md|mdx)$/i;
+export const isDocPath = (p) => DOC_PATH.test(p);
 
 const labelNames = (labels) => (labels || []).map((l) => (typeof l === 'string' ? l : l.name)).filter(Boolean);
 const stripPrefix = (t) => t.replace(/^(?:feat|fix|chore|refactor|perf|docs|test)(?:\([^)]+\))?!?:\s*/i, '').trim();
@@ -64,10 +66,19 @@ export function synthesizePlan({ issue, issueNumber, effort, think, root, today 
 
   let pkg = {};
   try { pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')); } catch { /* no package.json */ }
+
+  // A docs-sync finding changes documentation only: criteria are verified by reviewing the docs, not by tests,
+  // and the other affected files are references the docs describe (read, never edited).
+  const docsSync = audit.toLowerCase() === 'audit:docs-sync';
+  const docFiles = scope.filter(isDocPath);
+  if (docsSync && !docFiles.length) return { eligible: false, reason: 'docs-sync issue lists no documentation file' };
+
   const sources = scope.filter((f) => !isTestPath(f));
-  const testFile = scope.find(isTestPath) || (sources[0] && existsSync(path.join(root, sources[0])) ? findTestFile(root, sources[0]) : '');
+  const testFile = docsSync ? '' : scope.find(isTestPath) || (sources[0] && existsSync(path.join(root, sources[0])) ? findTestFile(root, sources[0]) : '');
+  if (!docsSync && !testFile) return { eligible: false, reason: 'no test file to map the acceptance criteria to' };
   const extraTestStep = Boolean(testFile) && !scope.includes(testFile);
-  const inScope = extraTestStep ? [...scope, testFile] : scope;
+  const inScope = docsSync ? docFiles : extraTestStep ? [...scope, testFile] : scope;
+  const references = docsSync ? scope.filter((f) => !isDocPath(f)) : [];
 
   const tier = ((/^- \*\*Tier:\*\*\s*(\S+)/m.exec(think || '') || [])[1] || 'Low').replace(/[.,]$/, '');
   const verify = testFile ? `\`npm test -- ${testFile}\`` : '`npm test`';
@@ -76,7 +87,7 @@ export function synthesizePlan({ issue, issueNumber, effort, think, root, today 
   const list = (arr) => arr.map((f) => `\`${f}\``).join(', ');
   const fixLine = (fix || `Resolve the ${audit} finding in ${scope.join(', ')}.`).slice(0, 400);
 
-  const steps = [{ name: 'Apply the suggested fix', files: scope, action: fixLine }];
+  const steps = [{ name: docsSync ? 'Update the documentation' : 'Apply the suggested fix', files: inScope.filter((f) => f !== testFile || !extraTestStep), action: fixLine }];
   if (extraTestStep) {
     steps.push({ name: 'Add acceptance criterion tests', files: [testFile], action: 'Add or extend tests, each tagged with its acceptance criterion id, covering every acceptance criterion of the issue.' });
   }
@@ -87,7 +98,7 @@ export function synthesizePlan({ issue, issueNumber, effort, think, root, today 
     '',
     '## File Scope & Boundaries',
     `- **In Scope:** ${list(inScope)}`,
-    '- **Out of Scope:** _None._',
+    `- **Out of Scope:** ${references.length ? list(references) : '_None._'}`,
     '- **Irreversible Changes:** _None._',
     '',
     '## Prerequisites & Context',
@@ -111,7 +122,7 @@ export function synthesizePlan({ issue, issueNumber, effort, think, root, today 
     '## Test Plan',
     '| Criterion | Test | Step |',
     '|---|---|---|',
-    ...acs.map((a) => `| AC-${a.id} | ${testFile || 'npm test'}: ${a.text.replace(/\|/g, '/').slice(0, 120)} | Step ${testStep} |`),
+    ...acs.map((a) => `| AC-${a.id} | ${docsSync ? 'Documentation review' : testFile}: ${a.text.replace(/\|/g, '/').slice(0, 120)} | Step ${testStep} |`),
     '',
     '## Open Questions & Assumptions',
     '_None._',

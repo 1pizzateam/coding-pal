@@ -51,7 +51,7 @@ test('eligibility is exactly: audit issue and low effort', () => {
   assert.equal(run({}, { effort: 'medium' }).eligible, false);
   assert.equal(run({}, { effort: 'high' }).eligible, false);
   assert.equal(run({}, { effort: '' }).eligible, false);
-  for (const label of ['audit:perf-audit', 'audit:vector-first', 'audit:docs-sync', 'audit:test-gap']) {
+  for (const label of ['audit:perf-audit', 'audit:vector-first', 'audit:test-gap']) {
     assert.equal(run({ labels: [label] }).eligible, true, label);
   }
 });
@@ -79,10 +79,42 @@ test('plan has the fix step and a test step when the matching test file is found
   assert.match(plan, /Automated by coding-pal-audit on 2026-11-21/);
 });
 
-test('without a test file there is a single step and the full test suite is the verification', () => {
-  const { plan } = run({}, { root: repo({ test: false }) });
-  assert.equal((plan.match(/### Step /g) || []).length, 1);
-  assert.match(plan, /- \*\*Verification:\*\* `npm test`/);
+test('without any test file to map the criteria to, the AI Planner is used', () => {
+  const r = run({}, { root: repo({ test: false }) });
+  assert.equal(r.eligible, false);
+  assert.match(r.reason, /no test file/);
+});
+
+const DOCS_BODY = `## Affected Files
+
+- \`website/docs/guide/overview.md\`
+- \`website/docs/api/index.md\`
+- \`src/time.ts\`
+
+## Suggested Fix
+
+1. Add Accumulator to the API groups in overview.md and index.md.
+
+## Acceptance Criteria
+
+- **AC-1:** overview.md lists Accumulator with a link to /api/time#accumulator.
+- **AC-2:** index.md lists Accumulator under Utilities.
+- **AC-3:** The documentation says Accumulator is an exported public class.
+`;
+
+test('docs-sync: docs are in scope, other files are read-only references, criteria are verified by documentation review', () => {
+  const r = run({ labels: ['audit:docs-sync'], body: DOCS_BODY, title: 'docs(overview): document Accumulator' }, { root: repo({ test: false }) });
+  assert.equal(r.eligible, true);
+  assert.match(r.plan, /- \*\*In Scope:\*\* `website\/docs\/guide\/overview\.md`, `website\/docs\/api\/index\.md`\n/);
+  assert.match(r.plan, /- \*\*Out of Scope:\*\* `src\/time\.ts`/);
+  assert.match(r.plan, /### Step 1: Update the documentation/);
+  assert.equal((r.plan.match(/### Step /g) || []).length, 1);
+  assert.match(r.plan, /\| AC-1 \| Documentation review: overview\.md lists Accumulator/);
+  assert.doesNotMatch(r.plan, /npm test: /);
+});
+
+test('docs-sync without any documentation file in the issue is left to the AI Planner', () => {
+  assert.equal(run({ labels: ['audit:docs-sync'] }).eligible, false);
 });
 
 test('a test file listed by the issue is covered by the fix step', () => {
